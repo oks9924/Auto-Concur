@@ -116,3 +116,13 @@ def test_식음료인데_참석자가_없으면_짚어준다():
         location = channel = attendee = ""
 
     assert _gaps(Entry(), "내부 직원간 식음료") == ["참석자"]
+
+
+def test_숙박위치와_채널은_기본값이_들어간다():
+    # 고를 값이 두 개뿐이라 빈 칸으로 두면 매번 같은 값을 다시 고르게 된다.
+    from src import settings
+    from src.organize import PREFILL
+
+    고를수있는값 = settings.choices(settings.DEFAULTS)
+    assert PREFILL["숙박위치"] in 고를수있는값["숙박위치"]
+    assert PREFILL["Booking Channel"] in 고를수있는값["Booking Channel"]
