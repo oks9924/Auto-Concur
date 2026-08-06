@@ -502,6 +502,10 @@ DUMP_MENU_JS = """
 
 REMOVE_LABELS = "제거,삭제,Remove,Delete"
 
+# 참석자 삭제는 기본으로 끈다. 화면을 잘못 읽어 멀쩡한 참석자를 지운 적이 있다.
+# 잘못 지우면 되돌릴 방법이 없어서, 확인되기 전까지는 --remove-attendees 로만 켠다.
+REMOVE_ATTENDEES = False
+
 # 새 경비유형(택시 등)이 생겼을 때 코드를 알아내려고 쓴다.
 DUMP_TYPES_JS = """
 () => {
@@ -1007,9 +1011,21 @@ def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
 
     names = _attendee_names(page) if count else []
     extra = [n for n in names if not any(name_matches(q, n) for q in queries)]
-    for name in extra:
-        _remove_attendee(page, name)
     if extra:
+        # 지우지 않는다. 화면을 잘못 읽어 멀쩡한 참석자를 지운 적이 있다(2026-08).
+        # 지우려면 --remove-attendees 를 붙여야 하고, 그전에 이 파일로 화면을
+        # 확인해야 한다. 잘못 지우면 되돌릴 방법이 없다.
+        dump = _dump(page, "attendee-rows", DUMP_ATTENDEE_ROWS_JS)
+        _close_attendee_modal(page)
+        if not REMOVE_ATTENDEES:
+            raise AttachError(
+                f"참석자가 작업지와 다릅니다. 화면: {' | '.join(names)} / "
+                f"작업지: {', '.join(queries)}. 아무것도 바꾸지 않았습니다."
+                + (f" (참석자 행 정보: {dump})" if dump else "")
+            )
+        _open_attendee_modal(page, report_url, row)
+        for name in extra:
+            _remove_attendee(page, name)
         names = _attendee_names(page)
         print(f"     (작업지에 없는 참석자 {len(extra)}명을 지웠습니다: {', '.join(extra)})")
 
@@ -1025,7 +1041,22 @@ def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
     except AttachError:
         _dump(page, "combos-attendee", DUMP_COMBOS_JS)
         _dump(page, "inputs-attendee", DUMP_INPUTS_JS)
+        # 넣다가 실패했으면 저장하지 않는다. 반쯤 넣은 채로 저장하면 화면에
+        # 있던 참석자가 지워진 상태로 굳는다.
+        _close_attendee_modal(page)
         raise
+
+    # 저장 직전에 화면을 다시 본다. 넣으려던 사람이 실제로 목록에 올라와
+    # 있어야 저장한다. 비어 있는데 저장하면 남아 있던 참석자까지 지워진다.
+    now = _attendee_names(page)
+    added_now = [q for q in missing if any(name_matches(q, n) for n in now)]
+    if len(added_now) != len(missing):
+        _dump(page, "attendee-rows", DUMP_ATTENDEE_ROWS_JS)
+        _close_attendee_modal(page)
+        raise AttachError(
+            f"참석자 {len(missing)}명을 넣으려 했는데 목록에는 {len(added_now)}명만 "
+            f"올라왔습니다. 저장하지 않았습니다 (화면: {' | '.join(now)})"
+        )
 
     # exact=True 가 중요하다. 기본은 부분 일치라 '저장'이 '경비 저장'에도
     # 걸려서 모달 버튼 대신 뒤쪽 버튼을 누를 수 있다.
@@ -1333,7 +1364,10 @@ def main() -> int:
                     help="화면의 경비유형과 코드를 뽑습니다 (새 유형이 생겼을 때 쓰세요)")
     ap.add_argument("--list-lodging", action="store_true",
                     help="숙박위치·Booking Channel 목록을 뽑아 settings.json 에 넣습니다")
+    ap.add_argument("--remove-attendees", action="store_true",
+                    help="작업지에 없는 참석자를 지웁니다 (기본은 지우지 않고 멈춥니다)")
     args = ap.parse_args()
+    globals()["REMOVE_ATTENDEES"] = args.remove_attendees
     try:
         path = None
         if args.sheet is not None:
