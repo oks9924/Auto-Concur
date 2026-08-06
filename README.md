@@ -5,7 +5,7 @@
 ## 전체 흐름
 
 ```
-[A] 현대카드(mycompany) → 월별 전표 PDF 다운로드          ← 미구현
+[A] 현대카드(mycompany) → 월별 전표 PDF 다운로드          ← 구현, 실행 검증 전
      ↓
 [B] PDF 파싱 → 이름 변경 + manifest.csv                   ← 구현 완료
      ↓  여기서 사람이 눈으로 확인한다
@@ -26,17 +26,52 @@ B단계(파싱·정리)는 그대로 돌아간다.
 
 Python 3.10 이상이 필요하다.
 
-## 지금 되는 것: B단계
+## 설치
 
 ```bat
 py -m venv venv
 venv\Scripts\pip install -r requirements.txt
-
-venv\Scripts\python -m src.organize .\downloads            :: 미리보기
-venv\Scripts\python -m src.organize .\downloads --apply    :: 실제 이름 변경
+venv\Scripts\playwright install chromium
 ```
 
 macOS/Linux는 `venv\Scripts\` 대신 `venv/bin/` 을 쓴다.
+
+## A단계: 전표 다운로드
+
+```bat
+:: 처음엔 한 건만 받아서 확인한다
+venv\Scripts\python -m src.download_slips --from 2026.07.01 --to 2026.07.31 --limit 1
+
+:: 확인됐으면 전체
+venv\Scripts\python -m src.download_slips --from 2026.07.01 --to 2026.07.31
+```
+
+브라우저가 뜨면 **카드 인증을 직접 한다.** 카드번호·유효기간·CVV·비밀번호가 전부
+가상키패드라 스크립트로 값을 넣을 수 없다. 금융 보안장치를 우회할 생각도 하지 않는다.
+인증 후 Enter를 누르면 조회·선택·다운로드를 자동으로 돈다.
+
+**한 건씩 선택해서 받는다.** 전체를 한 번에 선택하면 합본 PDF가 나올지 ZIP이 나올지
+예측할 수 없다. 한 건씩이면 파일 하나가 거래 하나에 대응하고, 실패한 건도 남는다.
+
+화면 셀렉터 (2026-08 확인):
+
+| 요소 | 셀렉터 |
+|---|---|
+| 조회 시작일 / 종료일 | `#inqFromDt` / `#inqToDt` (`2026.07.01` 형식) |
+| 조회 | `#btnIqry` |
+| 매출전표 다운로드 | `button[onclick="fnPdf();"]` |
+| 거래내역 xls | `#btnExcel` |
+
+표는 **dhtmlxGrid**라서 일반 체크박스가 아니다(`eXcell_ch` 셀). 전역 그리드 객체
+이름을 추측하지 않고, `getAllRowIds`를 가진 객체를 실행 시점에 찾아 쓴다.
+체크박스 칼럼도 인덱스를 고정하지 않고 `getColType(i) === 'ch'` 로 찾는다.
+
+## B단계: 파싱 + 정리
+
+```bat
+venv\Scripts\python -m src.organize .\downloads            :: 미리보기
+venv\Scripts\python -m src.organize .\downloads --apply    :: 실제 이름 변경
+```
 
 전표 PDF를 모아둔 폴더를 주면:
 
@@ -68,9 +103,9 @@ C단계에서 매칭이 모호하면 **건너뛰고 사람에게 넘긴다** —
 596x843pt 페이지에 27.68pt 간격의 고정 그리드로 값이 배치되므로 좌표로 읽는다
 (`src/slip_parser.py`의 `ROWS`).
 
-## 다음 단계 (A, C, D)
+## 다음 단계 (C, D)
 
-전부 Playwright 브라우저 자동화다. Concur API는 **Client Web Services 라이선스
+Concur도 Playwright 브라우저 자동화다. API는 **Client Web Services 라이선스
 별도 구매 + 회사 관리자 권한**이 필요해서 개인이 쓸 수 없다.
 
 **로그인은 사람이 한다.** 간편인증·OTP·SSO는 자동화 대상이 아니다.
@@ -79,15 +114,12 @@ C단계에서 매칭이 모호하면 **건너뛰고 사람에게 넘긴다** —
 셀렉터는 추측하지 않는다. 실제 화면을 떠서 확인한 뒤에 쓴다:
 
 ```bat
-venv\Scripts\playwright install chromium
-
-venv\Scripts\python -m src.inspect_page "https://mycompany.hyundaicard.com/hs/cs/HSCS1002.do" --name hyundaicard
-
 venv\Scripts\python -m src.inspect_page "https://eu2.concursolutions.com/home" --name concur
 ```
 
-브라우저가 뜨면 로그인하고 원하는 화면까지 이동한 뒤 Enter를 누르면
-`inspect-out/<name>/`에 화면 캡처, 프레임별 HTML, 클릭 가능한 요소 목록이 저장된다.
+브라우저가 뜨면 로그인하고 원하는 화면까지 이동한다. 화면마다 Enter를 누르면
+그 시점이 `inspect-out/<name>/01`, `02`... 로 저장된다. 끝내려면 `q` + Enter.
+팝업 창까지 전부 저장하므로 전표 인쇄 같은 새 창도 잡힌다.
 
 ## 커밋하지 않는 것
 

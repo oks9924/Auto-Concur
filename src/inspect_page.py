@@ -43,28 +43,22 @@ INTERACTIVE_JS = """
 """
 
 
-def dump(url: str, name: str) -> None:
-    out = OUT_DIR / name
+def _snapshot(pages, out: Path) -> None:
+    """열려 있는 창을 전부 저장한다.
+
+    전표 인쇄처럼 팝업을 띄우는 화면이 있어서 첫 창만 봐서는 안 된다.
+    """
     out.mkdir(parents=True, exist_ok=True)
-
-    with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR / name),
-            headless=False,
-            accept_downloads=True,
-            locale="ko-KR",
-        )
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        page.goto(url, wait_until="domcontentloaded")
-
-        print(f"\n브라우저가 열렸다. 로그인하고 원하는 화면까지 이동한 뒤")
-        input("여기로 돌아와서 Enter를 눌러라... ")
-
-        page.screenshot(path=str(out / "screen.png"), full_page=True)
-
+    captured = []
+    for pi, page in enumerate(pages):
+        tag = f"page{pi}"
+        try:
+            page.screenshot(path=str(out / f"{tag}.png"), full_page=True)
+        except Exception:
+            pass  # 닫히는 중인 팝업은 캡처가 실패할 수 있다
         frames = []
-        for i, frame in enumerate(page.frames):
-            label = f"frame{i}"
+        for fi, frame in enumerate(page.frames):
+            label = f"{tag}_frame{fi}"
             try:
                 html = frame.content()
                 (out / f"{label}.html").write_text(html, encoding="utf-8")
@@ -80,21 +74,44 @@ def dump(url: str, name: str) -> None:
                     "elements": elements,
                 }
             )
+        captured.append({"tag": tag, "url": page.url, "frames": frames})
 
-        (out / "elements.json").write_text(
-            json.dumps({"page_url": page.url, "frames": frames}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+    (out / "elements.json").write_text(
+        json.dumps({"pages": captured}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    every = [e for p in captured for f in p["frames"] for e in f["elements"]]
+    logged_in = any("로그아웃" in (e.get("text") or "") for e in every)
+    print(
+        f"  저장: {out}  창 {len(captured)}개, 요소 {len(every)}개, "
+        f"로그인 {'됨' if logged_in else '안 됨 -- 확인할 것'}"
+    )
+
+
+def dump(url: str, name: str) -> None:
+    out = OUT_DIR / name
+    out.mkdir(parents=True, exist_ok=True)
+
+    with sync_playwright() as p:
+        ctx = p.chromium.launch_persistent_context(
+            user_data_dir=str(PROFILE_DIR / name),
+            headless=False,
+            accept_downloads=True,
+            locale="ko-KR",
         )
+        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page.goto(url, wait_until="domcontentloaded")
 
-        print(f"\n저장 완료: {out}/")
-        print(f"  screen.png       화면 캡처")
-        print(f"  frame*.html      프레임별 HTML ({len(frames)}개)")
-        print(f"  elements.json    누를 수 있는 요소 목록")
-        for f in frames:
-            n = len(f["elements"])
-            print(f"    - {f['label']}: {n}개 요소  {f['url'][:70]}")
+        print("\n브라우저가 열렸다. 로그인하고 원하는 화면까지 이동해라.")
+        print("화면마다 Enter를 누르면 그 시점이 저장된다. 끝내려면 q + Enter.\n")
+
+        n = 0
+        while input(f"[{n + 1}] Enter=캡처, q=종료: ").strip().lower() != "q":
+            n += 1
+            _snapshot(ctx.pages, out / f"{n:02d}")
 
         ctx.close()
+        print(f"\n{n}개 화면을 {out}/ 에 저장했다.")
 
 
 def main() -> int:
