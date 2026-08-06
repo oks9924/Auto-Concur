@@ -235,14 +235,13 @@ SELECT_ATTENDEE_OPTION_JS = (
 )
 
 # 참석자 버튼은 '참석자 (0)' 처럼 개수를 달고 있다.
-ATTENDEE_COUNT_JS = """
-() => {
+ATTENDEE_COUNT_JS_BODY = """
   const b = [...document.querySelectorAll('button')]
     .find(x => /^참석자\\s*\\(\\d+\\)/.test((x.innerText || '').trim()));
-  if (!b) return null;
-  return parseInt((b.innerText.match(/\\((\\d+)\\)/) || [])[1], 10);
-}
+  const n = b ? parseInt((b.innerText.match(/\\((\\d+)\\)/) || [])[1], 10) : null;
 """
+
+ATTENDEE_COUNT_JS = "() => {" + ATTENDEE_COUNT_JS_BODY + " return n; }"
 
 
 @dataclass
@@ -393,16 +392,19 @@ def _add_attendee(page, report_url: str, expense_id: str) -> bool:
 
     _click_marked(page, SELECT_ATTENDEE_OPTION_JS, f"'{ATTENDEE_QUERY}' 검색 결과")
     page.wait_for_timeout(1500)
-    page.get_by_role("button", name="저장").first.click()
 
-    # 저장이 끝나 모달이 닫히는 것을 확인한다.
-    _wait_js(
-        page,
-        "() => !document.querySelector('li[role=\"option\"]')"
-        " && !location.search.includes('modal=attendees')",
-        "참석자 저장 완료",
-        timeout=30000,
-    )
+    # exact=True 가 중요하다. 기본은 부분 일치라 '저장'이 '경비 저장'에도
+    # 걸려서 모달 버튼 대신 뒤쪽 버튼을 누를 수 있다.
+    page.get_by_role("button", name="저장", exact=True).first.click()
+
+    # 참석자 수가 늘었는지로 확인한다. 모달이 닫혔는지나 주소가 바뀌었는지는
+    # 추측이었고, 원래 확인하려던 것은 참석자가 실제로 붙었는지다.
+    try:
+        _wait_js(page, "() => {" + ATTENDEE_COUNT_JS_BODY + " return n !== null && n > 0; }",
+                 "참석자가 추가되는 것", timeout=30000)
+    except AttachError:
+        _dump(page, "inputs-attendee-save", DUMP_INPUTS_JS)
+        raise
     return True
 
 
@@ -426,7 +428,7 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
             done.append("코멘트")
 
     if done:
-        page.get_by_role("button", name="경비 저장").first.click()
+        page.get_by_role("button", name="경비 저장", exact=True).first.click()
         # 저장이 끝나고 화면이 다시 그려질 때까지 기다린다. 여기서 서둘러
         # 참석자 모달로 넘어가면 방금 넣은 값이 날아간다.
         page.wait_for_timeout(2000)
