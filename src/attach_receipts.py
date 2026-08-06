@@ -36,25 +36,31 @@ AMOUNT_FIELD = "#transactionAmount"
 DATE_FIELD = "#transactionDate-date-input-field-input"
 VENDOR_FIELD = "#vendorName"
 
-# Concur 목록은 role=row / role=gridcell 을 쓴다. 접근성 표준이라 난독화된
-# 클래스명(sapcnqr-...-b8e75c)보다 오래 간다.
-# 행 목록은 반드시 한 곳에서만 정의한다. 읽을 때와 누를 때 목록이 다르면
-# 인덱스가 어긋나서 엉뚱한 행을 누른다(실제로 합계 행을 눌렀다).
+# 행의 id가 곧 경비 ID다. 상세 주소가 .../reports/{리포트}/expenses/{경비} 라서
+# 주소를 직접 만들 수 있다. 클릭해서 여는 것보다 훨씬 확실하다.
+#
+# data-testid="data-row" 로 데이터 행만 고른다. role=row 만 보면 헤더와 합계
+# 행까지 섞여서 인덱스가 어긋난다(실제로 합계 행을 눌렀었다).
+# 값은 data-nuiexp 훅에서 직접 읽는다. 칼럼 순서를 짐작하지 않아도 된다.
 ROWS_FN = """
-  const cellsOf = r => [...r.querySelectorAll('[role="gridcell"], [role="cell"]')];
-  const gridRows = () => [...document.querySelectorAll('[role="row"]')]
-    .filter(r => cellsOf(r).length);
+  const gridRows = () => [...document.querySelectorAll('[role="row"][data-testid="data-row"]')];
 """
 
 READ_ROWS_JS = (
     "() => {"
     + ROWS_FN
     + """
+  const pick = (r, hook) => {
+    const el = r.querySelector('[data-nuiexp="' + hook + '"]');
+    return el ? (el.innerText || '').trim().replace(/\\s+/g, ' ') : '';
+  };
   return gridRows().map((r, i) => ({
     index: i,
-    cells: cellsOf(r).map(c => (c.innerText || '').trim().replace(/\\s+/g, ' ')),
-    // 상세로 가는 링크가 있으면 클릭 대신 주소로 바로 간다. 훨씬 덜 깨진다.
-    href: (r.querySelector('a[href*="/expenses/"]') || {}).href || null,
+    id: r.id || r.getAttribute('data-row-key') || null,
+    date: pick(r, 'date-cell'),
+    amount: pick(r, 'amount-cell'),
+    vendor: pick(r, 'vendor-name'),
+    expenseType: pick(r, 'expense-type-cell'),
   }));
 }"""
 )
@@ -77,22 +83,10 @@ WAIT_AMOUNT_JS = """
 }
 """
 
-# 행 안의 버튼은 누르면 안 된다. 알림(오류/경고) 버튼과 카드 버튼은 팝오버만
-# 열고 상세는 안 열린다. 날짜가 든 셀을 그대로 누른다.
-CLICK_ROW_JS = (
-    "(i) => {"
-    + ROWS_FN
-    + """
-  const row = gridRows()[i];
-  if (!row) return false;
-  const cells = cellsOf(row);
-  const target = cells.find(c => /\\d{4}-\\d{2}-\\d{2}/.test(c.innerText || ''))
-              || cells.find(c => (c.innerText || '').trim() && !c.querySelector('button, input'));
-  if (!target) return false;
-  target.click();
-  return true;
-}"""
-)
+def expense_url(report_url: str, expense_id: str) -> str:
+    """리포트 주소에서 경비 상세 주소를 만든다."""
+    base = report_url.split("/expenses/")[0].split("?")[0].rstrip("/")
+    return f"{base}/expenses/{expense_id}"
 
 DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 AMOUNT_RE = re.compile(r"^-?[\d,]+(?:\.\d+)?$")
@@ -117,7 +111,7 @@ class Row:
     when: date | None
     amount: int | None
     text: str
-    href: str | None = None
+    expense_id: str | None = None
 
 
 def done_path(folder: Path) -> Path:
@@ -189,22 +183,17 @@ def _parse_amount(text: str) -> int | None:
 def read_rows(page) -> list[Row]:
     rows = []
     for raw in _eval(page, READ_ROWS_JS):
-        cells = raw["cells"]
-        joined = " | ".join(cells)
-        when = None
-        amount = None
-        for cell in cells:
-            if when is None:
-                m = DATE_RE.search(cell)
-                if m:
-                    when = date(*(int(g) for g in m.groups()))
-            if amount is None:
-                got = _parse_amount(cell)
-                # 금액 칼럼만 잡는다. 날짜에서 떼어낸 숫자가 섞이지 않게 한다.
-                if got is not None and got >= 100:
-                    amount = got
+        m = DATE_RE.search(raw["date"])
+        when = date(*(int(g) for g in m.groups())) if m else None
+        label = " ".join(x for x in (raw["expenseType"], raw["vendor"], raw["amount"]) if x)
         rows.append(
-            Row(index=raw["index"], when=when, amount=amount, text=joined[:90], href=raw.get("href"))
+            Row(
+                index=raw["index"],
+                when=when,
+                amount=_parse_amount(raw["amount"]),
+                text=label[:80],
+                expense_id=raw["id"],
+            )
         )
     return rows
 
@@ -230,16 +219,20 @@ def match(slips: list[Slip], rows: list[Row], tolerance_days: int) -> tuple[list
     return pairs, skipped
 
 
-def open_expense(page, slip: Slip, row: Row, folder: Path) -> None:
+def open_expense(page, slip: Slip, row: Row, report_url: str, folder: Path) -> None:
     """상세 화면을 열고, 이 전표의 금액이 보일 때까지 기다린다.
 
-    SPA라 행을 눌러도 load 이벤트가 안 난다. 네비게이션이 아니라 '#transactionAmount가
-    이 금액이 되는 것'을 기다린다. 대기와 '맞는 경비를 열었나' 확인이 한 번에 된다.
+    주소로 직접 간다. 행을 클릭하면 알림/카드 버튼에 맞아 팝오버만 열리는 일이
+    있었다. 행 id가 곧 경비 ID라서 주소를 만들 수 있다.
+
+    대기는 네비게이션이 아니라 '#transactionAmount가 이 금액이 되는 것'으로 한다.
+    SPA라 화면 전환에 load 이벤트가 안 나고, 목록과 상세가 한 화면에 같이 보여서
+    필드 존재만으로는 맞는 경비를 열었는지 알 수 없다.
     """
-    if row.href:
-        page.goto(row.href, wait_until="domcontentloaded")
-    else:
-        _eval(page, CLICK_ROW_JS, row.index)
+    if not row.expense_id:
+        raise AttachError("행에서 경비 ID를 찾지 못했다. 첨부하지 않았다.")
+
+    page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
 
     try:
         page.wait_for_function(WAIT_AMOUNT_JS, arg=str(slip.amount), timeout=20000)
@@ -261,8 +254,8 @@ def open_expense(page, slip: Slip, row: Row, folder: Path) -> None:
         )
 
 
-def attach(page, slip: Slip, row: Row, folder: Path) -> None:
-    open_expense(page, slip, row, folder)
+def attach(page, slip: Slip, row: Row, report_url: str, folder: Path) -> None:
+    open_expense(page, slip, row, report_url, folder)
     page.set_input_files(UPLOAD_INPUT, str(slip.path))
     page.wait_for_timeout(3000)
     page.get_by_role("button", name="경비 저장").first.click()
@@ -306,10 +299,10 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
                 + (f" 화면 HTML을 {dump} 에 남겼다." if dump else "")
             )
 
-        dated = [r for r in rows if r.when and r.amount]
-        linked = sum(1 for r in dated if r.href)
-        print(f"\n목록 {len(rows)}행 중 날짜·금액을 읽은 행 {len(dated)}개, 전표 {len(slips)}건")
-        print(f"상세 링크가 있는 행 {linked}개" + ("" if linked == len(dated) else " (나머지는 클릭으로 연다)"))
+        dated = [r for r in rows if r.when and r.amount and r.expense_id]
+        print(f"\n경비 {len(rows)}행 중 날짜·금액·ID를 읽은 행 {len(dated)}개, 전표 {len(slips)}건")
+        if len(dated) != len(rows):
+            print(f"  경고: {len(rows) - len(dated)}행은 값을 못 읽어서 대상에서 뺐다")
 
         pairs, skipped = match(slips, dated, tolerance)
         print(f"\n확정 매칭 {len(pairs)}건:")
@@ -336,10 +329,7 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
         attached, failed = 0, []
         for i, (slip, row) in enumerate(pairs, 1):
             try:
-                if not row.href:  # 링크가 있으면 목록을 거칠 필요가 없다
-                    page.goto(report_url, wait_until="domcontentloaded")
-                    page.wait_for_timeout(2000)
-                attach(page, slip, row, folder)
+                attach(page, slip, row, report_url, folder)
                 mark_done(folder, slip.approval)
                 attached += 1
                 print(f"  [{i}/{len(pairs)}] 첨부 {slip.path.name}")

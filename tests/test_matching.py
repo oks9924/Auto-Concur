@@ -8,7 +8,9 @@
 from datetime import date
 from pathlib import Path
 
-from src.attach_receipts import Row, Slip, _parse_amount, match
+from src.attach_receipts import Row, Slip, _parse_amount, expense_url, match
+
+REPORT = "https://eu2.concursolutions.com/nui/expense/reports/E74C62516B624F0D91DD"
 
 
 def slip(day: int, amount: int, month: int = 7) -> Slip:
@@ -56,5 +58,16 @@ def test_한_행은_한_번만_쓴다():
 def test_금액_파싱():
     assert _parse_amount("19,800") == 19800
     assert _parse_amount("19,800 원") == 19800
+    assert _parse_amount("KRW 75,400") == 75400
     assert _parse_amount("2026-07-31") is None
     assert _parse_amount("영수증 없음") is None
+
+
+def test_상세_주소_만들기():
+    # 행 id가 곧 경비 ID다. 클릭하지 않고 주소로 바로 간다.
+    assert expense_url(REPORT, "ABC123") == REPORT + "/expenses/ABC123"
+
+
+def test_이미_상세에_있어도_주소가_겹치지_않는다():
+    assert expense_url(REPORT + "/expenses/OLD", "NEW") == REPORT + "/expenses/NEW"
+    assert expense_url(REPORT + "/?x=1", "NEW") == REPORT + "/expenses/NEW"
