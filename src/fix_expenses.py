@@ -724,34 +724,50 @@ def _open_tab(page, selector: str, what: str) -> None:
     page.wait_for_timeout(1500)
 
 
-def _fill_room_rates(page, amounts: list[int]) -> tuple[str, bool]:
-    """일일 객실 요금을 채운다. (설명, 실제로 채웠는지)를 돌려준다.
+ITEMIZATION_READY_JS = (
+    "() => !!document.querySelector('[name=\"recurrence\"]')"
+    " || [...document.querySelectorAll('input')]"
+    ".some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.name || ''))"
+)
+
+
+def _itemization_locked(page) -> str | None:
+    """손댈 수 없는 명세면 그 이유를, 채울 수 있으면 None을 준다.
+
+    이미 입력된 명세는 요금 칸이 수정 불가다. 사람이 넣어둔 값을 우리가 다시
+    쓸 이유도 없다. 그때는 건드리지 않고 지나간다.
+    """
+    try:
+        # 탭을 눌렀다고 바로 그려지지 않는다. 둘 중 하나가 나타날 때까지 기다린다.
+        _wait_js(page, ITEMIZATION_READY_JS, "항목별 명세 화면", timeout=20000)
+    except AttachError:
+        return "항목별 명세를 열지 못해 건드리지 않았습니다"
+
+    cells = _eval(page, ROOM_RATE_INPUTS_JS)
+    if not cells:
+        return None  # 아직 표가 없다. '반복'을 골라야 생긴다
+    if all(c["locked"] for c in cells):
+        return "항목별 명세가 수정 불가라 건드리지 않았습니다"
+    if all(c["value"] for c in cells):
+        return "항목별 명세가 이미 채워져 있어 건드리지 않았습니다"
+    return None
+
+
+def _fill_room_rates(page, amounts: list[int]) -> str:
+    """일일 객실 요금을 채운다. 채운 내용을 한 줄로 돌려준다.
 
     합이 경비 금액과 정확히 같아야 한다. 행이 하나라도 어긋나면 합이 틀어지고,
     틀어진 채로 저장하면 나중에 찾기 어렵다. 그래서 맞지 않으면 멈춘다.
     세금 칸은 건드리지 않는다 - 우리가 아는 값이 아니다.
-
-    이미 입력된 명세는 칸이 잠겨서 고칠 수 없다. 그때는 그냥 지나간다 -
-    이미 사람이 넣어둔 값을 우리가 다시 쓸 이유가 없다.
     """
-    try:
-        _wait_js(
-            page,
-            "() => [...document.querySelectorAll('input')]"
-            ".some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.name || ''))",
-            "객실 요금 표",
-            timeout=25000,
-        )
-    except AttachError:
-        # 표 자체가 없다. 이미 명세가 만들어져 있어서 입력 화면이 아닌 경우다.
-        return "항목별 명세는 이미 입력되어 있어 건드리지 않았습니다", False
-
+    _wait_js(
+        page,
+        "() => [...document.querySelectorAll('input')]"
+        ".some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.name || ''))",
+        "객실 요금 표",
+        timeout=25000,
+    )
     cells = _eval(page, ROOM_RATE_INPUTS_JS)
-    if cells and all(c["locked"] for c in cells):
-        return "항목별 명세가 잠겨 있어 건드리지 않았습니다", False
-    if cells and all(c["value"] for c in cells):
-        return "항목별 명세가 이미 채워져 있어 건드리지 않았습니다", False
-
     if len(cells) != len(amounts):
         dump = _dump(page, "itemization-rows", DUMP_ITEMIZATION_JS)
         raise AttachError(
@@ -764,7 +780,7 @@ def _fill_room_rates(page, amounts: list[int]) -> tuple[str, bool]:
     for cell, money in zip(cells, amounts):
         page.fill(cell["selector"], str(money))
         page.wait_for_timeout(150)
-    return f"일일 객실 요금 {len(amounts)}행 (합 {sum(amounts):,}원)", True
+    return f"일일 객실 요금 {len(amounts)}행 (합 {sum(amounts):,}원)"
 
 
 def parse_attendees(value: str) -> list[str]:
@@ -968,32 +984,25 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
     # 누락되었습니다' 창이 뜨고, 그 창을 닫으면 리포트로 튕겨 나간다. 넣을 것을
     # 다 넣고 한 번만 저장한다.
     _open_tab(page, TAB_ITEMIZATION, "항목별 명세")
-    # 탭을 눌렀다고 바로 그려지지 않는다. 반복 콤보박스나 객실 요금 칸 중
-    # 하나가 나타날 때까지 기다린다. 안 기다렸더니 화면에 콤보박스가 아직
-    # 하나도 없는 상태에서 '반복'을 찾다가 실패했다.
-    _wait_js(
-        page,
-        "() => !!document.querySelector('[name=\"recurrence\"]')"
-        " || [...document.querySelectorAll('input')]"
-        ".some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.name || ''))",
-        "항목별 명세 화면",
-        timeout=25000,
-    )
+
+    # 이미 입력된 명세인지 먼저 본다. 그때는 요금 칸이 수정 불가라 '반복'을
+    # 고를 수도 없다. 순서를 거꾸로 했다가, 있지도 않은 콤보박스를 25초 동안
+    # 찾고 실패했다. 손댈 수 없으면 경비 저장으로 빠져나와 다음 경비로 간다.
+    locked = _itemization_locked(page)
+    if locked:
+        done.append(locked)
+        _save_expense(page, plan.row, report_url)
+        return done
+
     _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
     page.wait_for_timeout(1500)
 
-    what, filled = _fill_room_rates(page, amounts)
-    done.append(what)
+    done.append(_fill_room_rates(page, amounts))
 
-    if filled:
-        # 이 탭의 저장 버튼은 '경비 저장'이 아니라 '저장'이다. 저장하면 상세로
-        # 돌아온다 - 항목별 명세 탭에는 금액 필드가 없어서, 남아 있으면 다음
-        # 단계의 확인이 엉뚱하게 실패한다.
-        _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION)
-    else:
-        # 명세를 손대지 않았어도 이 화면에 갇힌다. 탭을 눌러 빠져나갈 수 없고
-        # '경비 저장'을 눌러야 나온다. _save_expense가 저장하고 상세를 다시 연다.
-        _save_expense(page, plan.row, report_url)
+    # 이 탭의 저장 버튼은 '경비 저장'이 아니라 '저장'이다. 저장하면 상세로
+    # 돌아온다 - 항목별 명세 탭에는 금액 필드가 없어서, 남아 있으면 다음
+    # 단계의 확인이 엉뚱하게 실패한다.
+    _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION)
     return done
 
 
