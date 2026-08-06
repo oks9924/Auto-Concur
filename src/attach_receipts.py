@@ -44,8 +44,27 @@ READ_ROWS_JS = """
     index: i,
     cells: [...r.querySelectorAll('[role="gridcell"], [role="cell"]')]
       .map(c => (c.innerText || '').trim().replace(/\\s+/g, ' ')),
+    // 상세로 가는 링크가 있으면 클릭 대신 주소로 바로 간다. 훨씬 덜 깨진다.
+    href: (r.querySelector('a[href*="/expenses/"]') || {}).href || null,
   }))
   .filter(r => r.cells.length)
+"""
+
+DUMP_ROW_JS = """
+(i) => {
+  const rows = [...document.querySelectorAll('[role="row"]')]
+    .filter(r => r.querySelectorAll('[role="gridcell"], [role="cell"]').length);
+  return rows[i] ? rows[i].outerHTML.slice(0, 12000) : null;
+}
+"""
+
+# 상세 폼이 이 전표의 금액을 보여줄 때까지 기다린다. 대기와 검증을 한 번에 한다.
+# SPA라 행을 눌러도 load 이벤트가 안 나므로 네비게이션을 기다리면 안 된다.
+WAIT_AMOUNT_JS = """
+(expected) => {
+  const el = document.querySelector('#transactionAmount');
+  return !!el && el.value.replace(/[^0-9]/g, '') === expected;
+}
 """
 
 # 행을 클릭해 상세로 들어가는 방법을 모른다. 행 안에서 누를 만한 것을 찾아 누른다.
@@ -88,6 +107,7 @@ class Row:
     when: date | None
     amount: int | None
     text: str
+    href: str | None = None
 
 
 def done_path(folder: Path) -> Path:
@@ -173,7 +193,9 @@ def read_rows(page) -> list[Row]:
                 # 금액 칼럼만 잡는다. 날짜에서 떼어낸 숫자가 섞이지 않게 한다.
                 if got is not None and got >= 100:
                     amount = got
-        rows.append(Row(index=raw["index"], when=when, amount=amount, text=joined[:90]))
+        rows.append(
+            Row(index=raw["index"], when=when, amount=amount, text=joined[:90], href=raw.get("href"))
+        )
     return rows
 
 
@@ -198,19 +220,39 @@ def match(slips: list[Slip], rows: list[Row], tolerance_days: int) -> tuple[list
     return pairs, skipped
 
 
-def attach(page, slip: Slip, row: Row) -> None:
-    before = page.url
-    _eval(page, CLICK_ROW_JS, row.index)
-    page.wait_for_url(lambda u: u != before, timeout=15000)
-    page.wait_for_selector(AMOUNT_FIELD, timeout=15000)
+def open_expense(page, slip: Slip, row: Row, folder: Path) -> None:
+    """상세 화면을 열고, 이 전표의 금액이 보일 때까지 기다린다.
 
-    # 엉뚱한 경비를 열었을 수 있다. 붙이기 전에 화면 값으로 다시 확인한다.
-    shown_amount = _parse_amount(page.input_value(AMOUNT_FIELD))
-    if shown_amount != slip.amount:
+    SPA라 행을 눌러도 load 이벤트가 안 난다. 네비게이션이 아니라 '#transactionAmount가
+    이 금액이 되는 것'을 기다린다. 대기와 '맞는 경비를 열었나' 확인이 한 번에 된다.
+    """
+    if row.href:
+        page.goto(row.href, wait_until="domcontentloaded")
+    else:
+        _eval(page, CLICK_ROW_JS, row.index)
+
+    try:
+        page.wait_for_function(WAIT_AMOUNT_JS, arg=str(slip.amount), timeout=20000)
+    except PWTimeout:
+        try:
+            shown = page.input_value(AMOUNT_FIELD, timeout=2000)
+        except (PWTimeout, PWError):
+            shown = None
+        dump = folder / "concur-row.html"
+        if not dump.exists():
+            html = _eval(page, DUMP_ROW_JS, row.index)
+            if html:
+                dump.write_text(html, encoding="utf-8")
+                print(f"     행 HTML 저장: {dump}")
         raise AttachError(
-            f"열린 경비의 금액({shown_amount})이 전표({slip.amount})와 다르다. 첨부하지 않았다."
+            f"상세 화면에서 {slip.amount:,}원을 확인하지 못했다"
+            + (f" (화면 금액: {shown})" if shown else " (금액 필드가 없다 - 상세가 안 열렸다)")
+            + ". 첨부하지 않았다."
         )
 
+
+def attach(page, slip: Slip, row: Row, folder: Path) -> None:
+    open_expense(page, slip, row, folder)
     page.set_input_files(UPLOAD_INPUT, str(slip.path))
     page.wait_for_timeout(3000)
     page.get_by_role("button", name="경비 저장").first.click()
@@ -255,7 +297,9 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
             )
 
         dated = [r for r in rows if r.when and r.amount]
+        linked = sum(1 for r in dated if r.href)
         print(f"\n목록 {len(rows)}행 중 날짜·금액을 읽은 행 {len(dated)}개, 전표 {len(slips)}건")
+        print(f"상세 링크가 있는 행 {linked}개" + ("" if linked == len(dated) else " (나머지는 클릭으로 연다)"))
 
         pairs, skipped = match(slips, dated, tolerance)
         print(f"\n확정 매칭 {len(pairs)}건:")
@@ -282,9 +326,10 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
         attached, failed = 0, []
         for i, (slip, row) in enumerate(pairs, 1):
             try:
-                page.goto(report_url, wait_until="domcontentloaded")
-                page.wait_for_timeout(2000)
-                attach(page, slip, row)
+                if not row.href:  # 링크가 있으면 목록을 거칠 필요가 없다
+                    page.goto(report_url, wait_until="domcontentloaded")
+                    page.wait_for_timeout(2000)
+                attach(page, slip, row, folder)
                 mark_done(folder, slip.approval)
                 attached += 1
                 print(f"  [{i}/{len(pairs)}] 첨부 {slip.path.name}")
