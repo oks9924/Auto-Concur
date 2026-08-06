@@ -63,6 +63,48 @@ ROW_TEXT_JS = """
 }
 """
 
+# fnPdf()는 바로 받지 않고 '출력방식' 모달을 띄운다. 모달 마크업을 모르니
+# 화면에 보이는 요소 중 라벨이 정확히 일치하는 가장 안쪽 것을 누른다.
+CLICK_TEXT_JS = """
+(label) => {
+  const hit = [...document.querySelectorAll('a, button, label, span, div, li, p')]
+    .filter(e => e.offsetParent !== null && (e.textContent || '').trim() === label);
+  if (!hit.length) return false;
+  hit.sort((a, b) => a.getElementsByTagName('*').length - b.getElementsByTagName('*').length);
+  hit[0].click();
+  return true;
+}
+"""
+
+# 모달 처리에 실패했을 때 다음 수정에 쓸 근거를 남긴다.
+DUMP_MODAL_JS = """
+() => [...document.querySelectorAll('div')]
+  .filter(d => d.offsetParent !== null
+            && /출력방식|페이지 당/.test(d.textContent || '')
+            && (d.textContent || '').length < 400)
+  .map(d => d.outerHTML.slice(0, 4000));
+"""
+
+LAYOUT_ONE_PER_PAGE = "페이지 당 1매씩"
+
+
+def _click_text(page, label: str) -> bool:
+    return bool(page.evaluate(CLICK_TEXT_JS, label))
+
+
+def _dump_modal(page, out_dir: Path) -> None:
+    """모달을 못 다뤘으면 마크업을 남긴다. 추측 대신 근거로 고치기 위해서다."""
+    path = out_dir / "modal-dump.html"
+    if path.exists():
+        return
+    try:
+        blocks = page.evaluate(DUMP_MODAL_JS)
+    except Exception:
+        return
+    if blocks:
+        path.write_text("\n\n<!-- ======== -->\n\n".join(blocks), encoding="utf-8")
+        print(f"     모달 마크업 저장: {path}")
+
 
 def _norm_date(value: str) -> str:
     """2026-07-01 / 20260701 / 2026.07.01 을 화면 형식(2026.07.01)으로."""
@@ -135,16 +177,21 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
             args = {"key": grid["key"], "row": row, "col": grid["chCol"], "on": True}
             page.evaluate(SET_CHECK_JS, args)
             try:
-                with page.expect_download(timeout=60000) as dl:
-                    page.evaluate("fnPdf()")
+                page.evaluate("fnPdf()")
+                page.wait_for_timeout(1000)  # 출력방식 모달이 그려질 때까지
+                _click_text(page, LAYOUT_ONE_PER_PAGE)
+                with page.expect_download(timeout=45000) as dl:
+                    if not _click_text(page, "확인"):
+                        raise RuntimeError("모달에서 '확인'을 찾지 못했다")
                 d = dl.value
                 target = out_dir / d.suggested_filename
                 d.save_as(target)
                 saved += 1
                 print(f"  [{i}/{len(rows)}] {target.name}   {label}")
-            except PWTimeout:
+            except (PWTimeout, RuntimeError) as exc:
                 failed.append((row, label))
-                print(f"  [{i}/{len(rows)}] 실패 - 다운로드가 시작되지 않았다   {label}")
+                print(f"  [{i}/{len(rows)}] 실패: {exc}   {label}")
+                _dump_modal(page, out_dir)
             finally:
                 args["on"] = False
                 page.evaluate(SET_CHECK_JS, args)
