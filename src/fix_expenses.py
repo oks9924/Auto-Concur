@@ -743,9 +743,11 @@ def _itemization_locked(page) -> str | None:
     """
     try:
         # 탭을 눌렀다고 바로 그려지지 않는다. 둘 중 하나가 나타날 때까지 기다린다.
-        _wait_js(page, ITEMIZATION_READY_JS, "항목별 명세 화면", timeout=20000)
+        # 오래 기다릴 이유는 없다 - 이미 명세가 있는 건은 요금 칸도 '반복'도
+        # 아예 없어서, 기다려봐야 그대로다. 20초를 기다렸더니 멈춘 것처럼 보였다.
+        _wait_js(page, ITEMIZATION_READY_JS, "항목별 명세 화면", timeout=8000)
     except AttachError:
-        return "항목별 명세를 열지 못해 건드리지 않았습니다"
+        return "항목별 명세가 이미 있어 건드리지 않았습니다"
 
     cells = _eval(page, ROOM_RATE_INPUTS_JS)
     if not cells:
