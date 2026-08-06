@@ -408,18 +408,24 @@ HINT_LOCATION = "custom10"  # 숙박 위치 (국내 / 해외)
 HINT_CHANNEL = "custom16"  # Booking channel
 HINT_RECURRENCE = "recurrence"  # 반복 (일일 금액 동일 / 다름)
 
-# 모달에 올라와 있는 참석자 이름. 표 행의 첫 칸이 이름이다. 행 전체 텍스트에는
-# 금액·인원 같은 것이 섞여 있어서 첫 줄만 본다.
+# 모달에 올라와 있는 참석자. 행의 첫 칸을 이름으로 읽었더니 체크박스 칸의
+# '행 선택'이 나왔다. 어느 칸이 이름인지 짐작하지 말고 행 전체 글자를 준다.
+# 대조는 검색어를 토막 내서 그 안에 다 있는지로 하니 이걸로 충분하다.
 ATTENDEE_NAMES_JS = """
 () => {
-  const rows = [...document.querySelectorAll(
-    '[role="row"][data-testid="data-row"], table tbody tr'
-  )];
-  return rows
-    .map(r => {
-      const cell = r.querySelector('td, [role="cell"], [role="gridcell"]') || r;
-      return (cell.innerText || '').trim().split('\\n')[0].trim();
-    })
+  const noise = new Set(['행 선택', '모든 행 선택', '선택', '삭제', '편집']);
+  // tbody 안만 본다. 머리글 행까지 세면 '이름 회사' 같은 글자가 참석자로 잡힌다.
+  return [...document.querySelectorAll(
+    'tbody tr[role="row"], tbody tr, [role="row"][data-testid="data-row"]'
+  )]
+    .map(r => (r.innerText || '')
+      .split('\\n')
+      .map(x => x.trim())
+      .filter(x => x && !noise.has(x))
+      .join(' ')
+      .replace(/\\s+/g, ' ')
+      .trim()
+      .slice(0, 60))
     .filter(Boolean);
 }
 """
@@ -754,7 +760,9 @@ def _fill_room_rates(page, amounts: list[int]) -> int:
         dump = _dump(page, "itemization-rows", DUMP_ITEMIZATION_JS)
         raise AttachError(
             f"객실 요금 칸이 {len(cells)}개인데 숙박일수는 {len(amounts)}박입니다. "
-            "수가 맞지 않으면 합계가 금액과 달라지므로 채우지 않았습니다."
+            "수가 맞지 않으면 합계가 금액과 달라지므로 채우지 않았습니다. "
+            "표가 옛 날짜로 만들어졌을 수 있습니다 - 상세 정보 탭의 날짜 범위를 "
+            "확인해 주세요."
             + (f" (표 정보: {dump})" if dump else "")
         )
     for cell, money in zip(cells, amounts):
@@ -981,14 +989,9 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
         _pick_from_combo(page, HINT_CHANNEL, lodging.channel, "Booking channel")
         done.append("Booking channel")
 
-    # 상세를 먼저 저장한다. 저장하지 않고 탭을 옮기면 방금 넣은 날짜가 날아가고,
-    # 표도 옛 날짜로 만들어진다.
-    #
-    # 저장하면 '필수 정보가 누락되었습니다. 지금 수정하시겠습니까?' 창이 뜬다.
-    # 아직 객실 요금을 안 넣었으니 당연하다. 창을 닫으면 리포트로 튕겨 나가므로
-    # _save_expense가 상세를 다시 열어준다.
-    _save_expense(page, plan.row, report_url)
-
+    # 중간에 저장하지 않는다. 객실 요금이 비어 있는 채로 저장하면 '필수 정보가
+    # 누락되었습니다' 창이 뜨고, 그 창을 닫으면 리포트로 튕겨 나간다. 넣을 것을
+    # 다 넣고 한 번만 저장한다.
     _open_tab(page, TAB_ITEMIZATION, "항목별 명세")
     _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
     page.wait_for_timeout(1500)

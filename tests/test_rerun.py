@@ -39,3 +39,13 @@ def test_참석자_이름_대조():
     assert name_matches("kyungsik.oh", "Oh Kyungsik (kyungsik.oh@x.com)")
     assert not name_matches("kyungsik.oh", "Kim Minsu")
     assert not name_matches("", "Oh Kyungsik")  # 빈 검색어는 아무나 맞추면 안 된다
+
+
+def test_행_전체_글자로_참석자를_대조한다():
+    # 행의 첫 칸을 이름으로 읽었더니 체크박스 칸의 '행 선택'이 나왔다.
+    # 어느 칸이 이름인지 짐작하지 말고 행 전체와 견준다.
+    from src.fix_expenses import name_matches
+
+    행 = "Oh Kyungsik 본인 Siemens KRW 75,400"
+    assert name_matches("kyungsik.oh", 행)
+    assert not name_matches("hong.gildong", 행)
