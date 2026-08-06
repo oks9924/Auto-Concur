@@ -27,12 +27,11 @@ from playwright.sync_api import sync_playwright
 
 from . import console
 from .attach_receipts import (
-    AMOUNT_FIELD,
     START_URL,
+    WAIT_AMOUNT_JS,
     AttachError,
     Row,
     _eval,
-    _parse_amount,
     expense_url,
     read_rows,
 )
@@ -57,18 +56,31 @@ ATTENDEE_QUERY = "kyungsik.oh"
 PURPOSE_FIELD = "#businessPurpose"
 COMMENT_FIELD = "textarea#comment"
 
-# 경비 유형 콤보박스. id가 없어서 라벨로 찾는다.
-OPEN_TYPE_JS = """
-() => {
-  const cb = [...document.querySelectorAll('[role="combobox"]')].find(c => {
+# 라벨로 콤보박스를 찾는다. id는 React가 매번 새로 만들어서 못 쓴다.
+FIND_COMBO_FN = """
+  const findCombo = (re) => [...document.querySelectorAll('[role="combobox"]')].find(c => {
     const w = c.closest('[class*="form-field"]');
     const l = w && w.querySelector('label');
-    return l && /Expense Type|경비 유형/.test(l.innerText || '');
+    return l && re.test(l.innerText || '');
   });
+"""
+
+TYPE_COMBO_READY_JS = "() => {" + FIND_COMBO_FN + " return !!findCombo(/Expense Type|경비 유형/); }"
+
+OPEN_TYPE_JS = (
+    "() => {"
+    + FIND_COMBO_FN
+    + """
+  const cb = findCombo(/Expense Type|경비 유형/);
   if (!cb) return false;
   cb.click();
   return true;
-}
+}"""
+)
+
+HAS_TYPE_OPTION_JS = """
+(code) => [...document.querySelectorAll('li[role="option"]')]
+  .some(o => (o.id || '').includes('-_-_-' + code + '-_-_-'))
 """
 
 PICK_TYPE_JS = """
@@ -82,18 +94,21 @@ PICK_TYPE_JS = """
 """
 
 # 참석자 모달: 검색창에 넣고, '새 참석자 생성'이 아닌 첫 후보를 고른다.
-ATTENDEE_INPUT_JS = """
-() => {
-  const cb = [...document.querySelectorAll('[role="combobox"]')].find(c => {
-    const w = c.closest('[class*="form-field"]');
-    const l = w && w.querySelector('label');
-    return l && /이름 또는 기업 이메일/.test(l.innerText || '');
-  });
+ATTENDEE_INPUT_JS = (
+    "() => {"
+    + FIND_COMBO_FN
+    + """
+  const cb = findCombo(/이름 또는 기업 이메일/);
   const el = cb && cb.querySelector('input');
   if (!el) return null;
-  el.id = el.id || 'auto-concur-attendee-input';
+  if (!el.id) el.id = 'auto-concur-attendee-input';
   return '#' + CSS.escape(el.id);
-}
+}"""
+)
+
+HAS_ATTENDEE_OPTION_JS = """
+() => [...document.querySelectorAll('li[role="option"]')]
+  .some(o => !(o.id || '').includes('CREATE_NEW_ATTENDEE'))
 """
 
 PICK_ATTENDEE_JS = """
@@ -147,21 +162,51 @@ def decide(row: Row) -> Plan | None:
     return None
 
 
-def _set_type(page, code: str) -> None:
+def _wait_js(page, script: str, what: str, arg=None, timeout: int = 30000) -> None:
+    """조건이 참이 될 때까지 기다린다.
+
+    고정 시간으로 기다리면 안 된다. Concur는 상세 폼을 나눠서 그리고, 모달은
+    주소로 열면 앱 전체를 다시 띄운다. 얼마나 걸릴지는 그때그때 다르다.
+    """
+    try:
+        if arg is None:
+            page.wait_for_function(script, timeout=timeout)
+        else:
+            page.wait_for_function(script, arg=arg, timeout=timeout)
+    except PWTimeout:
+        raise AttachError(f"{what}을(를) 기다렸지만 나타나지 않았다") from None
+
+
+def _set_type(page, code: str, label: str) -> None:
+    _wait_js(page, TYPE_COMBO_READY_JS, "경비 유형 콤보박스")
     if not _eval(page, OPEN_TYPE_JS):
         raise AttachError("경비 유형 콤보박스를 찾지 못했다")
-    page.wait_for_timeout(800)
+
+    _wait_js(page, HAS_TYPE_OPTION_JS, f"경비 유형 옵션({code})", arg=code, timeout=20000)
     if not _eval(page, PICK_TYPE_JS, code):
         raise AttachError(f"경비 유형 옵션({code})을 찾지 못했다")
-    page.wait_for_timeout(1500)
+
+    # 고른 값이 실제로 반영됐는지 본다. 눌렀다고 바뀐 것은 아니다.
+    _wait_js(
+        page,
+        "(want) => {"
+        + FIND_COMBO_FN
+        + " const cb = findCombo(/Expense Type|경비 유형/);"
+        " return !!cb && (cb.innerText || '').includes(want); }",
+        f"경비 유형이 '{label}'로 바뀌는 것",
+        arg=label,
+        timeout=20000,
+    )
 
 
-def _fill_if_empty(page, selector: str, value: str) -> bool:
+def _fill_if_empty(page, selector: str, value: str, what: str) -> bool:
     """비어 있을 때만 채운다. 사람이 써둔 것을 덮어쓰지 않는다."""
     try:
-        if page.input_value(selector, timeout=3000).strip():
-            return False
+        page.wait_for_selector(selector, timeout=20000)
     except PWTimeout:
+        # 조용히 넘기면 안 된다. 안 채워졌는데 채운 줄 알게 된다.
+        raise AttachError(f"{what} 필드를 찾지 못했다") from None
+    if page.input_value(selector).strip():
         return False
     page.fill(selector, value)
     return True
@@ -175,22 +220,32 @@ def _add_attendee(page, report_url: str, expense_id: str) -> bool:
     if count > 0:
         return False
 
+    # 주소로 모달을 열면 앱 전체를 다시 띄운다. 넉넉히 기다려야 한다.
     page.goto(
         f"{expense_url(report_url, expense_id)}?modal=attendees&context=entry",
         wait_until="domcontentloaded",
     )
-    page.wait_for_timeout(2500)
-
+    _wait_js(page, ATTENDEE_INPUT_JS, "참석자 검색창", timeout=40000)
     selector = _eval(page, ATTENDEE_INPUT_JS)
-    if not selector:
-        raise AttachError("참석자 검색창을 찾지 못했다")
-    page.fill(selector, ATTENDEE_QUERY)
-    page.wait_for_timeout(2500)
+
+    # fill 대신 실제 타이핑. 자동완성은 키 입력을 보고 검색을 띄운다.
+    page.click(selector)
+    page.keyboard.type(ATTENDEE_QUERY, delay=80)
+    _wait_js(page, HAS_ATTENDEE_OPTION_JS, f"'{ATTENDEE_QUERY}' 검색 결과", timeout=25000)
+
     if not _eval(page, PICK_ATTENDEE_JS):
-        raise AttachError(f"'{ATTENDEE_QUERY}' 검색 결과가 없다")
+        raise AttachError(f"'{ATTENDEE_QUERY}' 검색 결과를 고르지 못했다")
     page.wait_for_timeout(1500)
     page.get_by_role("button", name="저장").first.click()
-    page.wait_for_timeout(2500)
+
+    # 저장이 끝나 모달이 닫히는 것을 확인한다.
+    _wait_js(
+        page,
+        "() => !document.querySelector('li[role=\"option\"]')"
+        " && !location.search.includes('modal=attendees')",
+        "참석자 저장 완료",
+        timeout=30000,
+    )
     return True
 
 
@@ -198,26 +253,27 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
     row = plan.row
     page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
 
-    # 엉뚱한 경비를 열었을 수 있다. 손대기 전에 금액으로 확인한다.
-    page.wait_for_selector(AMOUNT_FIELD, timeout=20000)
-    shown = _parse_amount(page.input_value(AMOUNT_FIELD))
-    if shown != row.amount:
-        raise AttachError(f"열린 경비 금액({shown})이 목록({row.amount})과 다르다. 건드리지 않았다.")
+    # 이 금액이 화면에 뜰 때까지 기다린다. 대기와 '맞는 경비를 열었나' 확인이
+    # 한 번에 된다. 목록과 상세가 같은 화면에 있어서 필드 존재만으로는 모른다.
+    _wait_js(page, WAIT_AMOUNT_JS, f"{row.amount:,}원 경비 상세", arg=str(row.amount))
 
     done = []
     if plan.type_code:
-        _set_type(page, plan.type_code)
+        _set_type(page, plan.type_code, plan.type_label)
         done.append(f"유형->{plan.type_label}")
 
     if plan.fill_meal:
-        if _fill_if_empty(page, PURPOSE_FIELD, BUSINESS_PURPOSE):
+        if _fill_if_empty(page, PURPOSE_FIELD, BUSINESS_PURPOSE, "비즈니스 목적"):
             done.append("목적")
-        if _fill_if_empty(page, COMMENT_FIELD, COMMENT):
+        if _fill_if_empty(page, COMMENT_FIELD, COMMENT, "코멘트"):
             done.append("코멘트")
 
     if done:
         page.get_by_role("button", name="경비 저장").first.click()
-        page.wait_for_timeout(2500)
+        # 저장이 끝나고 화면이 다시 그려질 때까지 기다린다. 여기서 서둘러
+        # 참석자 모달로 넘어가면 방금 넣은 값이 날아간다.
+        page.wait_for_timeout(2000)
+        _wait_js(page, WAIT_AMOUNT_JS, "저장 후 화면", arg=str(row.amount))
 
     if plan.fill_meal and _add_attendee(page, report_url, row.expense_id):
         done.append("참석자")
