@@ -112,6 +112,8 @@ class Row:
     amount: int | None
     text: str
     expense_id: str | None = None
+    expense_type: str = ""
+    vendor: str = ""
 
 
 def done_path(folder: Path) -> Path:
@@ -193,6 +195,8 @@ def read_rows(page) -> list[Row]:
                 amount=_parse_amount(raw["amount"]),
                 text=label[:80],
                 expense_id=raw["id"],
+                expense_type=raw["expenseType"],
+                vendor=raw["vendor"],
             )
         )
     return rows
