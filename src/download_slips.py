@@ -91,7 +91,7 @@ def _norm_date(value: str) -> str:
     """2026-07-01 / 20260701 / 2026.07.01 을 화면 형식(2026.07.01)으로."""
     digits = re.sub(r"\D", "", value)
     if len(digits) != 8:
-        raise ValueError(f"날짜 형식을 알 수 없다: {value!r}")
+        raise ValueError(f"날짜 형식을 알 수 없습니다: {value!r}")
     return f"{digits[:4]}.{digits[4:6]}.{digits[6:]}"
 
 
@@ -121,7 +121,7 @@ def _dump_modal(page, out_dir: Path) -> None:
     if blocks:
         path = out_dir / "modal-dump.html"
         path.write_text("\n\n<!-- ======== -->\n\n".join(blocks), encoding="utf-8")
-        print(f"  모달 마크업 저장: {path}")
+        print(f"  모달 마크업을 저장했습니다: {path}")
 
 
 def _split(bundle: Path, out_dir: Path, expected: int) -> int:
@@ -129,9 +129,9 @@ def _split(bundle: Path, out_dir: Path, expected: int) -> int:
     reader = PdfReader(bundle)
     if len(reader.pages) != expected:
         raise DownloadError(
-            f"{expected}건을 선택했는데 PDF는 {len(reader.pages)}페이지다. "
-            f"페이지와 거래가 1:1이 아니면 이후 매칭을 신뢰할 수 없다. "
-            f"'페이지 당 1매씩'이 아니라 4매씩으로 받았는지 확인해라: {bundle}"
+            f"{expected}건을 선택했는데 받은 PDF는 {len(reader.pages)}페이지입니다. "
+            f"페이지와 거래가 1:1이 아니면 이후 매칭을 믿을 수 없어서 여기서 멈춥니다. "
+            f"'페이지 당 1매씩'이 아니라 4매씩으로 받았는지 확인해 주세요: {bundle}"
         )
     for i, page in enumerate(reader.pages, 1):
         writer = PdfWriter()
@@ -157,10 +157,10 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
         page.goto(SLIP_PAGE, wait_until="domcontentloaded")
 
         print("\n" + "=" * 64)
-        print("  브라우저에서 카드 인증을 직접 해라 (가상키패드라 자동 입력이 안 된다).")
-        print("  매출내역 목록이 뜬 다음에 Enter를 눌러라.")
+        print("  브라우저에서 카드 인증을 직접 해 주세요 (가상키패드라 자동 입력이 안 됩니다).")
+        print("  매출내역 목록이 뜬 다음에 Enter를 눌러 주세요.")
         print("=" * 64)
-        console.wait_enter("인증을 끝냈으면 Enter > ")
+        console.wait_enter("인증을 끝내셨으면 Enter > ")
 
         _set_date(page, "#inqFromDt", from_date)
         _set_date(page, "#inqToDt", to_date)
@@ -170,15 +170,15 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
         grid = page.evaluate(FIND_GRID_JS)
         if not grid:
             _dump_modal(page, out_dir)
-            raise DownloadError("그리드 객체를 못 찾았다. 조회가 됐는지 화면을 확인해라.")
+            raise DownloadError("거래 목록을 찾지 못했습니다. 조회가 됐는지 화면을 확인해 주세요.")
         if grid["chCol"] < 0:
-            raise DownloadError(f"체크박스 칼럼을 못 찾았다: {grid}")
+            raise DownloadError(f"목록에서 선택 칸을 찾지 못했습니다: {grid}")
 
         rows = grid["rows"]
-        print(f"그리드 '{grid['key']}': {len(rows)}건, 체크박스 칼럼 {grid['chCol']}")
+        print(f"거래 {len(rows)}건을 찾았습니다.")
         if limit:
             rows = rows[:limit]
-            print(f"--limit {limit} 이므로 {len(rows)}건만 받는다.")
+            print(f"--limit {limit} 이라서 {len(rows)}건만 받습니다.")
 
         base = {"key": grid["key"], "col": grid["chCol"]}
         page.evaluate(SET_CHECKS_JS, {**base, "rows": grid["rows"], "on": False})
@@ -188,26 +188,26 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
         page.wait_for_timeout(1000)  # 출력방식 모달이 그려질 때까지
         if not _click_text(page, LAYOUT_ONE_PER_PAGE):
             _dump_modal(page, out_dir)
-            raise DownloadError(f"모달에서 '{LAYOUT_ONE_PER_PAGE}'을 찾지 못했다")
+            raise DownloadError(f"출력방식 창에서 '{LAYOUT_ONE_PER_PAGE}'을 찾지 못했습니다.")
 
-        print(f"{len(rows)}건 합본을 만드는 중이다. 몇 분 걸릴 수 있다...")
+        print(f"{len(rows)}건을 한 파일로 만드는 중입니다. 몇 분 걸릴 수 있습니다...")
         try:
             with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as dl:
                 if not _click_text(page, "확인"):
-                    raise DownloadError("모달에서 '확인'을 찾지 못했다")
+                    raise DownloadError("출력방식 창에서 '확인'을 찾지 못했습니다.")
             downloaded = dl.value
         except PWTimeout:
             _dump_modal(page, out_dir)
-            raise DownloadError("다운로드가 시작되지 않았다. 건수를 줄여서 다시 해봐라.")
+            raise DownloadError("다운로드가 시작되지 않았습니다. 건수를 줄여서 다시 시도해 주세요.")
 
         bundle = raw_dir / downloaded.suggested_filename
         downloaded.save_as(bundle)
         ctx.close()
 
-    print(f"합본 저장: {bundle}")
+    print(f"받은 파일을 저장했습니다: {bundle}")
     n = _split(bundle, out_dir, len(rows))
-    print(f"{n}장으로 분리 -> {out_dir}")
-    print(f"다음: python -m src.organize {out_dir}")
+    print(f"전표 {n}장으로 나눴습니다 -> {out_dir}")
+    print(f"다음 단계: python -m src.organize {out_dir}")
     console.open_folder(out_dir)
     return 0
 
@@ -217,13 +217,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="현대카드 매출전표 PDF 다운로드")
     ap.add_argument("--from", dest="from_date", required=True, help="예: 2026.07.01")
     ap.add_argument("--to", dest="to_date", required=True, help="예: 2026.07.31")
-    ap.add_argument("--out", type=Path, help="전표를 받을 폴더. 없으면 설정값")
-    ap.add_argument("--limit", type=int, help="앞에서 N건만 (동작 확인용)")
+    ap.add_argument("--out", type=Path, help="전표를 받을 폴더입니다. 없으면 설정값을 씁니다")
+    ap.add_argument("--limit", type=int, help="앞에서 N건만 받습니다 (동작 확인용)")
     args = ap.parse_args()
     try:
         return download(_norm_date(args.from_date), _norm_date(args.to_date), args.out, args.limit)
     except DownloadError as exc:
-        print(f"\n중단: {exc}")
+        print(f"\n작업을 중단했습니다: {exc}")
         return 1
 
 

@@ -22,9 +22,18 @@ from .slip_parser import Slip, SlipParseError, parse_slip
 EDITABLE = ["경비유형", "비즈니스목적", "코멘트", "참석자"]
 
 # 엑셀에서 감출 칼럼. 지우지는 않는다 - 가맹점명은 후보가 여럿일 때 어느 경비인지
-# 가리는 데 쓰고, 파일명은 첨부할 PDF를 찾는 데 쓴다. 나머지도 나중에 근거를
-# 되짚을 때 필요하다. 보이지만 않게 한다.
-HIDDEN = ["파일명", "가맹점명", "거래유형", "카드번호", "사업자등록번호", "전표번호", "원본파일명"]
+# 가리는 데 쓰고, 파일명은 첨부할 PDF를 찾는 데, 승인번호는 다시 돌릴 때 사람이
+# 적어둔 값을 되찾는 열쇠로 쓴다. 나머지도 나중에 근거를 되짚을 때 필요하다.
+HIDDEN = [
+    "파일명",
+    "승인번호",
+    "가맹점명",
+    "거래유형",
+    "카드번호",
+    "사업자등록번호",
+    "전표번호",
+    "원본파일명",
+]
 
 MANIFEST_COLUMNS = [
     "파일명",
@@ -80,7 +89,7 @@ def organize(folder: Path, apply: bool) -> int:
     kept = _kept_edits(folder / "manifest.csv")
     pdfs = sorted(folder.glob("*.pdf"))
     if not pdfs:
-        print(f"PDF가 없다: {folder}", file=sys.stderr)
+        print(f"PDF가 없습니다: {folder}", file=sys.stderr)
         return 1
 
     rows: list[dict[str, str]] = []
@@ -100,7 +109,7 @@ def organize(folder: Path, apply: bool) -> int:
             # 승인번호가 고유키라 이름이 겹치면 같은 거래를 두 번 받은 것이다.
             # 덮어쓰지 않고 남겨서 사람이 확인하고 지우게 한다.
             failures.append(
-                (pdf, f"{target.name} 이 이미 있다 - 같은 거래를 두 번 받았다. 이 파일은 지워도 된다")
+                (pdf, f"{target.name} 이 이미 있습니다 - 같은 거래를 두 번 받으신 것 같습니다. 이 파일은 지우셔도 됩니다")
             )
             continue
         elif apply:
@@ -124,24 +133,24 @@ def organize(folder: Path, apply: bool) -> int:
         writer.writerows(rows)
 
     total = sum(int(r["금액"]) for r in rows)
-    print(f"\n전표 {len(rows)}건, 합계 {total:,}원  ->  {manifest}")
+    print(f"\n전표 {len(rows)}건, 합계 {total:,}원을 정리했습니다  ->  {manifest}")
     # 엑셀본은 경비유형 칸에 드롭다운이 걸려 있어 오타로 못 쓰는 값을 막는다.
     book = folder / "manifest.xlsx"
     try:
         sheet.write_xlsx(MANIFEST_COLUMNS, rows, book, list(cfg["expense_type_codes"]),
                          hidden=HIDDEN)
-        print(f"작업지: {book}  (경비유형은 드롭다운에서만 고를 수 있다)")
+        print(f"작업지를 만들었습니다: {book}  (경비유형은 드롭다운에서만 고르실 수 있습니다)")
     except sheet.SheetError as exc:
-        print(f"xlsx는 못 만들었다: {exc}")
-    print(f"엑셀에서 {', '.join(EDITABLE)} 을 채운 뒤 update_concur 로 넘겨라.")
-    print("경비유형을 '내부 직원간 식음료'로 고르면 참석자 칸이 초록으로 바뀐다.")
+        print(f"xlsx는 만들지 못했습니다: {exc}")
+    print(f"엑셀에서 {', '.join(EDITABLE)} 을 채우신 뒤 update_concur 로 넘겨 주세요.")
+    print("경비유형을 '내부 직원간 식음료'로 고르시면 참석자 칸이 초록으로 바뀝니다.")
     if not apply:
-        print("미리보기다. 실제로 바꾸려면 --apply 를 붙여라.")
+        print("미리보기입니다. 실제로 바꾸시려면 --apply 를 붙여 주세요.")
 
     console.open_folder(folder)
 
     if failures:
-        print(f"\n실패 {len(failures)}건 (이름 안 바꿈):", file=sys.stderr)
+        print(f"\n{len(failures)}건은 처리하지 못했습니다 (이름을 바꾸지 않았습니다):", file=sys.stderr)
         for pdf, msg in failures:
             print(f"  ! {pdf.name}: {msg}", file=sys.stderr)
         return 1
@@ -151,8 +160,8 @@ def organize(folder: Path, apply: bool) -> int:
 def main() -> int:
     console.setup()
     ap = argparse.ArgumentParser(description="현대카드 전표 PDF 정리")
-    ap.add_argument("folder", type=Path, help="전표 PDF가 모여 있는 폴더")
-    ap.add_argument("--apply", action="store_true", help="실제로 이름을 변경한다")
+    ap.add_argument("folder", type=Path, help="전표 PDF가 모여 있는 폴더입니다")
+    ap.add_argument("--apply", action="store_true", help="실제로 이름을 바꿉니다")
     args = ap.parse_args()
     return organize(args.folder, args.apply)
 

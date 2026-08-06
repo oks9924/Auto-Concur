@@ -15,7 +15,7 @@ import argparse
 from pathlib import Path
 
 from . import console, settings, sheet
-from .attach_receipts import AttachError, attach_phase, open_report
+from .attach_receipts import AttachError, attach_phase, load_manifest, open_report
 from .fix_expenses import fix_phase
 
 
@@ -30,9 +30,22 @@ def pick_sheet(folder: Path, given: str | None) -> Path | None:
     return None
 
 
+def precheck(folder: Path, sheet_path: Path | None) -> None:
+    """브라우저를 띄우기 전에 읽을 파일부터 확인한다.
+
+    로그인하고 리포트까지 연 다음에 '작업지가 없다'로 멈추면 그 수고가 헛일이
+    된다. 실제로 리포트를 열고 Enter를 누른 직후에 창이 닫히는 일이 있었다.
+    """
+    slips = load_manifest(folder)
+    print(f"전표 {len(slips)}건을 읽었습니다: {folder / 'manifest.csv'}")
+    if sheet_path:
+        print(f"작업지 {len(sheet.load(sheet_path))}행을 읽었습니다: {sheet_path}")
+
+
 def run(folder: Path, apply: bool, tolerance: int, limit: int | None,
         sheet_path: Path | None) -> int:
     cfg = settings.load()
+    precheck(folder, sheet_path)
     pw, ctx, page, report_url = open_report()
     try:
         print("\n" + "-" * 64)
@@ -49,7 +62,7 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None,
         if sheet_path:
             print(f"      작업지: {sheet_path}")
         else:
-            print("      작업지가 없어서 규칙대로 한다.")
+            print("      작업지가 없어서 규칙대로 처리합니다.")
         print("-" * 64)
         second = fix_phase(page, report_url, cfg, apply, limit, sheet_path)
         return first or second
@@ -62,11 +75,11 @@ def main() -> int:
     console.setup()
     cfg = settings.load()
     ap = argparse.ArgumentParser(description="Concur에 첨부와 입력을 한 번에 반영")
-    ap.add_argument("--dir", type=Path, help="전표 폴더. 없으면 설정값")
-    ap.add_argument("--sheet", help="작업지 경로. 없으면 전표 폴더에서 찾는다")
-    ap.add_argument("--apply", action="store_true", help="실제로 반영한다")
-    ap.add_argument("--limit", type=int, help="각 단계에서 앞 N건만 (동작 확인용)")
-    ap.add_argument("--tolerance", type=int, help="영수증 매칭 날짜 허용 오차(일)")
+    ap.add_argument("--dir", type=Path, help="전표 폴더입니다. 없으면 설정값을 씁니다")
+    ap.add_argument("--sheet", help="작업지 경로입니다. 없으면 전표 폴더에서 찾습니다")
+    ap.add_argument("--apply", action="store_true", help="실제로 반영합니다")
+    ap.add_argument("--limit", type=int, help="각 단계에서 앞 N건만 처리합니다 (동작 확인용)")
+    ap.add_argument("--tolerance", type=int, help="영수증 매칭에서 허용할 날짜 오차(일)입니다")
     args = ap.parse_args()
 
     folder = args.dir or Path(cfg["downloads_dir"])
@@ -74,7 +87,7 @@ def main() -> int:
     try:
         return run(folder, args.apply, tolerance, args.limit, pick_sheet(folder, args.sheet))
     except (AttachError, sheet.SheetError) as exc:
-        print(f"\n중단: {exc}")
+        print(f"\n작업을 중단했습니다: {exc}")
         return 1
 
 

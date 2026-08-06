@@ -142,7 +142,7 @@ def _snapshot(pages, out: Path) -> None:
     print(
         f"  저장: {out}  창 {len(captured)}개, 요소 {len(every)}개, "
         f"입력 필드 {len(fields)}개, "
-        f"로그인 {'됨' if logged_in else '안 됨 -- 확인할 것'}"
+        f"로그인 {'됨' if logged_in else '안 됨 -- 확인해 주세요'}"
     )
 
 
@@ -163,8 +163,8 @@ def dump(url: str, name: str, channel: str | None) -> None:
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(url, wait_until="domcontentloaded")
 
-        print("\n브라우저가 열렸다. 로그인하고 원하는 화면까지 이동해라.")
-        print("화면마다 Enter를 누르면 그 시점이 저장된다. 끝내려면 q + Enter.\n")
+        print("\n브라우저가 열렸습니다. 로그인하시고 원하는 화면까지 이동해 주세요.")
+        print("화면마다 Enter를 누르시면 그 시점이 저장됩니다. 끝내시려면 q + Enter.\n")
 
         n = 0
         while input(f"[{n + 1}] Enter=캡처, q=종료: ").strip().lower() != "q":
@@ -172,18 +172,18 @@ def dump(url: str, name: str, channel: str | None) -> None:
             _snapshot(ctx.pages, out / f"{n:02d}")
 
         ctx.close()
-        print(f"\n{n}개 화면을 {out}/ 에 저장했다.")
+        print(f"\n{n}개 화면을 {out}/ 에 저장했습니다.")
 
 
 def main() -> int:
     console.setup()
     ap = argparse.ArgumentParser(description="페이지 구조 덤프 (셀렉터 탐색용)")
     ap.add_argument("url")
-    ap.add_argument("--name", default="page", help="저장 폴더 이름 (예: hyundaicard, concur)")
+    ap.add_argument("--name", default="page", help="저장 폴더 이름입니다 (예: hyundaicard, concur)")
     ap.add_argument(
         "--channel",
         choices=("chrome", "msedge"),
-        help="SSO가 번들 Chromium을 막을 때 설치된 브라우저를 쓴다",
+        help="SSO가 번들 Chromium을 막을 때 설치된 브라우저를 씁니다",
     )
     args = ap.parse_args()
     dump(args.url, args.name, args.channel)

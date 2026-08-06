@@ -55,6 +55,16 @@ READ_ROWS_JS = (
     const el = r.querySelector('[data-nuiexp="' + hook + '"]');
     return el ? (el.innerText || '').trim().replace(/\\s+/g, ' ') : '';
   };
+  // 영수증이 이미 붙어 있는지. 영수증 칸을 찾고, 그 안에 아이콘/버튼이 있으면
+  // 붙은 것으로 본다. 칸 자체를 못 찾으면 null - '없다'가 아니라 '모른다'다.
+  // 모를 때 붙은 것으로 치면 조용히 빠뜨리게 되므로 그때는 평소대로 진행한다.
+  const receipt = (r) => {
+    const cell = r.querySelector(
+      '[data-nuiexp*="receipt" i], [data-testid*="receipt" i], [class*="receipt" i]'
+    );
+    if (!cell) return null;
+    return !!cell.querySelector('img, svg, button, a');
+  };
   return gridRows().map((r, i) => ({
     index: i,
     id: r.id || r.getAttribute('data-row-key') || null,
@@ -62,6 +72,7 @@ READ_ROWS_JS = (
     amount: pick(r, 'amount-cell'),
     vendor: pick(r, 'vendor-name'),
     expenseType: pick(r, 'expense-type-cell'),
+    receipt: receipt(r),
   }));
 }"""
 )
@@ -115,6 +126,7 @@ class Row:
     expense_id: str | None = None
     expense_type: str = ""
     vendor: str = ""
+    has_receipt: bool | None = None  # None이면 화면에서 알 수 없었다는 뜻
 
 
 def done_path(folder: Path) -> Path:
@@ -137,13 +149,13 @@ def mark_done(folder: Path, approval: str) -> None:
 def load_manifest(folder: Path) -> list[Slip]:
     path = folder / "manifest.csv"
     if not path.exists():
-        raise AttachError(f"manifest.csv가 없다: {path}. 먼저 src.organize 를 돌려라.")
+        raise AttachError(f"manifest.csv가 없습니다: {path}\n먼저 B단계(파싱 · 작업지 생성)를 실행해 주세요.")
     slips = []
     with path.open(encoding="utf-8-sig", newline="") as f:
         for r in csv.DictReader(f):
             pdf = folder / r["파일명"]
             if not pdf.exists():
-                raise AttachError(f"manifest에 있는 파일이 없다: {pdf}")
+                raise AttachError(f"작업지에 적힌 전표 파일이 없습니다: {pdf}\nB단계를 --apply 로 다시 실행해 주세요.")
             slips.append(
                 Slip(
                     path=pdf,
@@ -171,7 +183,7 @@ def _eval(page, script: str, arg=None, tries: int = 4):
                 raise
             last = exc
             page.wait_for_timeout(2000)
-    raise AttachError(f"페이지가 계속 바뀌어서 읽지 못했다. 화면이 멈춘 뒤 다시 해라: {last}")
+    raise AttachError(f"화면이 계속 바뀌어서 읽지 못했습니다. 화면이 멈춘 뒤 다시 시도해 주세요: {last}")
 
 
 def _parse_amount(text: str) -> int | None:
@@ -199,6 +211,7 @@ def read_rows(page) -> list[Row]:
                 expense_id=raw["id"],
                 expense_type=raw["expenseType"],
                 vendor=raw["vendor"],
+                has_receipt=raw.get("receipt"),
             )
         )
     return rows
@@ -259,7 +272,7 @@ def open_expense(page, slip: Slip, row: Row, report_url: str, folder: Path) -> N
     필드 존재만으로는 맞는 경비를 열었는지 알 수 없다.
     """
     if not row.expense_id:
-        raise AttachError("행에서 경비 ID를 찾지 못했다. 첨부하지 않았다.")
+        raise AttachError("경비 ID를 찾지 못해서 첨부하지 않았습니다.")
 
     page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
 
@@ -275,11 +288,11 @@ def open_expense(page, slip: Slip, row: Row, report_url: str, folder: Path) -> N
             html = _eval(page, DUMP_ROW_JS, row.index)
             if html:
                 dump.write_text(html, encoding="utf-8")
-                print(f"     행 HTML 저장: {dump}")
+                print(f"     화면 정보를 저장했습니다: {dump}")
         raise AttachError(
-            f"상세 화면에서 {slip.amount:,}원을 확인하지 못했다"
-            + (f" (화면 금액: {shown})" if shown else " (금액 필드가 없다 - 상세가 안 열렸다)")
-            + ". 첨부하지 않았다."
+            f"상세 화면에서 {slip.amount:,}원을 확인하지 못했습니다"
+            + (f" (화면 금액: {shown})" if shown else " (금액 칸이 없습니다 - 상세가 열리지 않았습니다)")
+            + ". 안전을 위해 첨부하지 않았습니다."
         )
 
 
@@ -298,9 +311,9 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
     done = load_done(folder)
     if done:
         slips = [s for s in slips if s.approval not in done]
-        print(f"이미 붙인 {len(done)}건은 건너뛴다. 남은 전표 {len(slips)}건.")
+        print(f"이미 붙인 {len(done)}건은 건너뜁니다. 남은 전표는 {len(slips)}건입니다.")
     if not slips:
-        print("붙일 것이 없다.")
+        print("붙일 영수증이 없습니다.")
         return 0
 
     rows = read_rows(page)
@@ -311,19 +324,31 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
         except PWError:
             dump = None
         raise AttachError(
-            "경비 목록 행을 읽지 못했다."
-            + (f" 화면 HTML을 {dump} 에 남겼다." if dump else "")
+            "경비 목록을 읽지 못했습니다. 리포트가 열려 있는지 확인해 주세요."
+            + (f" 화면 정보를 {dump} 에 남겼습니다." if dump else "")
         )
 
     dated = [r for r in rows if r.when and r.amount and r.expense_id]
-    print(f"\n경비 {len(rows)}행 중 날짜·금액·ID를 읽은 행 {len(dated)}개, 전표 {len(slips)}건")
+    print(f"\n경비 {len(rows)}건 중 {len(dated)}건을 읽었습니다. 붙일 전표는 {len(slips)}건입니다.")
     if len(dated) != len(rows):
-        print(f"  경고: {len(rows) - len(dated)}행은 값을 못 읽어서 대상에서 뺐다")
+        print(f"  알림: {len(rows) - len(dated)}건은 값을 읽지 못해 대상에서 제외했습니다")
 
     pairs, skipped = match(slips, dated, tolerance)
+
+    # 이미 영수증이 붙어 있는 경비는 다시 붙이지 않는다. 같은 파일이 두 장
+    # 붙으면 감사에서 설명해야 한다. 화면에서 확인할 수 없었던 행(None)은
+    # 붙은 것으로 치지 않는다 - 모른다고 건너뛰면 조용히 빠뜨리게 된다.
+    already = [(s, r) for s, r, _ in pairs if r.has_receipt]
+    if already:
+        pairs = [(s, r, h) for s, r, h in pairs if not r.has_receipt]
+        print(f"\n이미 영수증이 붙어 있는 {len(already)}건은 건너뜁니다.")
+        for slip, _ in already:
+            if apply:
+                mark_done(folder, slip.approval)
+
     counts = Counter(how for _, _, how in pairs)
     extra = ", ".join(f"{how} {n}건" for how, n in counts.items() if how != "단독")
-    print(f"\n확정 매칭 {len(pairs)}건" + (f" (그중 {extra})" if extra else ""))
+    print(f"\n짝을 찾은 것 {len(pairs)}건" + (f" (그중 {extra})" if extra else ""))
     for slip, row, how in pairs:
         gap = (row.when - slip.when).days
         mark = "" if gap == 0 else f"  (Concur 날짜 {gap:+d}일)"
@@ -334,17 +359,17 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
         print(f"  {slip.when} {slip.amount:>9,}원  {slip.merchant[:16]:16} -> {row.text[:50]}{mark}")
 
     if skipped:
-        print(f"\n건너뜀 {len(skipped)}건 (사람이 처리):")
+        print(f"\n건너뛴 것 {len(skipped)}건 (직접 처리해 주세요):")
         for slip, why in skipped:
             print(f"  {slip.when} {slip.amount:>9,}원  {slip.merchant[:16]:16} - {why}")
 
     if not apply:
-        print("\n계획만 출력했다. 실제로 붙이려면 --apply 를 붙여라.")
+        print("\n계획만 보여 드렸습니다. 실제로 붙이시려면 --apply 를 붙여 주세요.")
         return 0
 
     if limit:
         pairs = pairs[:limit]
-        print(f"\n--limit {limit} 이므로 {len(pairs)}건만 붙인다.")
+        print(f"\n--limit {limit} 이라서 {len(pairs)}건만 붙입니다.")
 
     attached, failed = 0, []
     for i, (slip, row, _) in enumerate(pairs, 1):
@@ -352,14 +377,14 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
             attach(page, slip, row, report_url, folder)
             mark_done(folder, slip.approval)
             attached += 1
-            print(f"  [{i}/{len(pairs)}] 첨부 {slip.path.name}")
+            print(f"  [{i}/{len(pairs)}] 첨부했습니다 - {slip.path.name}")
         except (AttachError, PWTimeout) as exc:
             failed.append((slip, str(exc)))
-            print(f"  [{i}/{len(pairs)}] 실패 {slip.path.name}: {exc}")
+            print(f"  [{i}/{len(pairs)}] 실패했습니다 - {slip.path.name}: {exc}")
 
-    print(f"\n{attached}건 첨부")
+    print(f"\n{attached}건을 첨부했습니다.")
     if failed:
-        print(f"실패 {len(failed)}건:")
+        print(f"{len(failed)}건은 첨부하지 못했습니다:")
         for slip, why in failed:
             print(f"  ! {slip.path.name}: {why}")
         return 1
@@ -380,10 +405,10 @@ def open_report():
     page.goto(START_URL, wait_until="domcontentloaded")
 
     print("\n" + "=" * 64)
-    print("  Concur에 로그인하고 처리할 경비 리포트를 열어라.")
-    print("  경비 목록이 보이는 상태에서 Enter를 눌러라.")
+    print("  Concur에 로그인하시고 처리할 경비 리포트를 열어 주세요.")
+    print("  경비 목록이 보이는 상태에서 Enter를 눌러 주세요.")
     print("=" * 64)
-    console.wait_enter("리포트를 열었으면 Enter > ")
+    console.wait_enter("리포트를 여셨으면 Enter > ")
 
     page.wait_for_timeout(2000)  # Enter 직후에도 화면을 더 그린다
     return pw, ctx, page, page.url
@@ -401,17 +426,17 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
 def main() -> int:
     console.setup()
     ap = argparse.ArgumentParser(description="Concur 경비에 전표 첨부")
-    ap.add_argument("--dir", type=Path, help="manifest.csv가 있는 폴더. 없으면 설정값")
-    ap.add_argument("--apply", action="store_true", help="실제로 첨부한다")
-    ap.add_argument("--tolerance", type=int, help="Concur 날짜 허용 오차(일). 없으면 설정값")
-    ap.add_argument("--limit", type=int, help="앞에서 N건만 (동작 확인용)")
+    ap.add_argument("--dir", type=Path, help="manifest.csv가 있는 폴더입니다. 없으면 설정값을 씁니다")
+    ap.add_argument("--apply", action="store_true", help="실제로 첨부합니다")
+    ap.add_argument("--tolerance", type=int, help="Concur 날짜 허용 오차(일)입니다. 없으면 설정값을 씁니다")
+    ap.add_argument("--limit", type=int, help="앞에서 N건만 처리합니다 (동작 확인용)")
     args = ap.parse_args()
     cfg = settings.load()
     tolerance = args.tolerance if args.tolerance is not None else int(cfg["date_tolerance_days"])
     try:
         return run(args.dir or Path(cfg["downloads_dir"]), args.apply, tolerance, args.limit)
     except AttachError as exc:
-        print(f"\n중단: {exc}")
+        print(f"\n작업을 중단했습니다: {exc}")
         return 1
 
 

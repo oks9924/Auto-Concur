@@ -12,14 +12,16 @@
   내부 직원간 식음료      -> 참석자·목적·코멘트만 채운다
   그 외(환급 불가 등)     -> 건드리지 않는다
 
-이미 채워진 값은 덮어쓰지 않는다. 참석자가 이미 있으면 추가하지 않는다.
-그래서 두 번 돌려도 안전하고, 중간에 끊겨도 이어서 하면 된다.
+작업지가 유일한 기준이다. 다시 돌리면 유형·목적·코멘트는 적힌 값으로 다시
+맞추고(이미 같으면 건드리지 않는다), 참석자는 화면과 견줘서 빠진 사람만 넣는다.
+작업지에 없는 참석자가 올라와 있으면 멈추고 알린다 - 지우는 화면은 아직 모른다.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -231,6 +233,22 @@ ATTENDEE_COUNT_JS_BODY = """
 
 ATTENDEE_COUNT_JS = "() => {" + ATTENDEE_COUNT_JS_BODY + " return n; }"
 
+# 모달에 올라와 있는 참석자 이름. 표 행의 첫 칸이 이름이다. 행 전체 텍스트에는
+# 금액·인원 같은 것이 섞여 있어서 첫 줄만 본다.
+ATTENDEE_NAMES_JS = """
+() => {
+  const rows = [...document.querySelectorAll(
+    '[role="row"][data-testid="data-row"], table tbody tr'
+  )];
+  return rows
+    .map(r => {
+      const cell = r.querySelector('td, [role="cell"], [role="gridcell"]') || r;
+      return (cell.innerText || '').trim().split('\\n')[0].trim();
+    })
+    .filter(Boolean);
+}
+"""
+
 # 새 경비유형(택시 등)이 생겼을 때 코드를 알아내려고 쓴다.
 DUMP_TYPES_JS = """
 () => {
@@ -333,14 +351,14 @@ def _wait_js(page, script: str, what: str, arg=None, timeout: int = 30000) -> No
         else:
             page.wait_for_function(script, arg=arg, timeout=timeout)
     except PWTimeout:
-        raise AttachError(f"{what}을(를) 기다렸지만 나타나지 않았다") from None
+        raise AttachError(f"{what}이(가) 나타나지 않았습니다") from None
 
 
 def _click_marked(page, script: str, what: str, arg=None) -> None:
     """JS로 대상을 표시하고 실제 마우스로 누른다."""
     selector = _eval(page, script) if arg is None else _eval(page, script, arg)
     if not selector:
-        raise AttachError(f"{what}을(를) 찾지 못했다")
+        raise AttachError(f"{what}을(를) 찾지 못했습니다")
     page.click(selector, timeout=15000)
 
 
@@ -368,14 +386,18 @@ def _set_type(page, code: str, label: str) -> None:
     )
 
 
-def _fill_if_empty(page, selector: str, value: str, what: str) -> bool:
-    """비어 있을 때만 채운다. 사람이 써둔 것을 덮어쓰지 않는다."""
+def _set_field(page, selector: str, value: str, what: str) -> bool:
+    """작업지에 적힌 값으로 맞춘다. 이미 다른 값이 있으면 덮어쓴다.
+
+    작업지가 유일한 기준이라 화면에 뭐가 적혀 있든 그쪽으로 맞춘다. 이미
+    같은 값이면 건드리지 않는다 - 저장 한 번을 아낀다.
+    """
     try:
         page.wait_for_selector(selector, timeout=20000)
     except PWTimeout:
         # 조용히 넘기면 안 된다. 안 채워졌는데 채운 줄 알게 된다.
-        raise AttachError(f"{what} 필드를 찾지 못했다") from None
-    if page.input_value(selector).strip():
+        raise AttachError(f"{what} 입력칸을 찾지 못했습니다") from None
+    if page.input_value(selector).strip() == value.strip():
         return False
     page.fill(selector, value)
     return True
@@ -422,8 +444,31 @@ def _pick_attendee(page, query: str) -> None:
     page.wait_for_timeout(1500)
 
 
-def _add_attendees(page, report_url: str, expense_id: str, queries: list[str]) -> int:
-    """참석자가 하나도 없을 때만 추가한다. 이미 있으면 건드리지 않는다.
+def name_matches(query: str, name: str) -> bool:
+    """검색어가 가리키는 사람과 화면의 이름이 같은가.
+
+    검색어는 'kyungsik.oh', 화면 이름은 'Oh Kyungsik' 처럼 형태가 다르다.
+    검색어를 토막 내서 전부 이름 안에 있으면 같은 사람으로 본다.
+    """
+    parts = [p for p in re.split(r"[^0-9A-Za-z가-힣]+", query.lower()) if p]
+    low = name.lower()
+    return bool(parts) and all(p in low for p in parts)
+
+
+def _attendee_names(page) -> list[str]:
+    """모달에 이미 올라와 있는 참석자 이름. 못 읽으면 빈 목록."""
+    try:
+        return [n for n in _eval(page, ATTENDEE_NAMES_JS) if n]
+    except Exception:
+        return []
+
+
+def _sync_attendees(page, report_url: str, expense_id: str, queries: list[str]) -> int:
+    """화면의 참석자를 작업지에 적힌 사람들과 맞춘다.
+
+    이미 같으면 건드리지 않는다. 빠진 사람만 넣는다. 작업지에 없는 사람이
+    올라와 있으면 지워야 하는데, 지우는 화면을 아직 확인하지 못했다. 조용히
+    두면 잘못된 참석자가 그대로 남으므로 멈추고 사람에게 넘긴다.
 
     여러 명이면 한 명씩 검색·선택을 반복하고 저장은 마지막에 한 번만 한다.
     중간에 실패하면 아무것도 저장되지 않으므로 다시 돌리면 처음부터 다시 한다.
@@ -432,17 +477,32 @@ def _add_attendees(page, report_url: str, expense_id: str, queries: list[str]) -
         return 0
     count = _eval(page, ATTENDEE_COUNT_JS)
     if count is None:
-        raise AttachError("참석자 버튼을 찾지 못했다")
-    if count > 0:
-        return 0
+        raise AttachError("참석자 버튼을 찾지 못했습니다")
 
     # 주소로 모달을 열면 앱 전체를 다시 띄운다. 넉넉히 기다려야 한다.
     page.goto(
         f"{expense_url(report_url, expense_id)}?modal=attendees&context=entry",
         wait_until="domcontentloaded",
     )
+    page.wait_for_timeout(2500)
+
+    names = _attendee_names(page) if count else []
+    extra = [n for n in names if not any(name_matches(q, n) for q in queries)]
+    if extra:
+        dump = _dump(page, "attendees-mismatch", ATTENDEE_NAMES_JS)
+        raise AttachError(
+            f"참석자가 작업지와 다릅니다. 화면: {', '.join(names)} / 작업지: {', '.join(queries)}. "
+            "참석자를 지우는 것은 아직 자동으로 하지 못해서 그대로 두었습니다. "
+            "이 건은 직접 수정해 주세요."
+            + (f" (화면 정보: {dump})" if dump else "")
+        )
+
+    missing = [q for q in queries if not any(name_matches(q, n) for n in names)]
+    if not missing:
+        return 0
+
     try:
-        for query in queries:
+        for query in missing:
             _pick_attendee(page, query)
     except AttachError:
         _dump(page, "combos-attendee", DUMP_COMBOS_JS)
@@ -466,8 +526,8 @@ def _add_attendees(page, report_url: str, expense_id: str, queries: list[str]) -
     except AttachError:
         actual = _eval(page, ATTENDEE_COUNT_JS)
         _dump(page, "inputs-attendee-save", DUMP_INPUTS_JS)
-        raise AttachError(f"참석자 {len(queries)}명을 넣으려 했는데 화면에는 {actual}명이다")
-    return len(queries)
+        raise AttachError(f"참석자 {len(queries)}명을 넣으려 했는데 화면에는 {actual}명만 있습니다")
+    return len(missing)
 
 
 def apply_plan(page, plan: Plan, report_url: str) -> str:
@@ -483,9 +543,9 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
         _set_type(page, plan.type_code, plan.type_label)
         done.append(f"유형->{plan.type_label}")
 
-    if plan.purpose and _fill_if_empty(page, PURPOSE_FIELD, plan.purpose, "비즈니스 목적"):
+    if plan.purpose and _set_field(page, PURPOSE_FIELD, plan.purpose, "비즈니스 목적"):
         done.append("목적")
-    if plan.comment and _fill_if_empty(page, COMMENT_FIELD, plan.comment, "코멘트"):
+    if plan.comment and _set_field(page, COMMENT_FIELD, plan.comment, "코멘트"):
         done.append("코멘트")
 
     if done:
@@ -495,7 +555,7 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
         page.wait_for_timeout(2000)
         _wait_js(page, WAIT_AMOUNT_JS, "저장 후 화면", arg=str(row.amount))
 
-    added = _add_attendees(page, report_url, row.expense_id, parse_attendees(plan.attendee))
+    added = _sync_attendees(page, report_url, row.expense_id, parse_attendees(plan.attendee))
     if added:
         done.append(f"참석자 {added}명")
 
@@ -509,7 +569,9 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
     plans = []
     for entry, row, how in pairs:
         code, label = None, row.expense_type
-        if entry.type_name and entry.type_name not in (row.expense_type or ""):
+        # 화면 유형과 정확히 같을 때만 넘어간다. 예전에는 부분 일치로 봤는데
+        # 다른 유형에 이름이 섞여 있으면 이미 바꾼 줄 알고 지나쳤다.
+        if entry.type_name and entry.type_name != (row.expense_type or "").strip():
             code, label = settings.code_for(cfg, entry.type_name), entry.type_name
         plan = Plan(row, code, label, entry.purpose, entry.comment, entry.attendee)
         if plan.type_code or plan.fill_meal:
@@ -528,28 +590,28 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
                                            sheet_path, int(cfg["date_tolerance_days"]))
         plans = [p for p, _ in paired]
         if missing:
-            print(f"\n작업지에 있으나 Concur에서 못 찾은 것 {len(missing)}건:")
+            print(f"\n작업지에는 있으나 Concur에서 찾지 못한 것 {len(missing)}건:")
             for entry, why in missing:
                 print(f"  {entry.when} {entry.amount:>9,}원  {entry.merchant[:16]} - {why}")
     else:
         plans = [p for p in (decide(r, rules) for r in rows if r.expense_id) if p]
 
-    print(f"\n경비 {len(rows)}건 중 손댈 것 {len(plans)}건\n")
+    print(f"\n경비 {len(rows)}건 중 {len(plans)}건을 수정합니다\n")
     for plan in plans:
         r = plan.row
         print(f"  {r.when} {r.amount:>9,}원  {r.expense_type[:22]:22} -> {plan.summary()}")
 
     skipped = len(rows) - len(plans)
     if skipped:
-        print(f"\n건드리지 않음 {skipped}건 (이미 맞거나 대상 아님)")
+        print(f"\n{skipped}건은 그대로 둡니다 (이미 맞거나 대상이 아닙니다)")
 
     if not apply:
-        print("\n계획만 출력했다. 실제로 고치려면 --apply 를 붙여라.")
+        print("\n계획만 보여 드렸습니다. 실제로 반영하시려면 --apply 를 붙여 주세요.")
         return 0
 
     if limit:
         plans = plans[:limit]
-        print(f"\n--limit {limit} 이므로 {len(plans)}건만 고친다.")
+        print(f"\n--limit {limit} 이라서 {len(plans)}건만 처리합니다.")
 
     done, failed = 0, []
     for i, plan in enumerate(plans, 1):
@@ -559,11 +621,11 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
             print(f"  [{i}/{len(plans)}] {plan.row.when} {plan.row.amount:,}원 - {what}")
         except (AttachError, PWTimeout) as exc:
             failed.append((plan, str(exc)))
-            print(f"  [{i}/{len(plans)}] 실패 {plan.row.when} {plan.row.amount:,}원: {exc}")
+            print(f"  [{i}/{len(plans)}] 실패했습니다 - {plan.row.when} {plan.row.amount:,}원: {exc}")
 
-    print(f"\n{done}건 처리")
+    print(f"\n{done}건을 처리했습니다.")
     if failed:
-        print(f"실패 {len(failed)}건:")
+        print(f"{len(failed)}건은 처리하지 못했습니다:")
         for plan, why in failed:
             print(f"  ! {plan.row.when} {plan.row.amount:,}원: {why}")
         return 1
@@ -573,13 +635,13 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
 def list_types_phase(page, report_url: str) -> int:
     usable = [r for r in read_rows(page) if r.expense_id]
     if not usable:
-        raise AttachError("경비가 하나도 없다. 리포트를 열고 다시 해라.")
+        raise AttachError("경비가 하나도 없습니다. 리포트를 열고 다시 시도해 주세요.")
     page.goto(expense_url(report_url, usable[0].expense_id), wait_until="domcontentloaded")
     _wait_js(page, TYPE_COMBO_READY_JS, "경비 유형 콤보박스", timeout=25000)
     _click_marked(page, SELECT_TYPE_COMBO_JS, "경비 유형 콤보박스")
     _wait_js(page, "() => !!document.querySelector('li[role=\"option\"]')", "경비 유형 목록")
     types = _eval(page, DUMP_TYPES_JS)
-    print(f"\n경비유형 {len(types)}개. settings.json 의 expense_type_codes 에 넣어 쓴다.\n")
+    print(f"\n경비유형 {len(types)}개를 찾았습니다. settings.json 의 expense_type_codes 에 넣어 쓰시면 됩니다.\n")
     for t in sorted(types, key=lambda x: x["label"]):
         print(f'  "{t["label"]}": "{t["code"]}",')
     return 0
@@ -601,12 +663,12 @@ def run(apply: bool, limit: int | None, list_types: bool = False,
 def main() -> int:
     console.setup()
     ap = argparse.ArgumentParser(description="Concur 경비유형·참석자·목적·코멘트 채우기")
-    ap.add_argument("--apply", action="store_true", help="실제로 고친다")
-    ap.add_argument("--limit", type=int, help="앞에서 N건만 (동작 확인용)")
+    ap.add_argument("--apply", action="store_true", help="실제로 반영합니다")
+    ap.add_argument("--limit", type=int, help="앞에서 N건만 처리합니다 (동작 확인용)")
     ap.add_argument("--sheet", nargs="?", const="", type=str,
-                    help="작업지(csv/xlsx)대로 넣는다. 값 없이 주면 전표 폴더의 manifest.csv")
+                    help="작업지(csv/xlsx)대로 넣습니다. 값 없이 주시면 전표 폴더의 manifest.csv 를 씁니다")
     ap.add_argument("--list-types", action="store_true",
-                    help="화면의 경비유형과 코드를 뽑는다 (새 유형이 생겼을 때)")
+                    help="화면의 경비유형과 코드를 뽑습니다 (새 유형이 생겼을 때 쓰세요)")
     args = ap.parse_args()
     try:
         path = None
@@ -614,7 +676,7 @@ def main() -> int:
             path = Path(args.sheet) if args.sheet else Path(settings.load()["downloads_dir"]) / "manifest.csv"
         return run(args.apply, args.limit, args.list_types, path)
     except (AttachError, sheet.SheetError) as exc:
-        print(f"\n중단: {exc}")
+        print(f"\n작업을 중단했습니다: {exc}")
         return 1
 
 

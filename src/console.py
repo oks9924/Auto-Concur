@@ -11,7 +11,21 @@ Enter로 소비돼서 스크립트가 그냥 진행해버린다. 그래서 wait_
 
 from __future__ import annotations
 
+import atexit
+import os
 import sys
+
+# 창에서 띄운 단계는 끝나도 콘솔을 바로 닫지 않는다. Windows에서 새 콘솔로 띄우면
+# 프로세스가 끝나는 순간 창이 사라져서 마지막 안내나 오류를 읽을 수 없다.
+# (실제로 "리포트 열고 Enter 눌렀더니 그냥 꺼졌다"는 일이 있었다.)
+HOLD_ENV = "AUTO_CONCUR_HOLD"
+
+
+def _hold() -> None:
+    try:
+        input("\n창을 닫으려면 Enter를 눌러 주세요 > ")
+    except (EOFError, KeyboardInterrupt):
+        pass
 
 
 def setup() -> None:
@@ -19,6 +33,8 @@ def setup() -> None:
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(encoding="utf-8", errors="replace")
+    if os.environ.get(HOLD_ENV):
+        atexit.register(_hold)
 
 
 def _drain() -> None:
@@ -64,4 +80,4 @@ def wait_enter(message: str) -> None:
     """
     _drain()
     while input(message).strip():
-        print("  (그냥 Enter만 눌러라. 방금 입력한 건 실행되지 않았다.)")
+        print("  (그냥 Enter만 눌러 주세요. 방금 입력하신 내용은 실행되지 않았습니다.)")

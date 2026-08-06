@@ -121,13 +121,13 @@ def _read_amounts(words: list[dict]) -> tuple[int, int, int, int]:
     found = [w for w in words if lo < w["top"] < hi and NUMERIC.match(w["text"])]
     if len(found) != 4:
         raise SlipParseError(
-            f"금액 블록에서 숫자 4개(금액/부가세/봉사료/합계)를 찾지 못했다: {len(found)}개"
+            f"금액 칸에서 숫자 4개(금액/부가세/봉사료/합계)를 찾지 못했습니다: {len(found)}개"
         )
     values = [int(w["text"].replace(",", "")) for w in sorted(found, key=lambda w: w["top"])]
     amount, vat, service_charge, total = values
     if amount + vat + service_charge != total:
         raise SlipParseError(
-            f"금액 합이 맞지 않는다: {amount} + {vat} + {service_charge} != {total}"
+            f"금액 합이 맞지 않습니다: {amount} + {vat} + {service_charge} != {total}"
         )
     return amount, vat, service_charge, total
 
@@ -136,26 +136,26 @@ def parse_slip(path: Path) -> Slip:
     with pdfplumber.open(path) as pdf:
         if len(pdf.pages) != 1:
             raise SlipParseError(
-                f"1페이지 전표를 기대했는데 {len(pdf.pages)}페이지다. "
-                "한 PDF에 여러 전표가 들어 있으면 파서를 고쳐야 한다."
+                f"전표 1장짜리 PDF를 기대했는데 {len(pdf.pages)}페이지입니다. "
+                "한 PDF에 여러 전표가 들어 있으면 읽을 수 없습니다."
             )
         words = pdf.pages[0].extract_words()
 
     if not words:
-        raise SlipParseError("텍스트 레이어가 비어 있다. 스캔본이면 OCR이 필요하다.")
+        raise SlipParseError("PDF에 글자 정보가 없습니다. 스캔본이면 OCR이 필요합니다.")
 
     cells = _read_cells(words)
 
     raw_dt = cells.get("거래일시", "")
     m = DATETIME.search(raw_dt)
     if not m:
-        raise SlipParseError(f"거래일시를 읽지 못했다: {raw_dt!r}")
+        raise SlipParseError(f"거래일시를 읽지 못했습니다: {raw_dt!r}")
     y, mo, d, h, mi, s = (int(g) for g in m.groups())
     transacted_at = datetime(y, mo, d, h, mi, s)
 
     approval_no = cells.get("승인번호", "")
     if not approval_no:
-        raise SlipParseError("승인번호가 비어 있다")
+        raise SlipParseError("승인번호가 비어 있습니다")
 
     amount, vat, service_charge, total = _read_amounts(words)
 

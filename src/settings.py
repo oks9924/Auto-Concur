@@ -56,7 +56,7 @@ def load() -> dict:
         try:
             saved = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise SystemExit(f"{SETTINGS_PATH} 를 읽지 못했다: {exc}")
+            raise SystemExit(f"{SETTINGS_PATH} 를 읽지 못했습니다: {exc}")
         data.update({k: v for k, v in saved.items() if v is not None})
     return data
 
@@ -76,6 +76,6 @@ def code_for(data: dict, type_name: str) -> str:
         if name.startswith(type_name) or type_name in name:
             return code
     raise SystemExit(
-        f"경비유형 '{type_name}' 의 코드를 모른다. settings.json 의 expense_type_codes 에 "
-        "추가하거나 `python -m src.fix_expenses --list-types` 로 확인해라."
+        f"경비유형 '{type_name}' 의 코드를 알 수 없습니다. settings.json 의 expense_type_codes 에 "
+        "추가하시거나 `python -m src.fix_expenses --list-types` 로 확인해 주세요."
     )

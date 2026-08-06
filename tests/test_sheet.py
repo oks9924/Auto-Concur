@@ -79,14 +79,14 @@ def test_승인번호가_빈_줄은_건너뛴다(tmp_path):
 def test_칼럼이_없으면_멈춘다(tmp_path):
     path = tmp_path / "bad.csv"
     path.write_text("아무거나\n1\n", encoding="utf-8-sig")
-    with pytest.raises(sheet.SheetError, match="칼럼이 없다"):
+    with pytest.raises(sheet.SheetError, match="칸이 없습니다"):
         sheet.load(path)
 
 
 def test_숫자가_아니면_멈춘다(tmp_path):
     path = tmp_path / "bad.csv"
     path.write_text("거래일,금액,승인번호\n2026-07-01,천원,001\n", encoding="utf-8-sig")
-    with pytest.raises(sheet.SheetError, match="읽지 못했다"):
+    with pytest.raises(sheet.SheetError, match="읽지 못했습니다"):
         sheet.load(path)
 
 
