@@ -156,9 +156,11 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(SLIP_PAGE, wait_until="domcontentloaded")
 
-        print("\n브라우저에서 카드 인증을 직접 해라 (가상키패드라 자동 입력이 안 된다).")
-        print("매출내역 화면이 뜨면 여기로 돌아와서 Enter.\n")
-        input("Enter... ")
+        print("\n" + "=" * 64)
+        print("  브라우저에서 카드 인증을 직접 해라 (가상키패드라 자동 입력이 안 된다).")
+        print("  매출내역 목록이 뜬 다음에 Enter를 눌러라.")
+        print("=" * 64)
+        console.wait_enter("인증을 끝냈으면 Enter > ")
 
         _set_date(page, "#inqFromDt", from_date)
         _set_date(page, "#inqToDt", to_date)
