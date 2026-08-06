@@ -205,17 +205,32 @@ DUMP_INPUTS_JS = """
 })
 """
 
-HAS_ATTENDEE_OPTION_JS = """
-() => [...document.querySelectorAll('li[role="option"]')]
-  .some(o => !(o.id || '').includes('CREATE_NEW_ATTENDEE'))
+# 검색이 비동기라 결과가 오기 전에 '결과 없음' 자리표시자가 먼저 뜬다.
+# 그걸 진짜 결과로 보고 누르면 aria-disabled 항목을 누르려다 실패한다.
+REAL_ATTENDEE_FN = """
+  const isRealAttendee = (o) => {
+    const id = o.id || '';
+    if (id.includes('CREATE_NEW_ATTENDEE') || id.includes('NO_RESULTS')) return false;
+    if (o.getAttribute('aria-disabled') === 'true') return false;
+    const cls = typeof o.className === 'string' ? o.className : '';
+    return !cls.includes('--disabled') && !cls.includes('--no-results');
+  };
 """
+
+HAS_ATTENDEE_OPTION_JS = (
+    "() => {"
+    + REAL_ATTENDEE_FN
+    + """
+  return [...document.querySelectorAll('li[role="option"]')].some(isRealAttendee);
+}"""
+)
 
 SELECT_ATTENDEE_OPTION_JS = (
     "() => {"
     + MARK_FN
+    + REAL_ATTENDEE_FN
     + """
-  return mark([...document.querySelectorAll('li[role="option"]')]
-    .find(o => !(o.id || '').includes('CREATE_NEW_ATTENDEE')));
+  return mark([...document.querySelectorAll('li[role="option"]')].find(isRealAttendee));
 }"""
 )
 
