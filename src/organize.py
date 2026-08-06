@@ -70,7 +70,11 @@ def organize(folder: Path, apply: bool) -> int:
         if target == pdf:
             print(f"  = {pdf.name}  (이미 정리됨)")
         elif target.exists():
-            failures.append((pdf, f"이름 충돌: {target.name} 이 이미 있다"))
+            # 승인번호가 고유키라 이름이 겹치면 같은 거래를 두 번 받은 것이다.
+            # 덮어쓰지 않고 남겨서 사람이 확인하고 지우게 한다.
+            failures.append(
+                (pdf, f"{target.name} 이 이미 있다 - 같은 거래를 두 번 받았다. 이 파일은 지워도 된다")
+            )
             continue
         elif apply:
             pdf.rename(target)
