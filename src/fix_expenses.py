@@ -1008,8 +1008,18 @@ def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
         raise AttachError("참석자 버튼을 찾지 못했습니다")
 
     _open_attendee_modal(page, report_url, row)
+    # 표가 그려질 틈을 준다. 덜 그려진 화면을 읽으면 엉뚱한 행을 참석자로 본다.
+    page.wait_for_timeout(2000)
 
     names = _attendee_names(page) if count else []
+    if count and not names:
+        # 참석자가 있다는데 한 줄도 못 읽었다. 이 상태로 판단하면 안 된다.
+        dump = _dump(page, "attendee-rows", DUMP_ATTENDEE_ROWS_JS)
+        _close_attendee_modal(page)
+        raise AttachError(
+            f"참석자가 {count}명이라는데 목록을 읽지 못했습니다. 아무것도 바꾸지 않았습니다."
+            + (f" (참석자 행 정보: {dump})" if dump else "")
+        )
     extra = [n for n in names if not any(name_matches(q, n) for q in queries)]
     if extra:
         # 지우지 않는다. 화면을 잘못 읽어 멀쩡한 참석자를 지운 적이 있다(2026-08).
@@ -1164,9 +1174,8 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
         # 단계의 확인이 엉뚱하게 실패한다.
         _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION)
     else:
-        # 명세는 손대지 않았으니 이 탭에 저장 버튼이 없을 수 있다.
-        # 상세로 돌아가서 거기서 넣은 값만 저장한다.
-        _open_tab(page, TAB_DETAILS, "상세 정보")
+        # 명세를 손대지 않았어도 이 화면에 갇힌다. 탭을 눌러 빠져나갈 수 없고
+        # '경비 저장'을 눌러야 나온다. _save_expense가 저장하고 상세를 다시 연다.
         _save_expense(page, plan.row, report_url)
     return done
 
