@@ -229,8 +229,8 @@ Concur에 들어갈 값은 작업지에 적힌 것뿐이다. 다시 돌려도 �
 - **입실날짜 · 퇴실날짜** — `8/2` 처럼 적으면 된다. 화면에도 `8/2` 로 보이지만
   값은 진짜 날짜라 정렬도 계산도 된다. 연도는 엑셀이 올해로 잡는다.
   둘 중 하나만 적거나 퇴실이 입실보다 앞이면 멈춘다.
-- **숙박위치 · Booking Channel** — 드롭다운에서만 고른다. 목록은 화면에서 뽑아
-  둬야 한다. 한 번만 하면 된다:
+- **숙박위치 · Booking Channel** — 드롭다운에서만 고른다. 숙박 위치는 `국내` / `해외`
+  두 가지다(실측). Booking channel 목록은 화면에서 뽑아야 한다. 한 번만 하면 된다:
 
 ```bat
 venv\Scripts\python -m src.fix_expenses --list-lodging
@@ -254,7 +254,32 @@ venv\Scripts\python -m src.fix_expenses --list-lodging
 **표의 행 수가 숙박일수와 다르면 채우지 않고 멈춘다.** 한 행이라도 어긋나면
 합계가 금액과 달라지고, 틀어진 채로 저장하면 나중에 찾기 어렵다.
 
-8/2 입실 8/8 퇴실은 **6박**이다.
+8/2 입실 8/8 퇴실은 **6박**이다. 실측으로 확인했다 — 날짜 범위를
+`2026-08-02 - 2026-08-07` 로 넣으면 표에 8/2부터 8/6까지 5행이 생겼다.
+행 하나가 하룻밤이고 퇴실일은 표에 없다.
+
+화면 셀렉터 (2026-08 확인):
+
+| 요소 | 셀렉터 |
+|---|---|
+| 날짜 범위 | `#hotelCheckinDate-date-input-field-input` (`YYYY-MM-DD - YYYY-MM-DD`) |
+| 숙박 위치 | `div#custom10` (role=combobox) |
+| Booking channel | `div#custom16` |
+| 반복 | `[name="recurrence"]` 를 감싼 combobox |
+| 상세 정보 / 항목별 명세 탭 | `#details-tab` / `#itemizations-tab` |
+| 일일 객실 요금 | `input[id$="Itemization.roomRate.N"]` |
+| 설명(코멘트) | `textarea#comment` |
+
+**입실·퇴실이 따로 있는 게 아니라 '날짜 범위' 한 칸이다.** 화면이 알려주는 형식
+(`YYYY-MM-DD - YYYY-MM-DD`)대로 타이핑한다. 달력을 눌러 고르는 것보다 확실하다.
+
+객실 요금 입력의 id는 `SameRoomRateItemization.roomRate.0` 처럼 종류가 앞에 붙는다.
+`일일 금액 다름`으로 바꾸면 앞부분이 달라질 수 있어서 **뒤쪽 모양만 본다**
+(`Itemization.roomRate.<번호>`). 세금 칸(`taxRate`)은 우리가 아는 값이 아니라
+건드리지 않는다.
+
+**숙박비 상세에는 비즈니스 목적 칸이 없다.** 작업지에 적혀 있어도 넣을 곳이
+없으므로 건너뛰고 알린다. 없는 칸을 못 찾았다고 건 전체를 실패시키지 않는다.
 
 ```bat
 venv\Scripts\python -m src.fix_expenses --sheet                    :: 계획만

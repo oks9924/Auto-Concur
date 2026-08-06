@@ -105,7 +105,7 @@ def test_숙박비인데_날짜가_없으면_짚어준다():
         location = channel = attendee = ""
 
     holes = _gaps(Entry(), "숙박비")
-    assert "입실·퇴실 날짜" in holes and "숙박위치" in holes
+    assert "입실·퇴실 날짜" in holes and "숙박 위치" in holes
 
 
 def test_식음료인데_참석자가_없으면_짚어준다():

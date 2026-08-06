@@ -38,7 +38,8 @@ EXPENSE_TYPE_CODES = {
 # 숙박비 상세의 드롭다운 값. 화면에서 뽑아 넣는다:
 #   python -m src.fix_expenses --list-lodging
 # 비어 있으면 엑셀에 드롭다운을 걸지 않는다 - 목록을 모르면 강제할 수도 없다.
-LODGING_LOCATIONS: list[str] = []
+# 숙박 위치는 실측으로 확인했다(2026-08). Booking channel은 아직 못 봤다.
+LODGING_LOCATIONS = ["국내", "해외"]
 BOOKING_CHANNELS: list[str] = []
 
 DEFAULTS = {
