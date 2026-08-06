@@ -152,15 +152,27 @@ OPEN_ATTENDEE_JS = (
 }"""
 )
 
+# 상세 폼의 입력들. 위로 올라가다 이것들을 잘못 집으면 엉뚱한 데 타이핑한다.
+DETAIL_FIELD_IDS = "businessPurpose,comment,vendorName,transactionAmount,taxTransactionAmount1,upload-file"
+
 ATTENDEE_INPUT_JS = (
-    "() => {"
+    "(ignoreCsv) => {"
     + FIND_COMBO_FN
     + """
+  const ignore = new Set(ignoreCsv.split(','));
   const cb = findCombo(/이름 또는 기업 이메일/);
   if (!cb) return null;
-  const wrap = cb.closest('[class*="form-field"]') || cb.parentElement;
-  const el = (wrap && wrap.querySelector('input:not([type=hidden])'))
-          || cb.querySelector('input');
+  const pick = (node) => [...node.querySelectorAll('input')].find(x =>
+    x.type !== 'hidden' && x.type !== 'checkbox' && x.offsetParent !== null
+    && !ignore.has(x.id) && !x.id.startsWith('transactionDate'));
+  // closest는 자기 자신부터 본다. 콤보박스 class에 form-field가 들어 있어서
+  // 자신을 감싼 것으로 잘못 잡았다. 부모부터 위로 올라가며 찾는다.
+  let el = pick(cb);
+  let node = cb.parentElement;
+  for (let i = 0; i < 5 && node && !el; i++) {
+    el = pick(node);
+    node = node.parentElement;
+  }
   if (!el) return null;
   if (!el.id) el.id = 'auto-concur-attendee-input';
   return '#' + CSS.escape(el.id);
@@ -307,15 +319,28 @@ def _add_attendee(page, report_url: str, expense_id: str) -> bool:
         _wait_js(page, ATTENDEE_COMBO_READY_JS, "참석자 검색 콤보박스", timeout=30000)
         # 눌러야 입력창이 생긴다. 콤보박스 자체에는 input이 없다.
         _eval(page, OPEN_ATTENDEE_JS)
-        _wait_js(page, ATTENDEE_INPUT_JS, "참석자 검색 입력창", timeout=15000)
+        _wait_js(
+            page, ATTENDEE_INPUT_JS, "참석자 검색 입력창", arg=DETAIL_FIELD_IDS, timeout=15000
+        )
     except AttachError as exc:
         dump = _dump_combos(page, "attendee")
         raise AttachError(f"{exc}" + (f" (화면의 콤보박스 목록: {dump})" if dump else "")) from None
-    selector = _eval(page, ATTENDEE_INPUT_JS)
+    selector = _eval(page, ATTENDEE_INPUT_JS, DETAIL_FIELD_IDS)
 
     # fill 대신 실제 타이핑. 자동완성은 키 입력을 보고 검색을 띄운다.
     page.click(selector)
     page.keyboard.type(ATTENDEE_QUERY, delay=80)
+
+    # 타이핑이 실제로 그 칸에 들어갔는지 먼저 본다. 검색 결과가 안 뜨는 것과
+    # 애초에 입력이 안 된 것은 원인이 다르다.
+    _wait_js(
+        page,
+        "(a) => { const el = document.querySelector(a.sel);"
+        " return !!el && (el.value || '').includes(a.q); }",
+        "검색어가 입력창에 들어가는 것",
+        arg={"sel": selector, "q": ATTENDEE_QUERY},
+        timeout=10000,
+    )
     _wait_js(page, HAS_ATTENDEE_OPTION_JS, f"'{ATTENDEE_QUERY}' 검색 결과", timeout=25000)
 
     if not _eval(page, PICK_ATTENDEE_JS):
