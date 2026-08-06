@@ -358,8 +358,9 @@ DUMP_DIALOG_JS = """
   }))
 """
 
-# '아니오'가 먼저다. '예'를 누르면 Concur가 빠진 칸으로 데려가는데, 우리는
-# 그 칸(객실 요금)을 채우러 항목별 명세로 갈 참이라 방해만 된다.
+# '아니오'를 누르면 리포트 목록으로 돌아가버린다(실측). 저장 자체는 이미 됐으니
+# 값이 날아가지는 않지만, 화면이 바뀌므로 다음 단계는 경비를 다시 열고 시작해야
+# 한다. 그래서 이 창을 닫은 뒤에는 늘 주소로 상세를 다시 연다.
 DIALOG_DISMISS = "아니오,No,닫기,취소"
 
 LABEL_LODGING = "숙박비"
@@ -661,14 +662,21 @@ def _dismiss_dialog(page, wait_ms: int = 5000) -> str | None:
     return text
 
 
-def _save_expense(page) -> None:
-    """경비를 저장하고, 뒤따라 뜨는 확인창까지 처리한다."""
+def _save_expense(page, row: Row, report_url: str) -> None:
+    """경비를 저장하고, 뒤따라 뜨는 확인창까지 처리한 뒤 상세로 돌아온다.
+
+    확인창을 닫으면 리포트 목록으로 튕겨 나간다(실측). 저장은 이미 끝났으니
+    값은 남아 있다. 주소로 상세를 다시 열고, 금액으로 맞는 경비인지 확인한다.
+    """
     page.get_by_role("button", name="경비 저장", exact=True).first.click()
     page.wait_for_timeout(2000)
     told = _dismiss_dialog(page)
     if told:
         print(f"     (저장 후 안내창을 닫았습니다: {told})")
     page.wait_for_timeout(1000)
+
+    page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
+    _wait_js(page, WAIT_AMOUNT_JS, f"{row.amount:,}원 경비 상세", arg=str(row.amount))
 
 
 def _open_tab(page, selector: str, what: str) -> None:
@@ -862,12 +870,11 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
 
     if plan.lodging:
         # 숙박비는 탭을 오가야 해서 저장 시점이 따로다. 안에서 저장까지 한다.
-        done += _apply_lodging(page, plan)
+        done += _apply_lodging(page, plan, report_url)
     elif done:
         # 저장이 끝나고 화면이 다시 그려질 때까지 기다린다. 여기서 서둘러
         # 참석자 모달로 넘어가면 방금 넣은 값이 날아간다.
-        _save_expense(page)
-        _wait_js(page, WAIT_AMOUNT_JS, "저장 후 화면", arg=str(row.amount))
+        _save_expense(page, row, report_url)
 
     added = _sync_attendees(page, report_url, row.expense_id, parse_attendees(plan.attendee))
     if added:
@@ -876,7 +883,7 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
     return ", ".join(done) if done else "이미 되어 있음"
 
 
-def _apply_lodging(page, plan: Plan) -> list[str]:
+def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
     """숙박비 상세와 항목별 명세를 채운다.
 
     순서를 지켜야 한다. 날짜 범위를 먼저 넣고 저장해야 항목별 명세 표가 그
@@ -902,8 +909,9 @@ def _apply_lodging(page, plan: Plan) -> list[str]:
     # 표도 옛 날짜로 만들어진다.
     #
     # 저장하면 '필수 정보가 누락되었습니다. 지금 수정하시겠습니까?' 창이 뜬다.
-    # 아직 객실 요금을 안 넣었으니 당연하다. 그 창을 닫아야 탭을 누를 수 있다.
-    _save_expense(page)
+    # 아직 객실 요금을 안 넣었으니 당연하다. 창을 닫으면 리포트로 튕겨 나가므로
+    # _save_expense가 상세를 다시 열어준다.
+    _save_expense(page, plan.row, report_url)
 
     _open_tab(page, TAB_ITEMIZATION, "항목별 명세")
     _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
@@ -912,11 +920,9 @@ def _apply_lodging(page, plan: Plan) -> list[str]:
     n = _fill_room_rates(page, amounts)
     done.append(f"일일 객실 요금 {n}행 (합 {sum(amounts):,}원)")
 
-    # 명세를 저장하고 상세로 돌아온다. 항목별 명세 탭에는 금액 필드가 없어서
-    # 여기 남아 있으면 다음 단계의 '맞는 경비를 열었나' 확인이 실패한다.
-    _save_expense(page)
-    _open_tab(page, TAB_DETAILS, "상세 정보")
-    _wait_js(page, WAIT_AMOUNT_JS, "저장 후 상세 화면", arg=str(plan.row.amount))
+    # 명세를 저장한다. 여기서도 상세로 돌아온다 - 항목별 명세 탭에는 금액
+    # 필드가 없어서, 남아 있으면 다음 단계의 확인이 엉뚱하게 실패한다.
+    _save_expense(page, plan.row, report_url)
     return done
 
 
