@@ -16,7 +16,7 @@ def slip(day: int, amount: int, month: int = 7) -> Slip:
 
 
 def row(index: int, day: int, amount: int, month: int = 7) -> Row:
-    return Row(index, date(2026, month, day), amount, f"{day} | {amount}", False)
+    return Row(index, date(2026, month, day), amount, f"{day} | {amount}")
 
 
 def test_날짜와_금액이_같으면_붙인다():

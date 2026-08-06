@@ -115,8 +115,9 @@ C단계에서 매칭이 모호하면 **건너뛰고 사람에게 넘긴다** —
 ## C단계: Concur 첨부
 
 ```bat
-venv\Scripts\python -m src.attach_receipts            :: 매칭 계획만 (아무것도 안 바꿈)
-venv\Scripts\python -m src.attach_receipts --apply    :: 실제 첨부
+venv\Scripts\python -m src.attach_receipts                    :: 매칭 계획만 (아무것도 안 바꿈)
+venv\Scripts\python -m src.attach_receipts --apply --limit 1  :: 한 건만 붙여서 확인
+venv\Scripts\python -m src.attach_receipts --apply            :: 나머지 전부
 ```
 
 SSO 로그인과 리포트 열기는 사람이 한다. 경비 목록이 보이는 상태에서 Enter를
@@ -132,6 +133,9 @@ SSO 로그인과 리포트 열기는 사람이 한다. 경비 목록이 보이�
 **붙이기 직전에 한 번 더 확인한다.** 행을 클릭해 상세로 들어간 뒤 화면의
 `#transactionAmount` 값이 전표 금액과 같은지 보고, 다르면 첨부하지 않는다.
 엉뚱한 경비를 열었을 가능성을 막는 마지막 관문이다.
+
+**두 번 돌려도 안전하다.** 붙인 승인번호를 `attached.txt`에 남겨서 다음 실행 때
+건너뛴다. 안 그러면 같은 경비에 영수증이 겹쳐 붙는다.
 
 화면 셀렉터 (2026-08 확인):
 

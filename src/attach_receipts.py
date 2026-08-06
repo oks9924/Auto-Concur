@@ -88,7 +88,23 @@ class Row:
     when: date | None
     amount: int | None
     text: str
-    has_receipt: bool
+
+
+def done_path(folder: Path) -> Path:
+    return folder / "attached.txt"
+
+
+def load_done(folder: Path) -> set[str]:
+    """이미 붙인 승인번호. 두 번 돌려도 영수증이 겹쳐 붙지 않게 한다."""
+    path = done_path(folder)
+    if not path.exists():
+        return set()
+    return {line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()}
+
+
+def mark_done(folder: Path, approval: str) -> None:
+    with done_path(folder).open("a", encoding="utf-8") as f:
+        f.write(approval + "\n")
 
 
 def load_manifest(folder: Path) -> list[Slip]:
@@ -157,15 +173,7 @@ def read_rows(page) -> list[Row]:
                 # 금액 칼럼만 잡는다. 날짜에서 떼어낸 숫자가 섞이지 않게 한다.
                 if got is not None and got >= 100:
                     amount = got
-        rows.append(
-            Row(
-                index=raw["index"],
-                when=when,
-                amount=amount,
-                text=joined[:90],
-                has_receipt="영수증 없음" not in joined,
-            )
-        )
+        rows.append(Row(index=raw["index"], when=when, amount=amount, text=joined[:90]))
     return rows
 
 
@@ -209,8 +217,15 @@ def attach(page, slip: Slip, row: Row) -> None:
     page.wait_for_timeout(2000)
 
 
-def run(folder: Path, apply: bool, tolerance: int) -> int:
+def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
     slips = load_manifest(folder)
+    done = load_done(folder)
+    if done:
+        slips = [s for s in slips if s.approval not in done]
+        print(f"이미 붙인 {len(done)}건은 건너뛴다. 남은 전표 {len(slips)}건.")
+    if not slips:
+        print("붙일 것이 없다.")
+        return 0
 
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
@@ -256,16 +271,22 @@ def run(folder: Path, apply: bool, tolerance: int) -> int:
 
         if not apply:
             print("\n계획만 출력했다. 실제로 붙이려면 --apply 를 붙여라.")
+            print("처음에는 --apply --limit 1 로 한 건만 해보고 Concur에서 확인해라.")
             ctx.close()
             return 0
 
-        done, failed = 0, []
+        if limit:
+            pairs = pairs[:limit]
+            print(f"\n--limit {limit} 이므로 {len(pairs)}건만 붙인다.")
+
+        attached, failed = 0, []
         for i, (slip, row) in enumerate(pairs, 1):
             try:
                 page.goto(report_url, wait_until="domcontentloaded")
                 page.wait_for_timeout(2000)
                 attach(page, slip, row)
-                done += 1
+                mark_done(folder, slip.approval)
+                attached += 1
                 print(f"  [{i}/{len(pairs)}] 첨부 {slip.path.name}")
             except (AttachError, PWTimeout) as exc:
                 failed.append((slip, str(exc)))
@@ -273,7 +294,7 @@ def run(folder: Path, apply: bool, tolerance: int) -> int:
 
         ctx.close()
 
-    print(f"\n{done}건 첨부")
+    print(f"\n{attached}건 첨부")
     if failed:
         print(f"실패 {len(failed)}건:")
         for slip, why in failed:
@@ -288,9 +309,10 @@ def main() -> int:
     ap.add_argument("--dir", type=Path, default=Path("downloads"), help="manifest.csv가 있는 폴더")
     ap.add_argument("--apply", action="store_true", help="실제로 첨부한다")
     ap.add_argument("--tolerance", type=int, default=1, help="Concur 날짜 허용 오차(일)")
+    ap.add_argument("--limit", type=int, help="앞에서 N건만 (동작 확인용)")
     args = ap.parse_args()
     try:
-        return run(args.dir, args.apply, args.tolerance)
+        return run(args.dir, args.apply, args.tolerance, args.limit)
     except AttachError as exc:
         print(f"\n중단: {exc}")
         return 1
