@@ -23,11 +23,13 @@ import argparse
 import json
 import re
 from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PWTimeout
 
 from . import console, settings, sheet
+from .sheet import nightly_split
 from .attach_receipts import match as match_rows
 from .attach_receipts import open_report
 from .attach_receipts import (
@@ -233,6 +235,132 @@ ATTENDEE_COUNT_JS_BODY = """
 
 ATTENDEE_COUNT_JS = "() => {" + ATTENDEE_COUNT_JS_BODY + " return n; }"
 
+# --- 숙박비 -----------------------------------------------------------------
+#
+# 숙박위치와 Booking Channel은 라벨이 확정적이지 않아서 정규식을 밖에서 준다.
+# 경비유형 콤보박스처럼 이름을 코드에 박지 않고 찾는 방식만 공유한다.
+COMBO_READY_JS = "(src) => {" + FIND_COMBO_FN + " return !!findCombo(new RegExp(src)); }"
+
+SELECT_COMBO_JS = (
+    "(src) => {" + FIND_COMBO_FN + MARK_FN + " return mark(findCombo(new RegExp(src))); }"
+)
+
+# 옵션은 보이는 글자로 고른다. 경비유형과 달리 id에 코드가 없다.
+OPTION_FN = """
+  const findOption = (want) => {
+    const opts = [...document.querySelectorAll('li[role="option"]')]
+      .filter(o => o.getAttribute('aria-disabled') !== 'true');
+    const text = (o) => (o.innerText || '').trim();
+    return opts.find(o => text(o) === want) || opts.find(o => text(o).startsWith(want));
+  };
+"""
+
+HAS_OPTION_JS = "(want) => {" + OPTION_FN + " return !!findOption(want); }"
+
+SELECT_OPTION_JS = "(want) => {" + OPTION_FN + MARK_FN + " return mark(findOption(want)); }"
+
+# 열려 있는 드롭다운의 값들을 그대로 읽는다. 엑셀 드롭다운 목록을 만들 때 쓴다.
+READ_OPTIONS_JS = """
+() => [...document.querySelectorAll('li[role="option"]')]
+  .filter(o => o.getAttribute('aria-disabled') !== 'true')
+  .map(o => (o.innerText || '').trim())
+  .filter(Boolean)
+"""
+
+# 날짜 입력은 달력 위젯이 붙어 있지만 입력창 자체는 타이핑을 받는다.
+# id가 '...-date-input-field-input' 꼴이라 그것으로 후보를 좁히고 라벨로 고른다.
+FIND_DATE_INPUT_JS = (
+    "(src) => {"
+    + FIND_COMBO_FN
+    + """
+  const re = new RegExp(src);
+  const el = [...document.querySelectorAll('input')].filter(x => {
+    const r = x.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && /date/i.test(x.id || '');
+  }).find(x => re.test(labelOf(x)));
+  if (!el) return null;
+  if (!el.id) el.id = 'auto-concur-date-input';
+  return '#' + CSS.escape(el.id);
+}"""
+)
+
+DUMP_DATE_INPUTS_JS = (
+    "() => {"
+    + FIND_COMBO_FN
+    + """
+  return [...document.querySelectorAll('input')].map(x => ({
+    id: x.id || null, name: x.getAttribute('name'), label: labelOf(x),
+    value: (x.value || '').slice(0, 30),
+  }));
+}"""
+)
+
+# 탭이나 버튼을 글자로 찾는다. 가장 안쪽 것을 고른다 - 바깥 컨테이너에도
+# 같은 글자가 들어 있어서 그걸 누르면 아무 일도 안 난다.
+FIND_BY_TEXT_JS = (
+    "(want) => {"
+    + MARK_FN
+    + """
+  const hit = [...document.querySelectorAll(
+    '[role="tab"], button, a, li, span, div, label'
+  )].filter(e => {
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && (e.innerText || '').trim() === want;
+  });
+  if (!hit.length) return null;
+  hit.sort((a, b) => a.getElementsByTagName('*').length - b.getElementsByTagName('*').length);
+  return mark(hit[0]);
+}"""
+)
+
+HAS_TEXT_JS = """
+(want) => [...document.querySelectorAll('[role="tab"], button, a, li, span, div, label')]
+  .some(e => {
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && (e.innerText || '').trim() === want;
+  })
+"""
+
+# 항목별 명세 표. 행마다 날짜와 금액 입력이 있고, 첫 금액 입력이 객실 요금이다.
+# 칼럼 순서를 짐작하지 않고 행 안의 입력을 순서대로 돌려준다.
+ITEMIZATION_ROWS_JS = """
+() => {
+  const rows = [...document.querySelectorAll('[role="row"], tbody tr')].filter(r => {
+    const box = r.getBoundingClientRect();
+    return box.width > 0 && r.querySelector('input');
+  });
+  return rows.map((r, i) => {
+    const inputs = [...r.querySelectorAll('input')].filter(x => {
+      const b = x.getBoundingClientRect();
+      return b.width > 0 && b.height > 0 && x.type !== 'checkbox' && x.type !== 'radio';
+    });
+    inputs.forEach((x, j) => {
+      if (!x.id) x.id = 'auto-concur-item-' + i + '-' + j;
+    });
+    return {
+      row: i,
+      text: (r.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 60),
+      inputs: inputs.map(x => ({
+        selector: '#' + CSS.escape(x.id),
+        name: x.getAttribute('name'),
+        value: (x.value || '').slice(0, 20),
+      })),
+    };
+  });
+}
+"""
+
+LABEL_LODGING = "숙박비"
+TAB_ITEMIZATION = "항목별 명세"
+RECUR_DIFFERENT_DAILY = "일일 금액 다름"
+
+# 라벨 정규식. 화면 문구가 조금 달라도 걸리게 넉넉히 잡는다.
+RE_CHECKIN = "체크인|입실|Check.?in"
+RE_CHECKOUT = "체크아웃|퇴실|Check.?out"
+RE_LOCATION = "숙박 ?위치|숙박지|Lodging Location|Location"
+RE_CHANNEL = "Booking Channel|예약 ?채널"
+RE_RECURRENCE = "반복|Recurrence"
+
 # 모달에 올라와 있는 참석자 이름. 표 행의 첫 칸이 이름이다. 행 전체 텍스트에는
 # 금액·인원 같은 것이 섞여 있어서 첫 줄만 본다.
 ATTENDEE_NAMES_JS = """
@@ -262,6 +390,29 @@ DUMP_TYPES_JS = """
 """
 
 
+def _md(when: date) -> str:
+    """8/2 처럼 보여준다. strftime('%-m/%-d')는 Windows에서 안 된다."""
+    return f"{when.month}/{when.day}"
+
+
+@dataclass
+class Lodging:
+    """숙박비 상세에 넣을 값. 입실·퇴실이 있어야 성립한다."""
+
+    checkin: date
+    checkout: date
+    location: str
+    channel: str
+
+    @property
+    def nights(self) -> int:
+        return (self.checkout - self.checkin).days
+
+    def dates(self) -> list[date]:
+        """항목별 명세 표에 들어갈 날짜들. 입실일부터 숙박일수만큼."""
+        return [self.checkin + timedelta(days=i) for i in range(self.nights)]
+
+
 @dataclass
 class Plan:
     row: Row
@@ -270,6 +421,7 @@ class Plan:
     purpose: str = ""
     comment: str = ""
     attendee: str = ""
+    lodging: Lodging | None = None
 
     @property
     def fill_meal(self) -> bool:
@@ -283,6 +435,13 @@ class Plan:
                                  ("참석자", self.attendee)) if v]
         if filled:
             what.append("·".join(filled))
+        if self.lodging:
+            per = nightly_split(self.row.amount or 0, self.lodging.nights)
+            what.append(
+                f"숙박 {self.lodging.nights}박 "
+                f"({_md(self.lodging.checkin)}~{_md(self.lodging.checkout)}), "
+                f"일일 {per[0]:,}원"
+            )
         return ", ".join(what) or "변경 없음"
 
 
@@ -401,6 +560,75 @@ def _set_field(page, selector: str, value: str, what: str) -> bool:
         return False
     page.fill(selector, value)
     return True
+
+
+def _pick_from_combo(page, label_re: str, want: str, what: str) -> None:
+    """라벨로 콤보박스를 찾아 열고, 보이는 글자로 옵션을 고른다."""
+    try:
+        _wait_js(page, COMBO_READY_JS, f"{what} 콤보박스", arg=label_re, timeout=25000)
+    except AttachError:
+        dump = _dump(page, f"combos-{what}", DUMP_COMBOS_JS)
+        raise AttachError(
+            f"{what} 콤보박스를 찾지 못했습니다" + (f" (화면의 콤보박스 목록: {dump})" if dump else "")
+        ) from None
+    _click_marked(page, SELECT_COMBO_JS, f"{what} 콤보박스", arg=label_re)
+
+    try:
+        _wait_js(page, HAS_OPTION_JS, f"{what} 옵션 '{want}'", arg=want, timeout=20000)
+    except AttachError:
+        dump = _dump(page, f"options-{what}", READ_OPTIONS_JS)
+        raise AttachError(
+            f"{what} 목록에 '{want}' 가 없습니다"
+            + (f" (화면의 목록: {dump})" if dump else "")
+            + ". 엑셀 드롭다운 목록을 --list-lodging 으로 다시 뽑아 주세요."
+        ) from None
+    _click_marked(page, SELECT_OPTION_JS, f"{what} 옵션 '{want}'", arg=want)
+    page.wait_for_timeout(800)
+
+
+def _type_date(page, label_re: str, when: date, what: str) -> None:
+    """날짜 입력에 직접 타이핑한다. 달력을 눌러 고르는 것보다 확실하다."""
+    selector = _eval(page, FIND_DATE_INPUT_JS, label_re)
+    if not selector:
+        dump = _dump(page, f"dates-{what}", DUMP_DATE_INPUTS_JS)
+        raise AttachError(
+            f"{what} 날짜 입력칸을 찾지 못했습니다"
+            + (f" (화면의 입력 목록: {dump})" if dump else "")
+        )
+    text = when.strftime("%Y-%m-%d")
+    page.click(selector)
+    page.keyboard.press("Control+A")
+    page.keyboard.press("Delete")
+    page.keyboard.type(text, delay=60)
+    page.keyboard.press("Escape")  # 달력이 떠 있으면 닫는다. 다음 클릭을 가린다
+    page.wait_for_timeout(500)
+
+
+def _click_text(page, want: str, what: str, timeout: int = 20000) -> None:
+    _wait_js(page, HAS_TEXT_JS, what, arg=want, timeout=timeout)
+    _click_marked(page, FIND_BY_TEXT_JS, what, arg=want)
+    page.wait_for_timeout(1200)
+
+
+def _fill_itemization(page, amounts: list[int], dates: list[date], folder: Path | None) -> int:
+    """일일 객실 요금을 채운다. 행 수가 숙박일수와 다르면 손대지 않는다.
+
+    합이 경비 금액과 정확히 같아야 한다. 행이 하나라도 어긋나면 합이 틀어지고,
+    틀어진 채로 저장하면 나중에 찾기 어렵다. 그래서 맞지 않으면 멈춘다.
+    """
+    rows = _eval(page, ITEMIZATION_ROWS_JS)
+    filled = [r for r in rows if r["inputs"]]
+    if len(filled) != len(amounts):
+        dump = _dump(page, "itemization-rows", ITEMIZATION_ROWS_JS)
+        raise AttachError(
+            f"항목별 명세 표가 {len(filled)}행인데 숙박일수는 {len(amounts)}박입니다. "
+            "행 수가 맞지 않으면 합계가 금액과 달라지므로 채우지 않았습니다."
+            + (f" (표 정보: {dump})" if dump else "")
+        )
+    for r, money in zip(filled, amounts):
+        target = r["inputs"][0]["selector"]  # 첫 금액 입력이 객실 요금이다
+        page.fill(target, str(money))
+    return len(amounts)
 
 
 def parse_attendees(value: str) -> list[str]:
@@ -548,6 +776,9 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
     if plan.comment and _set_field(page, COMMENT_FIELD, plan.comment, "코멘트"):
         done.append("코멘트")
 
+    if plan.lodging:
+        done += _apply_lodging(page, plan)
+
     if done:
         page.get_by_role("button", name="경비 저장", exact=True).first.click()
         # 저장이 끝나고 화면이 다시 그려질 때까지 기다린다. 여기서 서둘러
@@ -562,6 +793,40 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
     return ", ".join(done) if done else "이미 되어 있음"
 
 
+def _apply_lodging(page, plan: Plan) -> list[str]:
+    """숙박비 상세와 항목별 명세를 채운다.
+
+    순서를 지켜야 한다. 날짜 범위를 먼저 넣어야 항목별 명세 표가 그 날짜로
+    만들어진다. 표가 먼저 만들어져 있으면 날짜를 바꿔도 행이 안 따라온다.
+    """
+    lodging = plan.lodging
+    amounts = nightly_split(plan.row.amount or 0, lodging.nights)
+    done = []
+
+    _type_date(page, RE_CHECKIN, lodging.checkin, "체크인")
+    _type_date(page, RE_CHECKOUT, lodging.checkout, "체크아웃")
+    done.append(f"숙박 {_md(lodging.checkin)}~{_md(lodging.checkout)}")
+
+    if lodging.location:
+        _pick_from_combo(page, RE_LOCATION, lodging.location, "숙박위치")
+        done.append("숙박위치")
+    if lodging.channel:
+        _pick_from_combo(page, RE_CHANNEL, lodging.channel, "Booking Channel")
+        done.append("Booking Channel")
+
+    # 상세를 먼저 저장한다. 저장하지 않고 탭을 옮기면 방금 넣은 날짜가 날아간다.
+    page.get_by_role("button", name="경비 저장", exact=True).first.click()
+    page.wait_for_timeout(2500)
+
+    _click_text(page, TAB_ITEMIZATION, f"'{TAB_ITEMIZATION}' 탭")
+    _pick_from_combo(page, RE_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
+    page.wait_for_timeout(1500)
+
+    n = _fill_itemization(page, amounts, lodging.dates(), None)
+    done.append(f"일일 객실 요금 {n}행 (합 {sum(amounts):,}원)")
+    return done
+
+
 def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: int):
     """작업지에 적힌 대로 계획을 만든다. 규칙 대신 사람이 정한 값을 쓴다."""
     entries = sheet.load(sheet_path)
@@ -573,8 +838,11 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
         # 다른 유형에 이름이 섞여 있으면 이미 바꾼 줄 알고 지나쳤다.
         if entry.type_name and entry.type_name != (row.expense_type or "").strip():
             code, label = settings.code_for(cfg, entry.type_name), entry.type_name
-        plan = Plan(row, code, label, entry.purpose, entry.comment, entry.attendee)
-        if plan.type_code or plan.fill_meal:
+        lodging = None
+        if entry.checkin and entry.checkout:
+            lodging = Lodging(entry.checkin, entry.checkout, entry.location, entry.channel)
+        plan = Plan(row, code, label, entry.purpose, entry.comment, entry.attendee, lodging)
+        if plan.type_code or plan.fill_meal or plan.lodging:
             plans.append((plan, how))
     return plans, missing
 
@@ -647,13 +915,58 @@ def list_types_phase(page, report_url: str) -> int:
     return 0
 
 
+def list_lodging_phase(page, cfg: dict) -> int:
+    """숙박위치와 Booking Channel의 목록을 화면에서 뽑아 settings.json 에 넣는다.
+
+    엑셀 드롭다운에 걸 값이라 화면과 한 글자도 다르면 안 된다. 손으로 옮겨
+    적으면 틀린다. 사람이 숙박비 경비 상세를 열어두면 여기서 읽는다.
+    """
+    print("\n" + "=" * 64)
+    print("  숙박비 경비 하나를 열어 주세요 (상세 화면이 보이는 상태).")
+    print("  숙박위치와 Booking Channel 드롭다운이 보이면 Enter를 눌러 주세요.")
+    print("=" * 64)
+    console.wait_enter("숙박비 상세를 여셨으면 Enter > ")
+
+    found = {}
+    for key, label_re, what in (
+        ("lodging_locations", RE_LOCATION, "숙박위치"),
+        ("booking_channels", RE_CHANNEL, "Booking Channel"),
+    ):
+        try:
+            _wait_js(page, COMBO_READY_JS, f"{what} 콤보박스", arg=label_re, timeout=15000)
+            _click_marked(page, SELECT_COMBO_JS, f"{what} 콤보박스", arg=label_re)
+            _wait_js(page, "() => !!document.querySelector('li[role=\"option\"]')",
+                     f"{what} 목록", timeout=15000)
+            options = _eval(page, READ_OPTIONS_JS)
+        except AttachError as exc:
+            dump = _dump(page, "combos-lodging", DUMP_COMBOS_JS)
+            print(f"  {what}: 못 읽었습니다 - {exc}" + (f" (콤보박스 목록: {dump})" if dump else ""))
+            continue
+        page.keyboard.press("Escape")  # 목록을 닫아야 다음 콤보박스를 누를 수 있다
+        page.wait_for_timeout(800)
+        found[key] = options
+        print(f"  {what}: {len(options)}개")
+        for option in options:
+            print(f"    - {option}")
+
+    if not found:
+        raise AttachError("드롭다운을 하나도 읽지 못했습니다. 숙박비 상세가 맞는지 확인해 주세요.")
+    cfg.update(found)
+    settings.save(cfg)
+    print(f"\n{settings.SETTINGS_PATH} 에 저장했습니다. 이제 B단계를 다시 돌리시면")
+    print("작업지의 숙박위치·Booking Channel 칸에 드롭다운이 걸립니다.")
+    return 0
+
+
 def run(apply: bool, limit: int | None, list_types: bool = False,
-        sheet_path: Path | None = None) -> int:
+        sheet_path: Path | None = None, list_lodging: bool = False) -> int:
     cfg = settings.load()
     pw, ctx, page, report_url = open_report()
     try:
         if list_types:
             return list_types_phase(page, report_url)
+        if list_lodging:
+            return list_lodging_phase(page, cfg)
         return fix_phase(page, report_url, cfg, apply, limit, sheet_path)
     finally:
         ctx.close()
@@ -669,12 +982,14 @@ def main() -> int:
                     help="작업지(csv/xlsx)대로 넣습니다. 값 없이 주시면 전표 폴더의 manifest.csv 를 씁니다")
     ap.add_argument("--list-types", action="store_true",
                     help="화면의 경비유형과 코드를 뽑습니다 (새 유형이 생겼을 때 쓰세요)")
+    ap.add_argument("--list-lodging", action="store_true",
+                    help="숙박위치·Booking Channel 목록을 뽑아 settings.json 에 넣습니다")
     args = ap.parse_args()
     try:
         path = None
         if args.sheet is not None:
             path = Path(args.sheet) if args.sheet else Path(settings.load()["downloads_dir"]) / "manifest.csv"
-        return run(args.apply, args.limit, args.list_types, path)
+        return run(args.apply, args.limit, args.list_types, path, args.list_lodging)
     except (AttachError, sheet.SheetError) as exc:
         print(f"\n작업을 중단했습니다: {exc}")
         return 1

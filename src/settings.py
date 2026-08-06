@@ -35,6 +35,12 @@ EXPENSE_TYPE_CODES = {
     "내부 직원 용 선물": "GIFTS",
 }
 
+# 숙박비 상세의 드롭다운 값. 화면에서 뽑아 넣는다:
+#   python -m src.fix_expenses --list-lodging
+# 비어 있으면 엑셀에 드롭다운을 걸지 않는다 - 목록을 모르면 강제할 수도 없다.
+LODGING_LOCATIONS: list[str] = []
+BOOKING_CHANNELS: list[str] = []
+
 DEFAULTS = {
     "business_purpose": "현대 중공업 식대",
     "comment": "현대 중공업 출장 식대",
@@ -46,6 +52,15 @@ DEFAULTS = {
     "date_tolerance_days": 1,
     "downloads_dir": "downloads",
     "expense_type_codes": EXPENSE_TYPE_CODES,
+    "lodging_locations": LODGING_LOCATIONS,
+    "booking_channels": BOOKING_CHANNELS,
+}
+
+# 작업지에서 드롭다운으로만 고르게 할 칸. {칼럼: 설정키}
+CHOICE_COLUMNS = {
+    "경비유형": "expense_type_codes",
+    "숙박위치": "lodging_locations",
+    "Booking Channel": "booking_channels",
 }
 
 
@@ -65,6 +80,11 @@ def save(data: dict) -> None:
     SETTINGS_PATH.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def choices(data: dict) -> dict[str, list[str]]:
+    """작업지 드롭다운에 걸 목록. {칼럼 이름: 고를 수 있는 값들}."""
+    return {col: list(data.get(key) or []) for col, key in CHOICE_COLUMNS.items()}
 
 
 def code_for(data: dict, type_name: str) -> str:

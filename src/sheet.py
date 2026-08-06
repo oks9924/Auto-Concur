@@ -15,7 +15,13 @@ from datetime import date, datetime
 from pathlib import Path
 
 REQUIRED = ["거래일", "승인번호"]
-EDITABLE = ["경비유형", "비즈니스목적", "코멘트", "참석자"]
+
+# 숙박비는 상세에 넣을 것이 많다. 입실·퇴실로 날짜 범위를 만들고, 숙박위치와
+# Booking Channel은 화면 드롭다운에서 고른 값이어야 한다.
+LODGING_COLUMNS = ["입실날짜", "퇴실날짜", "숙박위치", "Booking Channel"]
+EDITABLE = ["경비유형", "비즈니스목적", "코멘트", "참석자", *LODGING_COLUMNS]
+
+DATE_COLUMNS = ["입실날짜", "퇴실날짜"]
 
 # 금액 칼럼 이름. '합계'로 쓰던 시절의 작업지도 그대로 열리게 둘 다 받는다.
 AMOUNT_COLUMNS = ["금액", "합계"]
@@ -33,10 +39,34 @@ class SheetRow:
     purpose: str
     comment: str
     attendee: str
+    checkin: date | None = None
+    checkout: date | None = None
+    location: str = ""
+    channel: str = ""
+
+    @property
+    def nights(self) -> int:
+        """숙박일수. 8/2 입실 8/8 퇴실이면 6박이다."""
+        if not (self.checkin and self.checkout):
+            return 0
+        return (self.checkout - self.checkin).days
 
 
 class SheetError(Exception):
     """작업지를 믿고 쓸 수 없을 때."""
+
+
+def nightly_split(amount: int, nights: int) -> list[int]:
+    """숙박비를 하루치로 나눈다. 소수점 없이, 합은 정확히 원래 금액.
+
+    Concur의 일일 객실 요금은 소수점을 받지 않는다. 1,000,000원 3박이면
+    333,333.33이 되는데 그냥 버림하면 999,999원이 되어 1원이 빈다. 나머지를
+    앞 날짜부터 1원씩 얹어서 합을 맞춘다.
+    """
+    if nights <= 0:
+        raise SheetError(f"숙박일수가 {nights}입니다. 입실·퇴실 날짜를 확인해 주세요.")
+    base, rest = divmod(amount, nights)
+    return [base + 1] * rest + [base] * (nights - rest)
 
 
 def _rows_from_csv(path: Path) -> list[dict]:
@@ -62,8 +92,35 @@ def _rows_from_xlsx(path: Path) -> list[dict]:
     ]
 
 
-# 이 유형을 고르면 참석자를 넣어야 한다. 그 칸을 초록으로 물들여 알린다.
+# 이 유형을 고르면 그 칸들을 채워야 한다. 초록으로 물들여 알린다.
 ATTENDEE_REQUIRED_TYPE = "내부 직원간 식음료"
+LODGING_TYPE = "숙박비"
+
+# 날짜는 8/2 로 보이게 한다. 값 자체는 진짜 날짜라 정렬도 계산도 된다.
+DATE_FORMAT = "m/d"
+
+DATE_PATTERNS = ["%Y-%m-%d", "%Y/%m/%d", "%m/%d", "%Y.%m.%d"]
+
+
+def _as_date(value) -> date | None:
+    """엑셀 셀이나 문자열에서 날짜를 뽑는다. 못 읽으면 None."""
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()[:19]
+    for pattern in DATE_PATTERNS:
+        try:
+            when = datetime.strptime(text[:10] if len(pattern) > 5 else text, pattern)
+        except ValueError:
+            continue
+        return when.date()
+    try:  # '2026-08-02 00:00:00' 처럼 시각이 붙어 오는 경우
+        return datetime.fromisoformat(text).date()
+    except ValueError:
+        return None
 
 # 숫자로 넣고 천단위 구분을 붙일 칼럼. 75400 보다 75,400 이 읽기 쉽고,
 # 엑셀에서 합계도 바로 낼 수 있다. 저장되는 값은 그대로 숫자라 다시 읽는 데
@@ -88,12 +145,12 @@ def _width(header: str, values: list) -> float:
     return max(WIDTH_MIN, min(WIDTH_MAX, longest + WIDTH_PAD))
 
 
-def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: list[str],
-               hidden: list[str] | None = None) -> None:
-    """경비유형 칸에 드롭다운을 걸어서 내보낸다.
+def write_xlsx(columns: list[str], rows: list[dict], path: Path,
+               choices: dict[str, list[str]], hidden: list[str] | None = None) -> None:
+    """드롭다운으로 고를 칸에 목록을 걸어서 내보낸다.
 
-    목록을 수식에 직접 넣으면 255자 제한에 걸린다(한글 유형명이 길다).
-    별도 시트에 적어두고 참조한다.
+    choices는 {칼럼 이름: 고를 수 있는 값들}. 목록을 수식에 직접 넣으면 255자
+    제한에 걸린다(한글 유형명이 길다). 목록마다 숨긴 시트를 만들어 참조한다.
     """
     try:
         from openpyxl import Workbook
@@ -106,6 +163,7 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: lis
 
     money = next((c for c in AMOUNT_COLUMNS if c in columns), None)
     money_at = columns.index(money) if money else -1
+    date_at = {columns.index(c) for c in DATE_COLUMNS if c in columns}
 
     wb = Workbook()
     ws = wb.active
@@ -113,48 +171,63 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: lis
     ws.append(columns)
     for r in rows:
         ws.append([r.get(c, "") for c in columns])
+        line = ws.max_row
         if money_at >= 0:
-            cell = ws.cell(row=ws.max_row, column=money_at + 1)
+            cell = ws.cell(row=line, column=money_at + 1)
             try:
                 cell.value = int(str(cell.value).replace(",", "").strip())
             except (TypeError, ValueError):
-                continue  # 숫자가 아니면 그대로 둔다. 사람이 보고 고칠 일이다
-            cell.number_format = MONEY_FORMAT
-            cell.alignment = Alignment(horizontal="right")
+                pass  # 숫자가 아니면 그대로 둔다. 사람이 보고 고칠 일이다
+            else:
+                cell.number_format = MONEY_FORMAT
+                cell.alignment = Alignment(horizontal="right")
+        # 날짜 칸은 비어 있어도 서식을 걸어둔다. 8/2 라고 치면 날짜가 되고
+        # 화면에도 8/2 로 남는다. 연도는 엑셀이 올해로 잡는다.
+        for at in date_at:
+            cell = ws.cell(row=line, column=at + 1)
+            cell.value = _as_date(cell.value)
+            cell.number_format = DATE_FORMAT
 
-    ref = wb.create_sheet("경비유형")
-    for name in type_names:
-        ref.append([name])
-    ref.sheet_state = "hidden"
+    for name, options in choices.items():
+        if name not in columns or not options:
+            continue
+        ref = wb.create_sheet(f"목록_{name}"[:31])
+        for option in options:
+            ref.append([option])
+        ref.sheet_state = "hidden"
+
+        col = get_column_letter(columns.index(name) + 1)
+        dv = DataValidation(
+            type="list",
+            formula1=f"='{ref.title}'!$A$1:$A${len(options)}",
+            allow_blank=True,  # 빈 칸은 '이 값은 건드리지 마라'는 뜻이라 허용한다
+            showDropDown=False,  # False가 화살표를 '보이게' 한다 (openpyxl의 뜻이 반대다)
+            showErrorMessage=True,
+            errorStyle="stop",  # 경고가 아니라 거부. 목록 밖의 값은 아예 못 넣는다
+        )
+        dv.error = "목록에서 골라 주세요. 직접 입력하실 수 없습니다."
+        dv.errorTitle = name
+        dv.prompt = "목록에서 골라 주세요. 비워두시면 이 값은 건드리지 않습니다."
+        dv.promptTitle = name
+        dv.showInputMessage = True
+        ws.add_data_validation(dv)
+        dv.add(f"{col}2:{col}{len(rows) + 1}")
 
     col = get_column_letter(columns.index("경비유형") + 1)
-    dv = DataValidation(
-        type="list",
-        formula1=f"=경비유형!$A$1:$A${len(type_names)}",
-        allow_blank=True,  # 빈 칸은 '유형을 건드리지 마라'는 뜻이라 허용한다
-        showDropDown=False,  # False가 드롭다운 화살표를 '보이게' 한다 (openpyxl의 뜻이 반대다)
-        showErrorMessage=True,
-        errorStyle="stop",  # 경고가 아니라 거부. 목록 밖의 값은 아예 못 넣는다
-    )
-    dv.error = "목록에서 골라 주세요. 직접 입력하실 수 없습니다."
-    dv.errorTitle = "경비유형"
-    dv.prompt = "목록에서 골라 주세요. 비워두시면 경비유형을 건드리지 않습니다."
-    dv.promptTitle = "경비유형"
-    dv.showInputMessage = True
-    ws.add_data_validation(dv)
-    dv.add(f"{col}2:{col}{len(rows) + 1}")
 
-    # 경비유형이 '내부 직원간 식음료'면 그 행의 참석자 칸을 초록으로 칠한다.
-    # 그 유형은 참석자가 있어야 하는데, 빈 칸은 눈에 안 띄어서 빠뜨리기 쉽다.
-    if "참석자" in columns and rows:
-        who = get_column_letter(columns.index("참석자") + 1)
-        ws.conditional_formatting.add(
-            f"{who}2:{who}{len(rows) + 1}",
-            FormulaRule(
-                formula=[f'${col}2="{ATTENDEE_REQUIRED_TYPE}"'],
-                fill=PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"),
-            ),
-        )
+    # 그 유형에서 꼭 채워야 하는 칸을 초록으로 칠한다. 빈 칸은 눈에 안 띄어서
+    # 빠뜨리기 쉽다. 식음료면 참석자, 숙박비면 입실·퇴실·숙박위치·채널이다.
+    green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    needed = {ATTENDEE_REQUIRED_TYPE: ["참석자"], LODGING_TYPE: LODGING_COLUMNS}
+    for type_name, names in needed.items():
+        for name in names:
+            if name not in columns or not rows:
+                continue
+            letter = get_column_letter(columns.index(name) + 1)
+            ws.conditional_formatting.add(
+                f"{letter}2:{letter}{len(rows) + 1}",
+                FormulaRule(formula=[f'${col}2="{type_name}"'], fill=green),
+            )
 
     for i, name in enumerate(columns, 1):
         dim = ws.column_dimensions[get_column_letter(i)]
@@ -190,6 +263,13 @@ def load(path: Path) -> list[SheetRow]:
             amount = int(float(str(r[money]).replace(",", "").strip()))
         except ValueError as exc:
             raise SheetError(f"{path} {i}행의 거래일/{money}을 읽지 못했습니다: {exc}") from None
+        checkin, checkout = _as_date(r.get("입실날짜")), _as_date(r.get("퇴실날짜"))
+        if bool(checkin) != bool(checkout):
+            raise SheetError(f"{path} {i}행: 입실날짜와 퇴실날짜는 둘 다 적어 주세요.")
+        if checkin and checkout <= checkin:
+            raise SheetError(
+                f"{path} {i}행: 퇴실날짜({checkout})가 입실날짜({checkin})보다 뒤여야 합니다."
+            )
         out.append(
             SheetRow(
                 when=when,
@@ -200,6 +280,10 @@ def load(path: Path) -> list[SheetRow]:
                 purpose=(r.get("비즈니스목적") or "").strip(),
                 comment=(r.get("코멘트") or "").strip(),
                 attendee=(r.get("참석자") or "").strip(),
+                checkin=checkin,
+                checkout=checkout,
+                location=(r.get("숙박위치") or "").strip(),
+                channel=(r.get("Booking Channel") or "").strip(),
             )
         )
     return out

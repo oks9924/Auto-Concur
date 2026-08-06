@@ -19,7 +19,8 @@ from . import settings, sheet
 from .slip_parser import Slip, SlipParseError, parse_slip
 
 # 앞쪽은 전표에서 읽은 사실, 뒤쪽 EDITABLE은 사람이 고쳐서 Concur에 넣을 값이다.
-EDITABLE = ["경비유형", "비즈니스목적", "코멘트", "참석자"]
+# 숙박비 칸(입실·퇴실·숙박위치·Booking Channel)은 sheet가 정의를 갖고 있다.
+EDITABLE = list(sheet.EDITABLE)
 
 # 엑셀에서 감출 칼럼. 지우지는 않는다 - 가맹점명은 후보가 여럿일 때 어느 경비인지
 # 가리는 데 쓰고, 파일명은 첨부할 PDF를 찾는 데, 승인번호는 다시 돌릴 때 사람이
@@ -137,13 +138,13 @@ def organize(folder: Path, apply: bool) -> int:
     # 엑셀본은 경비유형 칸에 드롭다운이 걸려 있어 오타로 못 쓰는 값을 막는다.
     book = folder / "manifest.xlsx"
     try:
-        sheet.write_xlsx(MANIFEST_COLUMNS, rows, book, list(cfg["expense_type_codes"]),
-                         hidden=HIDDEN)
+        sheet.write_xlsx(MANIFEST_COLUMNS, rows, book, settings.choices(cfg), hidden=HIDDEN)
         print(f"작업지를 만들었습니다: {book}  (경비유형은 드롭다운에서만 고르실 수 있습니다)")
     except sheet.SheetError as exc:
         print(f"xlsx는 만들지 못했습니다: {exc}")
-    print(f"엑셀에서 {', '.join(EDITABLE)} 을 채우신 뒤 update_concur 로 넘겨 주세요.")
-    print("경비유형을 '내부 직원간 식음료'로 고르시면 참석자 칸이 초록으로 바뀝니다.")
+    print("엑셀에서 경비유형을 고르신 뒤 초록으로 바뀌는 칸을 채워 주세요.")
+    print("  내부 직원간 식음료 -> 참석자 / 숙박비 -> 입실·퇴실·숙박위치·Booking Channel")
+    print("그 다음 update_concur 로 넘겨 주세요.")
     if not apply:
         print("미리보기입니다. 실제로 바꾸시려면 --apply 를 붙여 주세요.")
 

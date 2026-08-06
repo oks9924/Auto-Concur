@@ -6,6 +6,10 @@ Tkinter를 쓴다. Windows 파이썬에 기본으로 들어 있어서 따로 설
 
 각 단계는 새 콘솔 창에서 돌린다. 카드 인증이나 로그인을 마치고 Enter를 눌러야
 하는 대기가 있어서, 창 안에 출력을 가두면 그 조작을 할 수 없다.
+
+창에는 기간과 전표 폴더만 둔다. Concur에 들어갈 값은 전부 작업지(엑셀)에서
+정한다. 규칙 실행에 쓰는 값들은 settings.json 에 그대로 있고, 바꿀 일이
+생기면 그 파일을 직접 고치면 된다.
 """
 
 from __future__ import annotations
@@ -14,21 +18,9 @@ import os
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, ttk
 
 from . import console, settings
-
-# 설정 창에 띄울 항목. (설정키, 라벨, 설명)
-#
-# 목적·코멘트·참석자는 여기 없다. 작업지(엑셀)에서 건별로 정한다.
-# 아래 세 값은 작업지 없이 규칙대로 돌릴 때(--sheet 없이)만 쓰인다.
-FIELDS = [
-    ("large_amount_type", "큰 금액 경비유형", "임계금액 이상이면 이 유형으로 바꿉니다"),
-    ("lodging_threshold", "임계 금액", "이 금액 이상일 때 (원)"),
-    ("date_tolerance_days", "날짜 허용 오차", "영수증 매칭에서 허용할 날짜 오차(일)"),
-]
-
-INT_FIELDS = {"lodging_threshold", "date_tolerance_days"}
 
 
 def _run(args: list[str]) -> None:
@@ -51,7 +43,6 @@ class App(tk.Tk):
         self.title("Concur 경비 자동화")
         self.resizable(False, False)
         self.cfg = settings.load()
-        self.vars: dict[str, tk.StringVar] = {}
         self._build()
 
     def _build(self) -> None:
@@ -59,41 +50,31 @@ class App(tk.Tk):
 
         box = ttk.LabelFrame(self, text="설정")
         box.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
-        for i, (key, label, hint) in enumerate(FIELDS):
-            ttk.Label(box, text=label).grid(row=i, column=0, sticky="w", **pad)
-            var = tk.StringVar(value=str(self.cfg.get(key, "")))
-            self.vars[key] = var
-            ttk.Entry(box, textvariable=var, width=34).grid(row=i, column=1, **pad)
-            ttk.Label(box, text=hint, foreground="#666").grid(row=i, column=2, sticky="w", **pad)
-        # 전표 폴더는 직접 고르게 한다. 경로를 손으로 치면 오타가 난다.
-        row = len(FIELDS)
-        ttk.Label(box, text="전표 폴더").grid(row=row, column=0, sticky="w", **pad)
-        self.folder = tk.StringVar(value=str(self.cfg.get("downloads_dir", "downloads")))
-        picker = ttk.Frame(box)
-        picker.grid(row=row, column=1, columnspan=2, sticky="w", **pad)
-        ttk.Entry(picker, textvariable=self.folder, width=40).pack(side="left")
-        ttk.Button(picker, text="찾아보기", command=self.pick_folder).pack(side="left", padx=6)
 
-        ttk.Button(box, text="설정 저장", command=self.save).grid(
-            row=row + 1, column=1, sticky="e", **pad
-        )
-
-        run = ttk.LabelFrame(self, text="실행")
-        run.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
-
-        ttk.Label(run, text="기간").grid(row=0, column=0, sticky="w", **pad)
+        ttk.Label(box, text="기간").grid(row=0, column=0, sticky="w", **pad)
         self.from_date = tk.StringVar(value="2026.08.01")
         self.to_date = tk.StringVar(value="2026.08.31")
-        span = ttk.Frame(run)
-        span.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
+        span = ttk.Frame(box)
+        span.grid(row=0, column=1, sticky="w", **pad)
         ttk.Entry(span, textvariable=self.from_date, width=12).pack(side="left")
         ttk.Label(span, text=" ~ ").pack(side="left")
         ttk.Entry(span, textvariable=self.to_date, width=12).pack(side="left")
 
+        # 전표 폴더는 직접 고르게 한다. 경로를 손으로 치면 오타가 난다.
+        ttk.Label(box, text="전표 폴더").grid(row=1, column=0, sticky="w", **pad)
+        self.folder = tk.StringVar(value=str(self.cfg.get("downloads_dir", "downloads")))
+        picker = ttk.Frame(box)
+        picker.grid(row=1, column=1, sticky="w", **pad)
+        ttk.Entry(picker, textvariable=self.folder, width=40).pack(side="left")
+        ttk.Button(picker, text="찾아보기", command=self.pick_folder).pack(side="left", padx=6)
+
+        run = ttk.LabelFrame(self, text="실행")
+        run.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
+
         self.apply = tk.BooleanVar(value=False)
         self.limit = tk.StringVar(value="")
         opts = ttk.Frame(run)
-        opts.grid(row=1, column=0, columnspan=3, sticky="w", **pad)
+        opts.grid(row=0, column=0, sticky="w", **pad)
         ttk.Checkbutton(
             opts, text="실제로 반영합니다 (체크하지 않으면 계획만 보여 드립니다)", variable=self.apply
         ).pack(side="left")
@@ -106,15 +87,18 @@ class App(tk.Tk):
             ("C. Concur 반영", self.step_update),
         ]
         bar = ttk.Frame(run)
-        bar.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
+        bar.grid(row=1, column=0, sticky="w", **pad)
         for text, cmd in steps:
             ttk.Button(bar, text=text, width=22, command=cmd).pack(side="left", padx=3)
 
         tools = ttk.Frame(self)
         tools.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 10))
         ttk.Button(tools, text="경비유형 코드 확인", command=self.step_list_types).pack(side="left")
+        ttk.Button(tools, text="숙박비 목록 확인", command=self.step_list_lodging).pack(
+            side="left", padx=6
+        )
         ttk.Label(
-            tools, text="새 유형(택시 등)이 생겼을 때 코드를 뽑습니다", foreground="#666"
+            tools, text="드롭다운 값이 바뀌었을 때 다시 뽑습니다", foreground="#666"
         ).pack(side="left", padx=8)
 
     def pick_folder(self) -> None:
@@ -126,20 +110,10 @@ class App(tk.Tk):
 
     def save(self) -> bool:
         self.cfg["downloads_dir"] = self.folder.get().strip() or "downloads"
-        for key, var in self.vars.items():
-            value = var.get().strip()
-            if key in INT_FIELDS:
-                if not value.isdigit():
-                    messagebox.showerror("설정", f"'{key}' 는 숫자로 넣어 주세요: {value!r}")
-                    return False
-                self.cfg[key] = int(value)
-            else:
-                self.cfg[key] = value
         settings.save(self.cfg)
         return True
 
     def _common(self) -> list[str]:
-        """설정을 먼저 저장한다. 단계들이 settings.json 을 읽기 때문이다."""
         args = []
         if self.apply.get():
             args.append("--apply")
@@ -148,8 +122,8 @@ class App(tk.Tk):
         return args
 
     def step_download(self) -> None:
-        if not self.save():
-            return
+        """설정을 먼저 저장한다. 단계들이 settings.json 을 읽기 때문이다."""
+        self.save()
         args = ["src.download_slips", "--from", self.from_date.get(), "--to", self.to_date.get(),
                 "--out", self.cfg["downloads_dir"]]
         if self.limit.get().strip():
@@ -157,8 +131,7 @@ class App(tk.Tk):
         _run(args)
 
     def step_organize(self) -> None:
-        if not self.save():
-            return
+        self.save()
         args = ["src.organize", self.cfg["downloads_dir"]]
         if self.apply.get():
             args.append("--apply")
@@ -166,12 +139,16 @@ class App(tk.Tk):
 
     def step_update(self) -> None:
         """첨부와 입력을 한 세션에서 한다. 로그인을 두 번 하지 않아도 된다."""
-        if self.save():
-            _run(["src.update_concur", "--dir", self.cfg["downloads_dir"], *self._common()])
+        self.save()
+        _run(["src.update_concur", "--dir", self.cfg["downloads_dir"], *self._common()])
 
     def step_list_types(self) -> None:
-        if self.save():
-            _run(["src.fix_expenses", "--list-types"])
+        self.save()
+        _run(["src.fix_expenses", "--list-types"])
+
+    def step_list_lodging(self) -> None:
+        self.save()
+        _run(["src.fix_expenses", "--list-lodging"])
 
 
 def main() -> int:
