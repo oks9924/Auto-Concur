@@ -1227,7 +1227,9 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
         if holes:
             gaps.append((entry, holes))
         if plan.type_code or plan.fill_meal or plan.lodging:
-            plans.append((plan, how))
+            # entry를 같이 준다. 어느 전표가 이 경비에 짝지어졌는지 보여줘야
+            # 유형이 이상할 때 작업지가 틀린 건지 짝이 틀린 건지 알 수 있다.
+            plans.append((plan, how, entry))
     return plans, gaps, missing
 
 
@@ -1240,7 +1242,8 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
     if sheet_path:
         paired, gaps, missing = plans_from_sheet(cfg, [r for r in rows if r.expense_id],
                                                  sheet_path, int(cfg["date_tolerance_days"]))
-        plans = [p for p, _ in paired]
+        plans = [p for p, _, _ in paired]
+        source = {id(p): (entry, how) for p, how, entry in paired}
         if gaps:
             print(f"\n작업지에 빠진 값이 있습니다 {len(gaps)}건. 그 부분은 채우지 못합니다:")
             for entry, holes in gaps:
@@ -1252,11 +1255,18 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
                 print(f"  {entry.when} {entry.amount:>9,}원  {entry.merchant[:16]} - {why}")
     else:
         plans = [p for p in (decide(r, rules) for r in rows if r.expense_id) if p]
+        source = {}
 
-    print(f"\n경비 {len(rows)}건 중 {len(plans)}건을 수정합니다\n")
+    print(f"\n경비 {len(rows)}건 중 {len(plans)}건을 수정합니다")
+    print("  (화면의 현재 유형  ->  작업지대로 바꿀 내용  [짝지은 전표])\n")
     for plan in plans:
         r = plan.row
-        print(f"  {r.when} {r.amount:>9,}원  {r.expense_type[:22]:22} -> {plan.summary()}")
+        entry, how = source.get(id(plan), (None, ""))
+        mark = ""
+        if entry is not None:
+            mark = f"   [{entry.when} {entry.merchant[:12]}"
+            mark += f", {how} 배정]" if how != "단독" else "]"
+        print(f"  {r.when} {r.amount:>9,}원  {r.expense_type[:22]:22} -> {plan.summary()}{mark}")
 
     skipped = len(rows) - len(plans)
     if skipped:
