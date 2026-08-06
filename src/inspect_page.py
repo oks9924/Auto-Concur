@@ -25,9 +25,12 @@ PROFILE_DIR = Path("browser-profile")
 OUT_DIR = Path("inspect-out")
 
 # 화면에서 눌러야 할 만한 것들만 추린다. 전체 DOM은 따로 저장한다.
+# combobox/listbox까지 봐야 한다. Concur의 경비 유형 드롭다운은 select가 아니라
+# div[role=combobox]라서, a/button/input/select만 훑으면 아예 안 잡힌다.
 INTERACTIVE_JS = """
 () => {
-  const sel = 'a, button, input, select, [role=button], [onclick]';
+  const sel = 'a, button, input, select, textarea, [role=button], [role=combobox],'
+            + ' [role=listbox], [role=option], [aria-haspopup], [onclick]';
   return [...document.querySelectorAll(sel)].map(el => ({
     tag: el.tagName.toLowerCase(),
     type: el.getAttribute('type'),
@@ -36,9 +39,53 @@ INTERACTIVE_JS = """
     name: el.getAttribute('name'),
     cls: el.className && typeof el.className === 'string'
          ? el.className.slice(0, 80) : null,
+    role: el.getAttribute('role'),
     href: el.getAttribute('href'),
     onclick: (el.getAttribute('onclick') || '').slice(0, 120) || null,
-  })).filter(e => e.text || e.id || e.name || e.onclick);
+  })).filter(e => e.text || e.id || e.name || e.onclick || e.role);
+}
+"""
+
+# 입력 필드를 라벨과 함께 뽑는다. id가 :r1ub: 처럼 React가 만든 것이면 이름만
+# 봐서는 무슨 필드인지 알 수 없다. '경비 유형' 라벨이 붙은 게 뭔지 알아야 한다.
+FORM_FIELDS_JS = """
+() => {
+  const labelOf = (el) => {
+    const aria = el.getAttribute('aria-label');
+    if (aria) return aria.trim();
+    const by = el.getAttribute('aria-labelledby');
+    if (by) {
+      const t = by.split(/\\s+/)
+        .map(id => (document.getElementById(id) || {}).innerText || '')
+        .join(' ').trim();
+      if (t) return t;
+    }
+    if (el.id) {
+      const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+      if (l) return (l.innerText || '').trim();
+    }
+    const own = el.closest('label');
+    if (own) return (own.innerText || '').trim();
+    const wrap = el.closest('[class*="form-field"], [class*="form-group"]');
+    if (wrap) {
+      const l = wrap.querySelector('label');
+      if (l) return (l.innerText || '').trim();
+    }
+    return '';
+  };
+  const sel = 'input, select, textarea, [role=combobox], [contenteditable="true"]';
+  return [...document.querySelectorAll(sel)]
+    .filter(el => el.type !== 'hidden')
+    .map(el => ({
+      label: labelOf(el).slice(0, 60),
+      tag: el.tagName.toLowerCase(),
+      type: el.getAttribute('type'),
+      role: el.getAttribute('role'),
+      id: el.id || null,
+      name: el.getAttribute('name'),
+      value: (el.value !== undefined ? el.value : el.innerText || '').slice(0, 60),
+      visible: el.offsetParent !== null,
+    }));
 }
 """
 
@@ -63,8 +110,9 @@ def _snapshot(pages, out: Path) -> None:
                 html = frame.content()
                 (out / f"{label}.html").write_text(html, encoding="utf-8")
                 elements = frame.evaluate(INTERACTIVE_JS)
+                fields = frame.evaluate(FORM_FIELDS_JS)
             except Exception as exc:  # 크로스오리진 프레임은 못 읽는다
-                html, elements = "", [{"error": str(exc)}]
+                html, elements, fields = "", [{"error": str(exc)}], []
             frames.append(
                 {
                     "label": label,
@@ -72,6 +120,7 @@ def _snapshot(pages, out: Path) -> None:
                     "name": frame.name,
                     "html_bytes": len(html),
                     "elements": elements,
+                    "fields": fields,
                 }
             )
         captured.append({"tag": tag, "url": page.url, "frames": frames})
@@ -80,10 +129,19 @@ def _snapshot(pages, out: Path) -> None:
         json.dumps({"pages": captured}, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
+    # 입력 필드는 따로 뽑아둔다. 셀렉터를 찾을 때 제일 먼저 보는 파일이다.
+    fields = [
+        f for p in captured for fr in p["frames"] for f in fr["fields"] if f.get("visible")
+    ]
+    (out / "fields.json").write_text(
+        json.dumps(fields, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
     every = [e for p in captured for f in p["frames"] for e in f["elements"]]
     logged_in = any("로그아웃" in (e.get("text") or "") for e in every)
     print(
         f"  저장: {out}  창 {len(captured)}개, 요소 {len(every)}개, "
+        f"입력 필드 {len(fields)}개, "
         f"로그인 {'됨' if logged_in else '안 됨 -- 확인할 것'}"
     )
 
