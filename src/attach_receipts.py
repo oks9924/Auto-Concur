@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from playwright.sync_api import Error as PWError
 from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 
@@ -112,6 +113,23 @@ def load_manifest(folder: Path) -> list[Slip]:
     return slips
 
 
+def _eval(page, script: str, arg=None, tries: int = 4):
+    """Concur는 화면을 계속 다시 그린다. 렌더 도중에 evaluate하면 실행 컨텍스트가
+    날아가면서 'Execution context was destroyed'가 난다. 잠깐 기다렸다 다시 한다.
+    """
+    last = None
+    for _ in range(tries):
+        try:
+            page.wait_for_load_state("domcontentloaded")
+            return page.evaluate(script) if arg is None else page.evaluate(script, arg)
+        except PWError as exc:
+            if "Execution context was destroyed" not in str(exc):
+                raise
+            last = exc
+            page.wait_for_timeout(2000)
+    raise AttachError(f"페이지가 계속 바뀌어서 읽지 못했다. 화면이 멈춘 뒤 다시 해라: {last}")
+
+
 def _parse_amount(text: str) -> int | None:
     cleaned = text.replace("원", "").replace("KRW", "").strip()
     if not AMOUNT_RE.match(cleaned):
@@ -124,7 +142,7 @@ def _parse_amount(text: str) -> int | None:
 
 def read_rows(page) -> list[Row]:
     rows = []
-    for raw in page.evaluate(READ_ROWS_JS):
+    for raw in _eval(page, READ_ROWS_JS):
         cells = raw["cells"]
         joined = " | ".join(cells)
         when = None
@@ -174,7 +192,7 @@ def match(slips: list[Slip], rows: list[Row], tolerance_days: int) -> tuple[list
 
 def attach(page, slip: Slip, row: Row) -> None:
     before = page.url
-    page.evaluate(CLICK_ROW_JS, row.index)
+    _eval(page, CLICK_ROW_JS, row.index)
     page.wait_for_url(lambda u: u != before, timeout=15000)
     page.wait_for_selector(AMOUNT_FIELD, timeout=15000)
 
@@ -207,12 +225,18 @@ def run(folder: Path, apply: bool, tolerance: int) -> int:
         print("=" * 64)
         console.wait_enter("리포트를 열었으면 Enter > ")
 
+        page.wait_for_timeout(2000)  # Enter 직후에도 화면을 더 그린다
         report_url = page.url
         rows = read_rows(page)
         if not rows:
-            (folder / "concur-dump.html").write_text(page.content(), encoding="utf-8")
+            dump = folder / "concur-dump.html"
+            try:
+                dump.write_text(page.content(), encoding="utf-8")
+            except PWError:
+                dump = None
             raise AttachError(
-                f"경비 목록 행을 읽지 못했다. 화면 HTML을 {folder / 'concur-dump.html'} 에 남겼다."
+                "경비 목록 행을 읽지 못했다."
+                + (f" 화면 HTML을 {dump} 에 남겼다." if dump else "")
             )
 
         dated = [r for r in rows if r.when and r.amount]
