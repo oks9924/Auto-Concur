@@ -409,103 +409,6 @@ HINT_LOCATION = "custom10"  # 숙박 위치 (국내 / 해외)
 HINT_CHANNEL = "custom16"  # Booking channel
 HINT_RECURRENCE = "recurrence"  # 반복 (일일 금액 동일 / 다름)
 
-# 모달에 올라와 있는 참석자.
-#
-# 반드시 모달 안만 봐야 한다. 화면 전체에서 tbody tr 을 훑었더니 모달 뒤에 깔린
-# 리포트 경비 목록의 행이 잡혔고(그 목록의 체크박스 이름이 '행 선택'이다),
-# 참석자가 맞게 들어 있는 건들을 전부 '작업지와 다르다'고 판단해 멈췄다.
-#
-# 어느 칸이 이름인지도 짐작하지 않는다. 행 전체 글자를 준다 - 대조는 검색어를
-# 토막 내서 그 안에 다 있는지로 하니 그걸로 충분하다.
-ATTENDEE_ROWS_FN = """
-  const noise = new Set(['행 선택', '모든 행 선택', '선택', '삭제', '편집', '제거']);
-  const modal = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
-    .find(d => d.getBoundingClientRect().width > 0);
-  const attendeeRows = () => {
-    if (!modal) return [];
-    return [...modal.querySelectorAll('tbody tr')].filter(r => {
-      const box = r.getBoundingClientRect();
-      return box.width > 0 && box.height > 0;
-    });
-  };
-  const rowText = (r) => (r.innerText || '')
-    .split('\\n').map(x => x.trim()).filter(x => x && !noise.has(x))
-    .join(' ').replace(/\\s+/g, ' ').trim().slice(0, 60);
-"""
-
-ATTENDEE_NAMES_JS = (
-    "() => {" + ATTENDEE_ROWS_FN + " return attendeeRows().map(rowText).filter(Boolean); }"
-)
-
-# 지울 참석자의 '작업' 버튼. 행 끝에 ... 모양으로 있고 누르면 메뉴가 열린다.
-ATTENDEE_ACTION_JS = (
-    "(want) => {"
-    + MARK_FN
-    + ATTENDEE_ROWS_FN
-    + """
-  const row = attendeeRows().find(r => rowText(r) === want);
-  if (!row) return null;
-  const buttons = [...row.querySelectorAll('button')].filter(b => {
-    const box = b.getBoundingClientRect();
-    return box.width > 0 && box.height > 0;
-  });
-  return mark(
-    buttons.find(b => b.getAttribute('aria-haspopup'))
-    || buttons.find(b => /작업|더 보기|더보기|메뉴|actions?/i.test(
-         (b.getAttribute('aria-label') || '') + ' ' + (b.innerText || '')))
-    || buttons[buttons.length - 1]
-  );
-}"""
-)
-
-# 열린 메뉴에서 '제거'를 누른다.
-MENU_ITEM_JS = (
-    "(csv) => {"
-    + MARK_FN
-    + """
-  const want = csv.split(',');
-  const items = [...document.querySelectorAll(
-    '[role="menuitem"], [role="option"], li button, [role="menu"] button'
-  )].filter(e => {
-    const box = e.getBoundingClientRect();
-    return box.width > 0 && box.height > 0;
-  });
-  const text = (e) => (e.innerText || '').trim();
-  for (const w of want) {
-    const hit = items.find(e => text(e) === w);
-    if (hit) return mark(hit);
-  }
-  return null;
-}"""
-)
-
-DUMP_ATTENDEE_ROWS_JS = (
-    "() => {"
-    + ATTENDEE_ROWS_FN
-    + """
-  return attendeeRows().map(r => ({
-    text: rowText(r),
-    buttons: [...r.querySelectorAll('button')].map(b => ({
-      text: (b.innerText || '').trim().slice(0, 20),
-      ariaLabel: b.getAttribute('aria-label'),
-      haspopup: b.getAttribute('aria-haspopup'),
-    })),
-  }));
-}"""
-)
-
-DUMP_MENU_JS = """
-() => [...document.querySelectorAll('[role="menu"], [role="menuitem"], [role="listbox"]')]
-  .filter(e => e.getBoundingClientRect().width > 0)
-  .map(e => (e.innerText || '').trim().slice(0, 200))
-"""
-
-REMOVE_LABELS = "제거,삭제,Remove,Delete"
-
-# 참석자 삭제는 기본으로 끈다. 화면을 잘못 읽어 멀쩡한 참석자를 지운 적이 있다.
-# 잘못 지우면 되돌릴 방법이 없어서, 확인되기 전까지는 --remove-attendees 로만 켠다.
-REMOVE_ATTENDEES = False
-
 # 새 경비유형(택시 등)이 생겼을 때 코드를 알아내려고 쓴다.
 DUMP_TYPES_JS = """
 () => {
@@ -916,14 +819,6 @@ def name_matches(query: str, name: str) -> bool:
     return bool(parts) and all(p in low for p in parts)
 
 
-def _attendee_names(page) -> list[str]:
-    """모달에 이미 올라와 있는 참석자 이름. 못 읽으면 빈 목록."""
-    try:
-        return [n for n in _eval(page, ATTENDEE_NAMES_JS) if n]
-    except Exception:
-        return []
-
-
 def _open_attendee_modal(page, report_url: str, row: Row) -> None:
     """참석자 모달을 연다. 화면의 '참석자 (N)' 버튼을 누르는 것이 먼저다.
 
@@ -951,52 +846,12 @@ def _open_attendee_modal(page, report_url: str, row: Row) -> None:
     _wait_js(page, ATTENDEE_COMBO_READY_JS, "참석자 검색 콤보박스", timeout=30000)
 
 
-def _close_attendee_modal(page) -> None:
-    """고칠 것이 없을 때 모달을 닫는다. 열어두면 다음 단계가 이 화면에 걸린다."""
-    for label in ("취소", "닫기", "Cancel", "Close"):
-        try:
-            page.get_by_role("button", name=label, exact=True).first.click(timeout=2000)
-            page.wait_for_timeout(800)
-            return
-        except Exception:
-            continue
-    page.keyboard.press("Escape")
-    page.wait_for_timeout(800)
-
-
-def _remove_attendee(page, name: str) -> None:
-    """작업지에 없는 참석자를 지운다. 행 끝의 '작업'(...) 을 눌러 메뉴에서 제거한다."""
-    selector = _eval(page, ATTENDEE_ACTION_JS, name)
-    if not selector:
-        dump = _dump(page, "attendee-rows", DUMP_ATTENDEE_ROWS_JS)
-        raise AttachError(
-            f"'{name}' 행의 작업 버튼을 찾지 못했습니다"
-            + (f" (참석자 행 정보: {dump})" if dump else "")
-        )
-    page.click(selector)
-    page.wait_for_timeout(800)
-
-    item = _eval(page, MENU_ITEM_JS, REMOVE_LABELS)
-    if not item:
-        dump = _dump(page, "attendee-menu", DUMP_MENU_JS)
-        raise AttachError(
-            f"'{name}' 을(를) 지울 메뉴({REMOVE_LABELS})를 찾지 못했습니다"
-            + (f" (메뉴 정보: {dump})" if dump else "")
-        )
-    page.click(item)
-    page.wait_for_timeout(1200)
-
-    # 정말 사라졌는지 본다. 눌렀다고 지워진 것은 아니다.
-    if any(left == name for left in _attendee_names(page)):
-        raise AttachError(f"'{name}' 이(가) 지워지지 않았습니다")
-
-
 def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
-    """화면의 참석자를 작업지에 적힌 사람들과 맞춘다.
+    """참석자가 하나도 없을 때만 넣는다. 이미 있으면 건드리지 않는다.
 
-    이미 같으면 건드리지 않는다. 빠진 사람만 넣고, 작업지에 없는 사람은 지운다.
-    이름 형태가 달라도 같은 사람으로 본다 - 작업지의 'kyungsik.oh' 와 화면의
-    'Oh Kyungsik' 은 같다.
+    한때 '작업지와 다르면 지우고 다시 넣기'를 했는데, 화면을 잘못 읽어 멀쩡한
+    참석자를 지웠다(2026-08). 되돌릴 방법이 없는 동작이라 되돌렸다. 이미 들어
+    있는 참석자는 사람이 보고 고치는 것이 맞다.
 
     여러 명이면 한 명씩 검색·선택을 반복하고 저장은 마지막에 한 번만 한다.
     중간에 실패하면 아무것도 저장되지 않으므로 다시 돌리면 처음부터 다시 한다.
@@ -1006,67 +861,18 @@ def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
     count = _eval(page, ATTENDEE_COUNT_JS)
     if count is None:
         raise AttachError("참석자 버튼을 찾지 못했습니다")
+    if count > 0:
+        return 0  # 이미 누군가 들어 있다
 
     _open_attendee_modal(page, report_url, row)
-    # 표가 그려질 틈을 준다. 덜 그려진 화면을 읽으면 엉뚱한 행을 참석자로 본다.
-    page.wait_for_timeout(2000)
-
-    names = _attendee_names(page) if count else []
-    if count and not names:
-        # 참석자가 있다는데 한 줄도 못 읽었다. 이 상태로 판단하면 안 된다.
-        dump = _dump(page, "attendee-rows", DUMP_ATTENDEE_ROWS_JS)
-        _close_attendee_modal(page)
-        raise AttachError(
-            f"참석자가 {count}명이라는데 목록을 읽지 못했습니다. 아무것도 바꾸지 않았습니다."
-            + (f" (참석자 행 정보: {dump})" if dump else "")
-        )
-    extra = [n for n in names if not any(name_matches(q, n) for q in queries)]
-    if extra:
-        # 지우지 않는다. 화면을 잘못 읽어 멀쩡한 참석자를 지운 적이 있다(2026-08).
-        # 지우려면 --remove-attendees 를 붙여야 하고, 그전에 이 파일로 화면을
-        # 확인해야 한다. 잘못 지우면 되돌릴 방법이 없다.
-        dump = _dump(page, "attendee-rows", DUMP_ATTENDEE_ROWS_JS)
-        _close_attendee_modal(page)
-        if not REMOVE_ATTENDEES:
-            raise AttachError(
-                f"참석자가 작업지와 다릅니다. 화면: {' | '.join(names)} / "
-                f"작업지: {', '.join(queries)}. 아무것도 바꾸지 않았습니다."
-                + (f" (참석자 행 정보: {dump})" if dump else "")
-            )
-        _open_attendee_modal(page, report_url, row)
-        for name in extra:
-            _remove_attendee(page, name)
-        names = _attendee_names(page)
-        print(f"     (작업지에 없는 참석자 {len(extra)}명을 지웠습니다: {', '.join(extra)})")
-
-    missing = [q for q in queries if not any(name_matches(q, n) for n in names)]
-    if not missing and not extra:
-        # 이미 작업지대로다. 모달을 열어둔 채 두지 않는다.
-        _close_attendee_modal(page)
-        return 0
 
     try:
-        for query in missing:
+        for query in queries:
             _pick_attendee(page, query)
     except AttachError:
         _dump(page, "combos-attendee", DUMP_COMBOS_JS)
         _dump(page, "inputs-attendee", DUMP_INPUTS_JS)
-        # 넣다가 실패했으면 저장하지 않는다. 반쯤 넣은 채로 저장하면 화면에
-        # 있던 참석자가 지워진 상태로 굳는다.
-        _close_attendee_modal(page)
         raise
-
-    # 저장 직전에 화면을 다시 본다. 넣으려던 사람이 실제로 목록에 올라와
-    # 있어야 저장한다. 비어 있는데 저장하면 남아 있던 참석자까지 지워진다.
-    now = _attendee_names(page)
-    added_now = [q for q in missing if any(name_matches(q, n) for n in now)]
-    if len(added_now) != len(missing):
-        _dump(page, "attendee-rows", DUMP_ATTENDEE_ROWS_JS)
-        _close_attendee_modal(page)
-        raise AttachError(
-            f"참석자 {len(missing)}명을 넣으려 했는데 목록에는 {len(added_now)}명만 "
-            f"올라왔습니다. 저장하지 않았습니다 (화면: {' | '.join(now)})"
-        )
 
     # exact=True 가 중요하다. 기본은 부분 일치라 '저장'이 '경비 저장'에도
     # 걸려서 모달 버튼 대신 뒤쪽 버튼을 누를 수 있다.
@@ -1086,7 +892,7 @@ def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
         actual = _eval(page, ATTENDEE_COUNT_JS)
         _dump(page, "inputs-attendee-save", DUMP_INPUTS_JS)
         raise AttachError(f"참석자 {len(queries)}명을 넣으려 했는데 화면에는 {actual}명만 있습니다")
-    return len(missing) + len(extra)
+    return len(queries)
 
 
 def apply_plan(page, plan: Plan, report_url: str) -> str:
@@ -1162,6 +968,17 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
     # 누락되었습니다' 창이 뜨고, 그 창을 닫으면 리포트로 튕겨 나간다. 넣을 것을
     # 다 넣고 한 번만 저장한다.
     _open_tab(page, TAB_ITEMIZATION, "항목별 명세")
+    # 탭을 눌렀다고 바로 그려지지 않는다. 반복 콤보박스나 객실 요금 칸 중
+    # 하나가 나타날 때까지 기다린다. 안 기다렸더니 화면에 콤보박스가 아직
+    # 하나도 없는 상태에서 '반복'을 찾다가 실패했다.
+    _wait_js(
+        page,
+        "() => !!document.querySelector('[name=\"recurrence\"]')"
+        " || [...document.querySelectorAll('input')]"
+        ".some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.name || ''))",
+        "항목별 명세 화면",
+        timeout=25000,
+    )
     _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
     page.wait_for_timeout(1500)
 
@@ -1383,10 +1200,7 @@ def main() -> int:
                     help="화면의 경비유형과 코드를 뽑습니다 (새 유형이 생겼을 때 쓰세요)")
     ap.add_argument("--list-lodging", action="store_true",
                     help="숙박위치·Booking Channel 목록을 뽑아 settings.json 에 넣습니다")
-    ap.add_argument("--remove-attendees", action="store_true",
-                    help="작업지에 없는 참석자를 지웁니다 (기본은 지우지 않고 멈춥니다)")
     args = ap.parse_args()
-    globals()["REMOVE_ATTENDEES"] = args.remove_attendees
     try:
         path = None
         if args.sheet is not None:

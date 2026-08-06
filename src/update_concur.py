@@ -16,7 +16,6 @@ from pathlib import Path
 
 from . import console, settings, sheet
 from .attach_receipts import AttachError, attach_phase, load_manifest, open_report
-from . import fix_expenses
 from .fix_expenses import fix_phase
 
 
@@ -83,10 +82,7 @@ def main() -> int:
     ap.add_argument("--tolerance", type=int, help="영수증 매칭에서 허용할 날짜 오차(일)입니다")
     ap.add_argument("--again", action="store_true",
                     help="영수증이 이미 붙어 있다는 판정을 무시하고 다시 붙입니다")
-    ap.add_argument("--remove-attendees", action="store_true",
-                    help="작업지에 없는 참석자를 지웁니다 (기본은 지우지 않고 멈춥니다)")
     args = ap.parse_args()
-    fix_expenses.REMOVE_ATTENDEES = args.remove_attendees
 
     folder = args.dir or Path(cfg["downloads_dir"])
     tolerance = args.tolerance if args.tolerance is not None else int(cfg["date_tolerance_days"])
