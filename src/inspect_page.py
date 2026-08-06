@@ -88,16 +88,19 @@ def _snapshot(pages, out: Path) -> None:
     )
 
 
-def dump(url: str, name: str) -> None:
+def dump(url: str, name: str, channel: str | None) -> None:
     out = OUT_DIR / name
     out.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as p:
+        # 회사 SSO에 조건부 액세스가 걸려 있으면 번들 Chromium이 '관리되지 않는
+        # 브라우저'로 막힐 수 있다. 그때는 --channel chrome 으로 설치된 Chrome을 쓴다.
         ctx = p.chromium.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR / name),
             headless=False,
             accept_downloads=True,
             locale="ko-KR",
+            **({"channel": channel} if channel else {}),
         )
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(url, wait_until="domcontentloaded")
@@ -119,8 +122,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="페이지 구조 덤프 (셀렉터 탐색용)")
     ap.add_argument("url")
     ap.add_argument("--name", default="page", help="저장 폴더 이름 (예: hyundaicard, concur)")
+    ap.add_argument(
+        "--channel",
+        choices=("chrome", "msedge"),
+        help="SSO가 번들 Chromium을 막을 때 설치된 브라우저를 쓴다",
+    )
     args = ap.parse_args()
-    dump(args.url, args.name)
+    dump(args.url, args.name, args.channel)
     return 0
 
 
