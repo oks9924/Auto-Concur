@@ -235,6 +235,8 @@ ATTENDEE_COUNT_JS_BODY = """
 
 ATTENDEE_COUNT_JS = "() => {" + ATTENDEE_COUNT_JS_BODY + " return n; }"
 
+SELECT_ATTENDEE_BUTTON_JS = "() => {" + MARK_FN + ATTENDEE_COUNT_JS_BODY + " return mark(b); }"
+
 # --- 숙박비 -----------------------------------------------------------------
 #
 # 아래 훅은 전부 실제 화면 덤프에서 확인한 것이다 (2026-08, inspect_page).
@@ -367,6 +369,36 @@ DUMP_DIALOG_JS = """
 # 값이 날아가지는 않지만, 화면이 바뀌므로 다음 단계는 경비를 다시 열고 시작해야
 # 한다. 그래서 이 창을 닫은 뒤에는 늘 주소로 상세를 다시 연다.
 DIALOG_DISMISS = "아니요,아니오,No,닫기,취소"
+
+# 저장 버튼은 탭마다 이름이 다르다. 상세 정보는 '경비 저장', 항목별 명세는
+# '저장'이다. 앞에 적은 이름부터 찾는다. get_by_role(name=...)은 기본이 부분
+# 일치라 '저장'이 '경비 저장'에도 걸려서 엉뚱한 버튼을 누른다 - 여기서는
+# 정확히 같은 글자만 본다.
+SAVE_BUTTON_JS = (
+    "(csv) => {"
+    + MARK_FN
+    + """
+  const buttons = [...document.querySelectorAll('button')].filter(b => {
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && !b.disabled;
+  });
+  const text = (b) => (b.innerText || '').trim();
+  for (const want of csv.split(',')) {
+    const hit = buttons.find(b => text(b) === want);
+    if (hit) return mark(hit);
+  }
+  return null;
+}"""
+)
+
+DUMP_BUTTONS_JS = """
+() => [...document.querySelectorAll('button')]
+  .filter(b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
+  .map(b => ({ text: (b.innerText || '').trim().slice(0, 40), disabled: b.disabled }))
+"""
+
+SAVE_DETAIL = "경비 저장,저장"
+SAVE_ITEMIZATION = "저장,항목별 명세 저장,경비 저장"
 
 LABEL_LODGING = "숙박비"
 RECUR_DIFFERENT_DAILY = "일일 금액 다름"
@@ -667,13 +699,23 @@ def _dismiss_dialog(page, wait_ms: int = 5000) -> str | None:
     return text
 
 
-def _save_expense(page, row: Row, report_url: str) -> None:
-    """경비를 저장하고, 뒤따라 뜨는 확인창까지 처리한 뒤 상세로 돌아온다.
+def _save_expense(page, row: Row, report_url: str, labels: str = SAVE_DETAIL) -> None:
+    """저장하고, 뒤따라 뜨는 확인창까지 처리한 뒤 상세로 돌아온다.
 
     확인창을 닫으면 리포트 목록으로 튕겨 나간다(실측). 저장은 이미 끝났으니
     값은 남아 있다. 주소로 상세를 다시 열고, 금액으로 맞는 경비인지 확인한다.
+
+    labels는 찾을 버튼 이름들이다. 탭마다 다르다 - 상세 정보는 '경비 저장',
+    항목별 명세는 '저장'. 여기 없는 이름이면 화면의 버튼을 파일로 남기고 멈춘다.
     """
-    page.get_by_role("button", name="경비 저장", exact=True).first.click()
+    selector = _eval(page, SAVE_BUTTON_JS, labels)
+    if not selector:
+        dump = _dump(page, "buttons", DUMP_BUTTONS_JS)
+        raise AttachError(
+            f"저장 버튼({labels})을 찾지 못했습니다"
+            + (f" (화면의 버튼 목록: {dump})" if dump else "")
+        )
+    page.click(selector)
     page.wait_for_timeout(2000)
     told = _dismiss_dialog(page)
     if told:
@@ -781,7 +823,34 @@ def _attendee_names(page) -> list[str]:
         return []
 
 
-def _sync_attendees(page, report_url: str, expense_id: str, queries: list[str]) -> int:
+def _open_attendee_modal(page, report_url: str, row: Row) -> None:
+    """참석자 모달을 연다. 화면의 '참석자 (N)' 버튼을 누르는 것이 먼저다.
+
+    주소로 열면 앱 전체가 다시 뜨면서 저장하지 않은 입력이 날아간다. 그래서
+    전에는 먼저 저장해야 했고, 저장하면 '필수 정보가 누락되었습니다' 창이
+    떴다(참석자를 아직 안 넣었으니까). 버튼으로 열면 그 과정이 통째로 없다.
+
+    버튼으로 안 열리면 예전 방식으로 물러선다 - 저장하고 주소로 연다.
+    """
+    selector = _eval(page, SELECT_ATTENDEE_BUTTON_JS)
+    if selector:
+        page.click(selector)
+        try:
+            _wait_js(page, ATTENDEE_COMBO_READY_JS, "참석자 검색 콤보박스", timeout=10000)
+            return
+        except AttachError:
+            pass  # 버튼이 모달을 여는 것이 아니었다. 주소로 연다
+
+    _save_expense(page, row, report_url)
+    page.goto(
+        f"{expense_url(report_url, row.expense_id)}?modal=attendees&context=entry",
+        wait_until="domcontentloaded",
+    )
+    page.wait_for_timeout(2500)
+    _wait_js(page, ATTENDEE_COMBO_READY_JS, "참석자 검색 콤보박스", timeout=30000)
+
+
+def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
     """화면의 참석자를 작업지에 적힌 사람들과 맞춘다.
 
     이미 같으면 건드리지 않는다. 빠진 사람만 넣는다. 작업지에 없는 사람이
@@ -797,12 +866,7 @@ def _sync_attendees(page, report_url: str, expense_id: str, queries: list[str]) 
     if count is None:
         raise AttachError("참석자 버튼을 찾지 못했습니다")
 
-    # 주소로 모달을 열면 앱 전체를 다시 띄운다. 넉넉히 기다려야 한다.
-    page.goto(
-        f"{expense_url(report_url, expense_id)}?modal=attendees&context=entry",
-        wait_until="domcontentloaded",
-    )
-    page.wait_for_timeout(2500)
+    _open_attendee_modal(page, report_url, row)
 
     names = _attendee_names(page) if count else []
     extra = [n for n in names if not any(name_matches(q, n) for q in queries)]
@@ -860,6 +924,7 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
     if plan.type_code:
         _set_type(page, plan.type_code, plan.type_label)
         done.append(f"유형->{plan.type_label}")
+    fields_changed = bool(done)
 
     # 숙박비 상세에는 비즈니스 목적 칸이 아예 없다(실측). 없는 칸을 못 찾았다고
     # 건 전체를 실패시키면 안 된다.
@@ -868,22 +933,28 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
                            required=plan.lodging is None)
         if wrote:
             done.append("목적")
+            fields_changed = True
         elif wrote is None:
             print("     (이 경비 유형에는 비즈니스 목적 칸이 없어서 건너뜁니다)")
     if plan.comment and _set_field(page, COMMENT_FIELD, plan.comment, "코멘트"):
         done.append("코멘트")
+        fields_changed = True
 
     if plan.lodging:
         # 숙박비는 탭을 오가야 해서 저장 시점이 따로다. 안에서 저장까지 한다.
         done += _apply_lodging(page, plan, report_url)
-    elif done:
-        # 저장이 끝나고 화면이 다시 그려질 때까지 기다린다. 여기서 서둘러
-        # 참석자 모달로 넘어가면 방금 넣은 값이 날아간다.
-        _save_expense(page, row, report_url)
 
-    added = _sync_attendees(page, report_url, row.expense_id, parse_attendees(plan.attendee))
+    # 참석자를 넣고 나서 한 번에 저장한다. 참석자가 빈 채로 저장하면 Concur가
+    # '필수 정보가 누락되었습니다' 창을 띄우고, 그 창을 닫으면 리포트로 튕겨
+    # 나간다. 넣을 것을 다 넣고 저장하면 그 창이 아예 안 뜬다.
+    added = _sync_attendees(page, report_url, row, parse_attendees(plan.attendee))
     if added:
         done.append(f"참석자 {added}명")
+
+    # 숙박비는 _apply_lodging 안에서 이미 저장했다. 나머지는 여기서 한 번 저장한다.
+    # 참석자만 바뀐 경우는 모달의 저장으로 끝나서 따로 저장하지 않아도 된다.
+    if fields_changed and not plan.lodging:
+        _save_expense(page, row, report_url)
 
     return ", ".join(done) if done else "이미 되어 있음"
 
@@ -925,9 +996,10 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
     n = _fill_room_rates(page, amounts)
     done.append(f"일일 객실 요금 {n}행 (합 {sum(amounts):,}원)")
 
-    # 명세를 저장한다. 여기서도 상세로 돌아온다 - 항목별 명세 탭에는 금액
-    # 필드가 없어서, 남아 있으면 다음 단계의 확인이 엉뚱하게 실패한다.
-    _save_expense(page, plan.row, report_url)
+    # 명세를 저장한다. 이 탭의 버튼은 '경비 저장'이 아니라 '저장'이다.
+    # 여기서도 상세로 돌아온다 - 항목별 명세 탭에는 금액 필드가 없어서,
+    # 남아 있으면 다음 단계의 확인이 엉뚱하게 실패한다.
+    _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION)
     return done
 
 
