@@ -235,6 +235,30 @@ ATTENDEE_COUNT_JS_BODY = """
 
 ATTENDEE_COUNT_JS = "() => {" + ATTENDEE_COUNT_JS_BODY + " return n; }"
 
+# 참석자 모달 안을 통째로 남긴다. 지우는 기능을 만들려면 이 표가 어떻게 생겼는지
+# 알아야 한다. 짐작으로 버튼을 눌렀다가 멀쩡한 참석자를 지운 적이 있다(2026-08).
+DUMP_ATTENDEE_MODAL_JS = """
+() => {
+  const modal = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
+    .find(d => d.getBoundingClientRect().width > 0);
+  const root = modal || document.body;
+  return {
+    isModal: !!modal,
+    html: root.outerHTML.slice(0, 40000),
+    rows: [...root.querySelectorAll('tr, [role="row"]')]
+      .filter(r => r.getBoundingClientRect().width > 0)
+      .map(r => ({
+        text: (r.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 80),
+        buttons: [...r.querySelectorAll('button')].map(b => ({
+          text: (b.innerText || '').trim().slice(0, 20),
+          ariaLabel: b.getAttribute('aria-label'),
+          haspopup: b.getAttribute('aria-haspopup'),
+        })),
+      })),
+  };
+}
+"""
+
 SELECT_ATTENDEE_BUTTON_JS = "() => {" + MARK_FN + ATTENDEE_COUNT_JS_BODY + " return mark(b); }"
 
 # --- 숙박비 -----------------------------------------------------------------
@@ -625,7 +649,7 @@ def _pick_from_combo(page, hint: str, want: str, what: str) -> None:
             + ". 엑셀 드롭다운 목록을 --list-lodging 으로 다시 뽑아 주세요."
         ) from None
     _click_marked(page, SELECT_OPTION_JS, f"{what} 옵션 '{want}'", arg=want)
-    page.wait_for_timeout(1000)
+    page.wait_for_timeout(600)
 
     # 고른 값이 실제로 들어갔는지 본다. 눌렀다고 바뀐 것은 아니다.
     shown = _eval(page, COMBO_VALUE_JS, hint) or ""
@@ -654,7 +678,7 @@ def _set_date_range(page, checkin: date, checkout: date) -> None:
     page.keyboard.press("Delete")
     page.keyboard.type(want, delay=50)
     page.keyboard.press("Escape")  # 달력이 떠 있으면 닫는다. 다음 클릭을 가린다
-    page.wait_for_timeout(800)
+    page.wait_for_timeout(500)
 
     # 넣은 대로 남았는지 본다. 달력이 값을 다시 쓰는 경우가 있다.
     shown = page.input_value(DATE_RANGE_FIELD).strip()
@@ -662,7 +686,7 @@ def _set_date_range(page, checkin: date, checkout: date) -> None:
         raise AttachError(f"날짜 범위가 '{want}' 로 들어가지 않았습니다 (화면: '{shown}')")
 
 
-def _dismiss_dialog(page, wait_ms: int = 5000) -> str | None:
+def _dismiss_dialog(page, wait_ms: int = 2500) -> str | None:
     """저장 후 뜨는 확인창을 닫는다. 안 뜨면 아무것도 하지 않는다.
 
     '이 경비가 저장되었지만 필수 정보가 누락되었습니다. 지금 수정하시겠습니까?'
@@ -684,7 +708,7 @@ def _dismiss_dialog(page, wait_ms: int = 5000) -> str | None:
             + (f" (창 정보: {dump})" if dump else "")
         )
     page.click(selector)
-    page.wait_for_timeout(1200)
+    page.wait_for_timeout(800)
     return text
 
 
@@ -708,11 +732,12 @@ def _save_expense(page, row: Row, report_url: str, labels: str = SAVE_DETAIL,
             + (f" (화면의 버튼 목록: {dump})" if dump else "")
         )
     page.click(selector)
-    page.wait_for_timeout(2000)
-    told = _dismiss_dialog(page)
+    page.wait_for_timeout(800)
+    # 넣을 것을 다 넣고 저장하므로 확인창은 안 뜨는 것이 정상이다. 뜰 때만
+    # 짧게 잡는다 - 매번 오래 기다리면 건마다 그만큼 늦어진다.
+    told = _dismiss_dialog(page, wait_ms=1500)
     if told:
         print(f"     (저장 후 안내창을 닫았습니다: {told})")
-    page.wait_for_timeout(1000)
 
     if reopen:
         page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
@@ -725,7 +750,7 @@ def _open_tab(page, selector: str, what: str) -> None:
     except PWTimeout:
         raise AttachError(f"{what} 탭을 찾지 못했습니다") from None
     page.click(selector)
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(800)
 
 
 ITEMIZATION_READY_JS = (
@@ -827,7 +852,7 @@ def _pick_attendee(page, query: str) -> None:
     )
     _wait_js(page, HAS_ATTENDEE_OPTION_JS, f"'{query}' 검색 결과", timeout=25000)
     _click_marked(page, SELECT_ATTENDEE_OPTION_JS, f"'{query}' 검색 결과")
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(800)
 
 
 def name_matches(query: str, name: str) -> bool:
@@ -866,7 +891,6 @@ def _open_attendee_modal(page, report_url: str, row: Row) -> None:
         f"{expense_url(report_url, row.expense_id)}?modal=attendees&context=entry",
         wait_until="domcontentloaded",
     )
-    page.wait_for_timeout(2500)
     _wait_js(page, ATTENDEE_COMBO_READY_JS, "참석자 검색 콤보박스", timeout=30000)
 
 
@@ -885,8 +909,20 @@ def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
     count = _eval(page, ATTENDEE_COUNT_JS)
     if count is None:
         raise AttachError("참석자 버튼을 찾지 못했습니다")
+    if count == len(queries):
+        return 0  # 수가 맞는다. 이미 들어 있는 사람은 건드리지 않는다
     if count > 0:
-        return 0  # 이미 누군가 들어 있다
+        # 수가 다르다. 지우려면 이 표가 어떻게 생겼는지 알아야 하는데, 짐작으로
+        # 눌렀다가 멀쩡한 참석자를 지운 적이 있다(2026-08). 화면을 파일로 남기고
+        # 이 건은 사람에게 넘긴다.
+        _open_attendee_modal(page, report_url, row)
+        dump = _dump(page, "attendee-modal", DUMP_ATTENDEE_MODAL_JS)
+        raise AttachError(
+            f"참석자가 화면에는 {count}명, 작업지에는 {len(queries)}명입니다. "
+            "지우는 것은 아직 하지 못해서 아무것도 바꾸지 않았습니다. "
+            "이 건은 직접 고쳐 주세요."
+            + (f" (참석자 화면: {dump})" if dump else "")
+        )
 
     _open_attendee_modal(page, report_url, row)
 
@@ -1004,7 +1040,7 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
         return done
 
     _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(800)
 
     done.append(_fill_room_rates(page, amounts))
 
