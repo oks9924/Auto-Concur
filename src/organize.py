@@ -14,6 +14,7 @@ import csv
 import sys
 from pathlib import Path
 
+from . import console
 from .slip_parser import Slip, SlipParseError, parse_slip
 
 MANIFEST_COLUMNS = [
@@ -102,6 +103,7 @@ def organize(folder: Path, apply: bool) -> int:
 
 
 def main() -> int:
+    console.setup()
     ap = argparse.ArgumentParser(description="현대카드 전표 PDF 정리")
     ap.add_argument("folder", type=Path, help="전표 PDF가 모여 있는 폴더")
     ap.add_argument("--apply", action="store_true", help="실제로 이름을 변경한다")

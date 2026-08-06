@@ -18,14 +18,25 @@
 C가 실패했을 때 A부터 다시 돌려야 한다. `manifest.csv`가 B와 C 사이의 인계물이고,
 중간에 사람이 검수하는 지점이다.
 
+## 환경
+
+**Windows 기준으로 만들었다.** A단계에서 현대카드 기업포털을 다뤄야 하는데
+한국 기업/금융 포털은 Windows 전제인 경우가 많아서다. macOS/Linux에서도
+B단계(파싱·정리)는 그대로 돌아간다.
+
+Python 3.10 이상이 필요하다.
+
 ## 지금 되는 것: B단계
 
-```bash
-python -m venv venv && ./venv/bin/pip install -r requirements.txt
+```bat
+py -m venv venv
+venv\Scripts\pip install -r requirements.txt
 
-./venv/bin/python -m src.organize ./downloads            # 미리보기
-./venv/bin/python -m src.organize ./downloads --apply    # 실제 이름 변경
+venv\Scripts\python -m src.organize .\downloads            :: 미리보기
+venv\Scripts\python -m src.organize .\downloads --apply    :: 실제 이름 변경
 ```
+
+macOS/Linux는 `venv\Scripts\` 대신 `venv/bin/` 을 쓴다.
 
 전표 PDF를 모아둔 폴더를 주면:
 
@@ -67,14 +78,12 @@ C단계에서 매칭이 모호하면 **건너뛰고 사람에게 넘긴다** —
 
 셀렉터는 추측하지 않는다. 실제 화면을 떠서 확인한 뒤에 쓴다:
 
-```bash
-./venv/bin/playwright install chromium
+```bat
+venv\Scripts\playwright install chromium
 
-./venv/bin/python -m src.inspect_page \
-    'https://mycompany.hyundaicard.com/hs/cs/HSCS1002.do' --name hyundaicard
+venv\Scripts\python -m src.inspect_page "https://mycompany.hyundaicard.com/hs/cs/HSCS1002.do" --name hyundaicard
 
-./venv/bin/python -m src.inspect_page \
-    'https://eu2.concursolutions.com/home' --name concur
+venv\Scripts\python -m src.inspect_page "https://eu2.concursolutions.com/home" --name concur
 ```
 
 브라우저가 뜨면 로그인하고 원하는 화면까지 이동한 뒤 Enter를 누르면
@@ -87,6 +96,18 @@ C단계에서 매칭이 모호하면 **건너뛰고 사람에게 넘긴다** —
 
 테스트는 `tests/fixtures/sample_slip.pdf`가 있으면 돌고, 없으면 건너뛴다.
 
-```bash
-./venv/bin/python -m pytest tests/ -q
+```bat
+venv\Scripts\python -m pytest tests\ -q
 ```
+
+## Windows에서 걸릴 만한 것
+
+**콘솔 한글 출력.** 파이썬은 Windows 콘솔 코드페이지로 stdout을 인코딩한다.
+영문 Windows(cp1252)에서는 한글을 찍는 순간 `UnicodeEncodeError`로 죽는다.
+이름 변경 도중에 죽으면 어디까지 바뀌었는지 알기 어려우므로 진입 시점에
+UTF-8로 맞춘다 (`src/console.py`). 한국어 Windows(cp949)는 원래 문제없다.
+
+**파일이 열려 있으면 이름이 안 바뀐다.** PDF 뷰어로 전표를 열어둔 채 `--apply`를
+돌리면 그 파일만 `PermissionError`로 실패 목록에 남는다. 뷰어를 닫고 다시 돌리면 된다.
+
+**CSV 한글.** `manifest.csv`는 utf-8-sig로 쓴다. 엑셀에서 바로 열어도 안 깨진다.

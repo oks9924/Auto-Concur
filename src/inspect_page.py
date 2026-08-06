@@ -1,7 +1,7 @@
 """브라우저 페이지 구조를 덤프한다. 셀렉터를 추측하지 않기 위한 도구다.
 
 현대카드와 Concur 화면은 여기서 볼 수 없으므로, 실제 셀렉터는 이 도구로
-페이지를 떠본 뒤에 쓴다. 로그인은 사람이 직접 한다 — 간편인증/OTP/SSO는
+페이지를 떠본 뒤에 쓴다. 로그인은 사람이 직접 한다. 간편인증/OTP/SSO는
 자동화 대상이 아니고, 프로필을 남겨두면 다음 실행부터 로그인이 유지된다.
 
     python -m src.inspect_page https://mycompany.hyundaicard.com/hs/cs/HSCS1002.do
@@ -18,6 +18,8 @@ import json
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+
+from . import console
 
 PROFILE_DIR = Path("browser-profile")
 OUT_DIR = Path("inspect-out")
@@ -96,6 +98,7 @@ def dump(url: str, name: str) -> None:
 
 
 def main() -> int:
+    console.setup()
     ap = argparse.ArgumentParser(description="페이지 구조 덤프 (셀렉터 탐색용)")
     ap.add_argument("url")
     ap.add_argument("--name", default="page", help="저장 폴더 이름 (예: hyundaicard, concur)")
