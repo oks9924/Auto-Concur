@@ -90,6 +90,17 @@ def test_숫자가_아니면_멈춘다(tmp_path):
         sheet.load(path)
 
 
+def test_금액은_숫자로_들어가고_쉼표로_보인다(book):
+    # 75400 보다 75,400 이 읽기 쉽다. 문자열로 넣으면 서식이 안 먹는다.
+    from openpyxl import load_workbook
+
+    from src.sheet import MONEY_FORMAT
+
+    cell = load_workbook(book)["전표"].cell(row=2, column=MANIFEST_COLUMNS.index("금액") + 1)
+    assert cell.value == 75400 and cell.number_format == MONEY_FORMAT
+    assert sheet.load(book)[0].amount == 75400  # 읽는 쪽은 그대로여야 한다
+
+
 def test_옛_합계_칼럼도_읽는다(tmp_path):
     # 이름을 '금액'으로 바꾸기 전에 만든 작업지가 남아 있어도 그대로 쓸 수 있어야 한다.
     path = tmp_path / "old.csv"

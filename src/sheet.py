@@ -65,6 +65,11 @@ def _rows_from_xlsx(path: Path) -> list[dict]:
 # 이 유형을 고르면 참석자를 넣어야 한다. 그 칸을 초록으로 물들여 알린다.
 ATTENDEE_REQUIRED_TYPE = "내부 직원간 식음료"
 
+# 숫자로 넣고 천단위 구분을 붙일 칼럼. 75400 보다 75,400 이 읽기 쉽고,
+# 엑셀에서 합계도 바로 낼 수 있다. 저장되는 값은 그대로 숫자라 다시 읽는 데
+# 영향이 없다 - 쉼표는 표시 형식일 뿐이다.
+MONEY_FORMAT = "#,##0"
+
 
 def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: list[str],
                hidden: list[str] | None = None) -> None:
@@ -76,11 +81,14 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: lis
     try:
         from openpyxl import Workbook
         from openpyxl.formatting.rule import FormulaRule
-        from openpyxl.styles import PatternFill
+        from openpyxl.styles import Alignment, PatternFill
         from openpyxl.utils import get_column_letter
         from openpyxl.worksheet.datavalidation import DataValidation
     except ImportError:
         raise SheetError("xlsx를 쓰려면 openpyxl이 필요하다: pip install openpyxl") from None
+
+    money = next((c for c in AMOUNT_COLUMNS if c in columns), None)
+    money_at = columns.index(money) if money else -1
 
     wb = Workbook()
     ws = wb.active
@@ -88,6 +96,14 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: lis
     ws.append(columns)
     for r in rows:
         ws.append([r.get(c, "") for c in columns])
+        if money_at >= 0:
+            cell = ws.cell(row=ws.max_row, column=money_at + 1)
+            try:
+                cell.value = int(str(cell.value).replace(",", "").strip())
+            except (TypeError, ValueError):
+                continue  # 숫자가 아니면 그대로 둔다. 사람이 보고 고칠 일이다
+            cell.number_format = MONEY_FORMAT
+            cell.alignment = Alignment(horizontal="right")
 
     ref = wb.create_sheet("경비유형")
     for name in type_names:
