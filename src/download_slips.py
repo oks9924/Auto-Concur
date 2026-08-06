@@ -1,16 +1,18 @@
 """현대카드 MY COMPANY에서 매출전표 PDF를 내려받는다.
 
 카드 인증은 사람이 한다. 가상키패드라 값을 넣을 수 없고, 금융 보안장치를
-우회할 생각도 하지 않는다. 인증 후의 조회/선택/다운로드 반복만 자동화한다.
+우회할 생각도 하지 않는다. 인증 후의 조회/선택/다운로드만 자동화한다.
 
-    python -m src.download_slips --from 2026.07.01 --to 2026.07.31 --limit 1
+    python -m src.download_slips --from 2026.07.01 --to 2026.07.31 --limit 3
     python -m src.download_slips --from 2026.07.01 --to 2026.07.31
 
-처음 돌릴 때는 --limit 1 로 한 건만 받아서 동작을 확인해라.
+전체를 한 번에 선택해서 합본 PDF 하나로 받고 페이지 단위로 쪼갠다.
+'페이지 당 1매씩'을 고르면 한 페이지가 전표 한 장이라 페이지와 거래가
+1:1로 대응한다. 한 건씩 받으면 서버가 주는 파일명이 매번 '매출전표_<오늘날짜>'로
+같아서 서로 덮어쓴다.
 
-한 건씩 선택해서 받는다. 전체를 한 번에 선택하면 합본 PDF가 나올 수도 있고
-ZIP이 나올 수도 있어서 결과를 예측할 수 없다. 한 건씩이면 항상 파일 하나가
-거래 하나에 대응하고, 실패한 건이 어느 것인지도 남는다.
+페이지 순서는 신경 쓰지 않는다. 파일 이름은 PDF 내용(거래일시·금액·승인번호)에서
+만들기 때문에 그리드 순서와 어긋나도 결과가 틀어지지 않는다.
 """
 
 from __future__ import annotations
@@ -21,11 +23,15 @@ from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
+from pypdf import PdfReader, PdfWriter
 
 from . import console
 
 SLIP_PAGE = "https://mycompany.hyundaicard.com/hs/cs/HSCS1002.do?_method=s&_proc=authCard"
 PROFILE_DIR = Path("browser-profile") / "hyundaicard"
+
+# 합본 생성은 건수가 많으면 오래 걸린다.
+DOWNLOAD_TIMEOUT_MS = 300_000
 
 # dhtmlxGrid 객체는 전역 변수에 있는데 이름을 모른다. 이름으로 추측하지 말고
 # getAllRowIds를 가진 객체를 찾아서 확인한다. 체크박스 칼럼도 타입('ch')으로 찾는다.
@@ -48,19 +54,8 @@ FIND_GRID_JS = """
 }
 """
 
-SET_CHECK_JS = """
-(a) => { window[a.key].cells(a.row, a.col).setValue(a.on ? 1 : 0); }
-"""
-
-ROW_TEXT_JS = """
-(a) => {
-  const g = window[a.key];
-  const out = [];
-  for (let i = 0; i < a.cols; i++) {
-    try { out.push(String(g.cells(a.row, i).getValue() ?? '')); } catch (e) { out.push(''); }
-  }
-  return out;
-}
+SET_CHECKS_JS = """
+(a) => { const g = window[a.key]; a.rows.forEach(r => g.cells(r, a.col).setValue(a.on ? 1 : 0)); }
 """
 
 # fnPdf()는 바로 받지 않고 '출력방식' 모달을 띄운다. 모달 마크업을 모르니
@@ -88,22 +83,8 @@ DUMP_MODAL_JS = """
 LAYOUT_ONE_PER_PAGE = "페이지 당 1매씩"
 
 
-def _click_text(page, label: str) -> bool:
-    return bool(page.evaluate(CLICK_TEXT_JS, label))
-
-
-def _dump_modal(page, out_dir: Path) -> None:
-    """모달을 못 다뤘으면 마크업을 남긴다. 추측 대신 근거로 고치기 위해서다."""
-    path = out_dir / "modal-dump.html"
-    if path.exists():
-        return
-    try:
-        blocks = page.evaluate(DUMP_MODAL_JS)
-    except Exception:
-        return
-    if blocks:
-        path.write_text("\n\n<!-- ======== -->\n\n".join(blocks), encoding="utf-8")
-        print(f"     모달 마크업 저장: {path}")
+class DownloadError(Exception):
+    """추측으로 진행하면 안 되는 상태. 멈추고 사람에게 넘긴다."""
 
 
 def _norm_date(value: str) -> str:
@@ -127,8 +108,43 @@ def _set_date(page, selector: str, value: str) -> None:
         )
 
 
+def _click_text(page, label: str) -> bool:
+    return bool(page.evaluate(CLICK_TEXT_JS, label))
+
+
+def _dump_modal(page, out_dir: Path) -> None:
+    """모달을 못 다뤘으면 마크업을 남긴다. 추측 대신 근거로 고치기 위해서다."""
+    try:
+        blocks = page.evaluate(DUMP_MODAL_JS)
+    except Exception:
+        return
+    if blocks:
+        path = out_dir / "modal-dump.html"
+        path.write_text("\n\n<!-- ======== -->\n\n".join(blocks), encoding="utf-8")
+        print(f"  모달 마크업 저장: {path}")
+
+
+def _split(bundle: Path, out_dir: Path, expected: int) -> int:
+    """합본 PDF를 한 장씩 쪼갠다. 페이지 수가 건수와 다르면 멈춘다."""
+    reader = PdfReader(bundle)
+    if len(reader.pages) != expected:
+        raise DownloadError(
+            f"{expected}건을 선택했는데 PDF는 {len(reader.pages)}페이지다. "
+            f"페이지와 거래가 1:1이 아니면 이후 매칭을 신뢰할 수 없다. "
+            f"'페이지 당 1매씩'이 아니라 4매씩으로 받았는지 확인해라: {bundle}"
+        )
+    for i, page in enumerate(reader.pages, 1):
+        writer = PdfWriter()
+        writer.add_page(page)
+        with (out_dir / f"slip_{i:03d}.pdf").open("wb") as f:
+            writer.write(f)
+    return len(reader.pages)
+
+
 def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
+    raw_dir = out_dir / "_raw"  # organize의 *.pdf 글롭에 합본이 걸리지 않게 따로 둔다
+    raw_dir.mkdir(exist_ok=True)
 
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
@@ -151,13 +167,10 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
 
         grid = page.evaluate(FIND_GRID_JS)
         if not grid:
-            print("그리드 객체를 못 찾았다. 조회가 됐는지 화면을 확인해라.")
-            ctx.close()
-            return 1
+            _dump_modal(page, out_dir)
+            raise DownloadError("그리드 객체를 못 찾았다. 조회가 됐는지 화면을 확인해라.")
         if grid["chCol"] < 0:
-            print(f"체크박스 칼럼을 못 찾았다: {grid}")
-            ctx.close()
-            return 1
+            raise DownloadError(f"체크박스 칼럼을 못 찾았다: {grid}")
 
         rows = grid["rows"]
         print(f"그리드 '{grid['key']}': {len(rows)}건, 체크박스 칼럼 {grid['chCol']}")
@@ -165,46 +178,34 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
             rows = rows[:limit]
             print(f"--limit {limit} 이므로 {len(rows)}건만 받는다.")
 
-        # 조회 직후 선택 상태가 남아 있을 수 있으니 전부 해제하고 시작한다.
-        for row in grid["rows"]:
-            page.evaluate(SET_CHECK_JS, {"key": grid["key"], "row": row, "col": grid["chCol"], "on": False})
+        base = {"key": grid["key"], "col": grid["chCol"]}
+        page.evaluate(SET_CHECKS_JS, {**base, "rows": grid["rows"], "on": False})
+        page.evaluate(SET_CHECKS_JS, {**base, "rows": rows, "on": True})
 
-        saved, failed = 0, []
-        for i, row in enumerate(rows, 1):
-            cells = page.evaluate(ROW_TEXT_JS, {"key": grid["key"], "row": row, "cols": grid["cols"]})
-            label = " ".join(c for c in cells if c)[:60]
+        page.evaluate("fnPdf()")
+        page.wait_for_timeout(1000)  # 출력방식 모달이 그려질 때까지
+        if not _click_text(page, LAYOUT_ONE_PER_PAGE):
+            _dump_modal(page, out_dir)
+            raise DownloadError(f"모달에서 '{LAYOUT_ONE_PER_PAGE}'을 찾지 못했다")
 
-            args = {"key": grid["key"], "row": row, "col": grid["chCol"], "on": True}
-            page.evaluate(SET_CHECK_JS, args)
-            try:
-                page.evaluate("fnPdf()")
-                page.wait_for_timeout(1000)  # 출력방식 모달이 그려질 때까지
-                _click_text(page, LAYOUT_ONE_PER_PAGE)
-                with page.expect_download(timeout=45000) as dl:
-                    if not _click_text(page, "확인"):
-                        raise RuntimeError("모달에서 '확인'을 찾지 못했다")
-                d = dl.value
-                target = out_dir / d.suggested_filename
-                d.save_as(target)
-                saved += 1
-                print(f"  [{i}/{len(rows)}] {target.name}   {label}")
-            except (PWTimeout, RuntimeError) as exc:
-                failed.append((row, label))
-                print(f"  [{i}/{len(rows)}] 실패: {exc}   {label}")
-                _dump_modal(page, out_dir)
-            finally:
-                args["on"] = False
-                page.evaluate(SET_CHECK_JS, args)
+        print(f"{len(rows)}건 합본을 만드는 중이다. 몇 분 걸릴 수 있다...")
+        try:
+            with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as dl:
+                if not _click_text(page, "확인"):
+                    raise DownloadError("모달에서 '확인'을 찾지 못했다")
+            downloaded = dl.value
+        except PWTimeout:
+            _dump_modal(page, out_dir)
+            raise DownloadError("다운로드가 시작되지 않았다. 건수를 줄여서 다시 해봐라.")
 
+        bundle = raw_dir / downloaded.suggested_filename
+        downloaded.save_as(bundle)
         ctx.close()
 
-    print(f"\n{saved}건 저장 -> {out_dir}")
-    if failed:
-        print(f"실패 {len(failed)}건:")
-        for row, label in failed:
-            print(f"  ! row={row}  {label}")
-        return 1
-    print("다음: python -m src.organize", out_dir)
+    print(f"합본 저장: {bundle}")
+    n = _split(bundle, out_dir, len(rows))
+    print(f"{n}장으로 분리 -> {out_dir}")
+    print(f"다음: python -m src.organize {out_dir}")
     return 0
 
 
@@ -214,9 +215,13 @@ def main() -> int:
     ap.add_argument("--from", dest="from_date", required=True, help="예: 2026.07.01")
     ap.add_argument("--to", dest="to_date", required=True, help="예: 2026.07.31")
     ap.add_argument("--out", type=Path, default=Path("downloads"))
-    ap.add_argument("--limit", type=int, help="처음엔 1로 테스트")
+    ap.add_argument("--limit", type=int, help="앞에서 N건만 (동작 확인용)")
     args = ap.parse_args()
-    return download(_norm_date(args.from_date), _norm_date(args.to_date), args.out, args.limit)
+    try:
+        return download(_norm_date(args.from_date), _norm_date(args.to_date), args.out, args.limit)
+    except DownloadError as exc:
+        print(f"\n중단: {exc}")
+        return 1
 
 
 if __name__ == "__main__":
