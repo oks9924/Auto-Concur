@@ -155,29 +155,55 @@ SELECT_ATTENDEE_COMBO_JS = (
 # 상세 폼의 입력들. 위로 올라가다 이것들을 잘못 집으면 엉뚱한 데 타이핑한다.
 DETAIL_FIELD_IDS = "businessPurpose,comment,vendorName,transactionAmount,taxTransactionAmount1,upload-file"
 
-ATTENDEE_INPUT_JS = (
-    "(ignoreCsv) => {"
-    + FIND_COMBO_FN
-    + """
+# 참석자 검색창을 화면 전체에서 찾는다. 콤보박스에서 거슬러 올라가는 방식은
+# 이 구조와 맞지 않았다(화면에는 떠 있는데 못 찾았다).
+#
+# 구분 근거: 상세 폼의 입력은 전부 name을 갖는다(businessPurpose, vendorName,
+# transactionAmount, paymentType, transactionCurrencyName...). 참석자 검색창만
+# name이 없다. 거래일 입력도 name이 없어서 id로 따로 뺀다.
+ATTENDEE_INPUT_JS = """
+(ignoreCsv) => {
   const ignore = new Set(ignoreCsv.split(','));
-  const cb = findCombo(/이름 또는 기업 이메일/);
-  if (!cb) return null;
-  const pick = (node) => [...node.querySelectorAll('input')].find(x =>
-    x.type !== 'hidden' && x.type !== 'checkbox' && x.offsetParent !== null
-    && !ignore.has(x.id) && !x.id.startsWith('transactionDate'));
-  // closest는 자기 자신부터 본다. 콤보박스 class에 form-field가 들어 있어서
-  // 자신을 감싼 것으로 잘못 잡았다. 부모부터 위로 올라가며 찾는다.
-  let el = pick(cb);
-  let node = cb.parentElement;
-  for (let i = 0; i < 5 && node && !el; i++) {
-    el = pick(node);
-    node = node.parentElement;
-  }
+  const el = [...document.querySelectorAll('input')].find(x => {
+    const type = (x.getAttribute('type') || 'text').toLowerCase();
+    if (!['text', 'search', 'email'].includes(type)) return false;
+    if (x.getAttribute('name')) return false;
+    const id = x.id || '';
+    if (ignore.has(id) || id.startsWith('transactionDate')) return false;
+    if (id.endsWith('-select-input')) return false;
+    const r = x.getBoundingClientRect();  // offsetParent는 position:fixed에서 null이다
+    return r.width > 0 && r.height > 0;
+  });
   if (!el) return null;
   if (!el.id) el.id = 'auto-concur-attendee-input';
   return '#' + CSS.escape(el.id);
-}"""
-)
+}
+"""
+
+# 못 찾았을 때 화면의 입력들을 남긴다.
+DUMP_INPUTS_JS = """
+() => [...document.querySelectorAll('input, textarea')].map(x => {
+  const r = x.getBoundingClientRect();
+  const chain = [];
+  let n = x.parentElement;
+  for (let i = 0; i < 5 && n; i++) {
+    const c = typeof n.className === 'string' ? n.className.slice(0, 50) : '';
+    chain.push(n.tagName.toLowerCase() + (c ? '.' + c : ''));
+    n = n.parentElement;
+  }
+  return {
+    tag: x.tagName.toLowerCase(),
+    type: x.getAttribute('type'),
+    id: x.id || null,
+    name: x.getAttribute('name'),
+    ariaLabel: x.getAttribute('aria-label'),
+    placeholder: x.getAttribute('placeholder'),
+    value: (x.value || '').slice(0, 40),
+    size: `${Math.round(r.width)}x${Math.round(r.height)}`,
+    ancestors: chain,
+  };
+})
+"""
 
 HAS_ATTENDEE_OPTION_JS = """
 () => [...document.querySelectorAll('li[role="option"]')]
@@ -234,16 +260,16 @@ def decide(row: Row) -> Plan | None:
     return None
 
 
-def _dump_combos(page, tag: str) -> str | None:
-    """화면의 콤보박스를 라벨과 함께 남긴다."""
+def _dump(page, tag: str, script: str) -> str | None:
+    """화면 상태를 남긴다. 추측 대신 근거로 고치기 위해서다."""
     try:
-        combos = _eval(page, DUMP_COMBOS_JS)
+        data = _eval(page, script)
     except Exception:
         return None
     out = Path("inspect-out")
     out.mkdir(exist_ok=True)
-    path = out / f"combos-{tag}.json"
-    path.write_text(json.dumps(combos, ensure_ascii=False, indent=2), encoding="utf-8")
+    path = out / f"{tag}.json"
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(path)
 
 
@@ -274,7 +300,7 @@ def _set_type(page, code: str, label: str) -> None:
     try:
         _wait_js(page, TYPE_COMBO_READY_JS, "경비 유형 콤보박스", timeout=25000)
     except AttachError as exc:
-        dump = _dump_combos(page, "expense-type")
+        dump = _dump(page, "combos-expense-type", DUMP_COMBOS_JS)
         raise AttachError(f"{exc}" + (f" (화면의 콤보박스 목록: {dump})" if dump else "")) from None
     _click_marked(page, SELECT_TYPE_COMBO_JS, "경비 유형 콤보박스")
 
@@ -329,8 +355,9 @@ def _add_attendee(page, report_url: str, expense_id: str) -> bool:
             page, ATTENDEE_INPUT_JS, "참석자 검색 입력창", arg=DETAIL_FIELD_IDS, timeout=15000
         )
     except AttachError as exc:
-        dump = _dump_combos(page, "attendee")
-        raise AttachError(f"{exc}" + (f" (화면의 콤보박스 목록: {dump})" if dump else "")) from None
+        _dump(page, "combos-attendee", DUMP_COMBOS_JS)
+        inputs = _dump(page, "inputs-attendee", DUMP_INPUTS_JS)
+        raise AttachError(f"{exc}" + (f" (화면의 입력 목록: {inputs})" if inputs else "")) from None
     selector = _eval(page, ATTENDEE_INPUT_JS, DETAIL_FIELD_IDS)
 
     # fill 대신 실제 타이핑. 자동완성은 키 입력을 보고 검색을 띄운다.
