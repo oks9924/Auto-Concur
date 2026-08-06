@@ -327,6 +327,41 @@ DUMP_ITEMIZATION_JS = """
 }))
 """
 
+# 저장하면 확인창이 뜬다. 숙박비는 항목별 명세를 채우기 전이라 필수값이 비어
+# 있고, Concur가 '지금 수정하시겠습니까? 예/아니오' 를 묻는다. 이 창이 떠 있는
+# 동안은 탭도 못 누른다. '아니오'로 닫고 우리가 항목별 명세로 간다.
+HAS_DIALOG_JS = """
+() => [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
+  .some(d => d.getBoundingClientRect().width > 0)
+"""
+
+DIALOG_BUTTON_JS = (
+    "(csv) => {"
+    + MARK_FN
+    + """
+  const want = csv.split(',');
+  const dlg = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
+    .find(d => d.getBoundingClientRect().width > 0);
+  if (!dlg) return null;
+  const btn = [...dlg.querySelectorAll('button')]
+    .find(b => want.includes((b.innerText || '').trim()));
+  return mark(btn);
+}"""
+)
+
+DUMP_DIALOG_JS = """
+() => [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
+  .filter(d => d.getBoundingClientRect().width > 0)
+  .map(d => ({
+    text: (d.innerText || '').trim().slice(0, 300),
+    buttons: [...d.querySelectorAll('button')].map(b => (b.innerText || '').trim()),
+  }))
+"""
+
+# '아니오'가 먼저다. '예'를 누르면 Concur가 빠진 칸으로 데려가는데, 우리는
+# 그 칸(객실 요금)을 채우러 항목별 명세로 갈 참이라 방해만 된다.
+DIALOG_DISMISS = "아니오,No,닫기,취소"
+
 LABEL_LODGING = "숙박비"
 RECUR_DIFFERENT_DAILY = "일일 금액 다름"
 
@@ -600,6 +635,42 @@ def _set_date_range(page, checkin: date, checkout: date) -> None:
         raise AttachError(f"날짜 범위가 '{want}' 로 들어가지 않았습니다 (화면: '{shown}')")
 
 
+def _dismiss_dialog(page, wait_ms: int = 5000) -> str | None:
+    """저장 후 뜨는 확인창을 닫는다. 안 뜨면 아무것도 하지 않는다.
+
+    '이 경비가 저장되었지만 필수 정보가 누락되었습니다. 지금 수정하시겠습니까?'
+    가 대표적이다. 숙박비는 항목별 명세를 채우기 전이라 늘 이 창이 뜬다.
+    떠 있는 동안은 탭도 못 눌러서 다음 단계로 넘어갈 수 없다.
+    """
+    try:
+        page.wait_for_function(HAS_DIALOG_JS, timeout=wait_ms)
+    except PWTimeout:
+        return None  # 창이 안 떴다. 정상이다
+
+    dialogs = _eval(page, DUMP_DIALOG_JS) or [{}]
+    text = (dialogs[0].get("text") or "").replace("\n", " ")[:60]
+    selector = _eval(page, DIALOG_BUTTON_JS, DIALOG_DISMISS)
+    if not selector:
+        dump = _dump(page, "dialog", DUMP_DIALOG_JS)
+        raise AttachError(
+            f"저장 후 뜬 창을 닫지 못했습니다: '{text}'"
+            + (f" (창 정보: {dump})" if dump else "")
+        )
+    page.click(selector)
+    page.wait_for_timeout(1200)
+    return text
+
+
+def _save_expense(page) -> None:
+    """경비를 저장하고, 뒤따라 뜨는 확인창까지 처리한다."""
+    page.get_by_role("button", name="경비 저장", exact=True).first.click()
+    page.wait_for_timeout(2000)
+    told = _dismiss_dialog(page)
+    if told:
+        print(f"     (저장 후 안내창을 닫았습니다: {told})")
+    page.wait_for_timeout(1000)
+
+
 def _open_tab(page, selector: str, what: str) -> None:
     try:
         page.wait_for_selector(selector, timeout=20000)
@@ -790,13 +861,12 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
         done.append("코멘트")
 
     if plan.lodging:
+        # 숙박비는 탭을 오가야 해서 저장 시점이 따로다. 안에서 저장까지 한다.
         done += _apply_lodging(page, plan)
-
-    if done:
-        page.get_by_role("button", name="경비 저장", exact=True).first.click()
+    elif done:
         # 저장이 끝나고 화면이 다시 그려질 때까지 기다린다. 여기서 서둘러
         # 참석자 모달로 넘어가면 방금 넣은 값이 날아간다.
-        page.wait_for_timeout(2000)
+        _save_expense(page)
         _wait_js(page, WAIT_AMOUNT_JS, "저장 후 화면", arg=str(row.amount))
 
     added = _sync_attendees(page, report_url, row.expense_id, parse_attendees(plan.attendee))
@@ -830,8 +900,10 @@ def _apply_lodging(page, plan: Plan) -> list[str]:
 
     # 상세를 먼저 저장한다. 저장하지 않고 탭을 옮기면 방금 넣은 날짜가 날아가고,
     # 표도 옛 날짜로 만들어진다.
-    page.get_by_role("button", name="경비 저장", exact=True).first.click()
-    page.wait_for_timeout(3000)
+    #
+    # 저장하면 '필수 정보가 누락되었습니다. 지금 수정하시겠습니까?' 창이 뜬다.
+    # 아직 객실 요금을 안 넣었으니 당연하다. 그 창을 닫아야 탭을 누를 수 있다.
+    _save_expense(page)
 
     _open_tab(page, TAB_ITEMIZATION, "항목별 명세")
     _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
@@ -839,6 +911,12 @@ def _apply_lodging(page, plan: Plan) -> list[str]:
 
     n = _fill_room_rates(page, amounts)
     done.append(f"일일 객실 요금 {n}행 (합 {sum(amounts):,}원)")
+
+    # 명세를 저장하고 상세로 돌아온다. 항목별 명세 탭에는 금액 필드가 없어서
+    # 여기 남아 있으면 다음 단계의 '맞는 경비를 열었나' 확인이 실패한다.
+    _save_expense(page)
+    _open_tab(page, TAB_DETAILS, "상세 정보")
+    _wait_js(page, WAIT_AMOUNT_JS, "저장 후 상세 화면", arg=str(plan.row.amount))
     return done
 
 
