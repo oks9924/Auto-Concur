@@ -94,3 +94,25 @@ def test_엑셀에서_8슬래시2로_적어도_읽는다(tmp_path):
     loaded = sheet.load(path)[0]
     assert loaded.nights == 6
     assert loaded.location == "울산" and loaded.channel == "직접 예약"
+
+
+def test_숙박비인데_날짜가_없으면_짚어준다():
+    # 코멘트만 넣고 지나가면 다 된 것처럼 보인다. 빠진 값을 알려줘야 한다.
+    from src.fix_expenses import _gaps
+
+    class Entry:
+        checkin = checkout = None
+        location = channel = attendee = ""
+
+    holes = _gaps(Entry(), "숙박비")
+    assert "입실·퇴실 날짜" in holes and "숙박위치" in holes
+
+
+def test_식음료인데_참석자가_없으면_짚어준다():
+    from src.fix_expenses import _gaps
+
+    class Entry:
+        checkin = checkout = None
+        location = channel = attendee = ""
+
+    assert _gaps(Entry(), "내부 직원간 식음료") == ["참석자"]

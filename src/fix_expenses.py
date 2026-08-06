@@ -827,11 +827,29 @@ def _apply_lodging(page, plan: Plan) -> list[str]:
     return done
 
 
+def _gaps(entry, label: str) -> list[str]:
+    """작업지에 빠진 값. 채우지 않고 지나가면 사람이 알아채기 어렵다."""
+    holes = []
+    if LABEL_LODGING in (label or ""):
+        if not (entry.checkin and entry.checkout):
+            holes.append("입실·퇴실 날짜")
+        if not entry.location:
+            holes.append("숙박위치")
+        if not entry.channel:
+            holes.append("Booking Channel")
+    elif LABEL_MEAL in (label or "") and not entry.attendee:
+        holes.append("참석자")
+    return holes
+
+
 def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: int):
-    """작업지에 적힌 대로 계획을 만든다. 규칙 대신 사람이 정한 값을 쓴다."""
+    """작업지에 적힌 대로 계획을 만든다. 규칙 대신 사람이 정한 값을 쓴다.
+
+    (계획, 작업지에 빠진 값, Concur에서 못 찾은 것) 세 가지를 준다.
+    """
     entries = sheet.load(sheet_path)
     pairs, missing = match_rows(entries, rows, tolerance)
-    plans = []
+    plans, gaps = [], []
     for entry, row, how in pairs:
         code, label = None, row.expense_type
         # 화면 유형과 정확히 같을 때만 넘어간다. 예전에는 부분 일치로 봤는데
@@ -842,9 +860,15 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
         if entry.checkin and entry.checkout:
             lodging = Lodging(entry.checkin, entry.checkout, entry.location, entry.channel)
         plan = Plan(row, code, label, entry.purpose, entry.comment, entry.attendee, lodging)
+
+        # 숙박비인데 날짜가 없으면 상세를 못 채운다. 코멘트만 넣고 지나가면
+        # 다 된 것처럼 보이므로 여기서 짚어준다.
+        holes = _gaps(entry, entry.type_name or label)
+        if holes:
+            gaps.append((entry, holes))
         if plan.type_code or plan.fill_meal or plan.lodging:
             plans.append((plan, how))
-    return plans, missing
+    return plans, gaps, missing
 
 
 def fix_phase(page, report_url: str, cfg: dict, apply: bool,
@@ -854,9 +878,14 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
     rows = read_rows(page)
 
     if sheet_path:
-        paired, missing = plans_from_sheet(cfg, [r for r in rows if r.expense_id],
-                                           sheet_path, int(cfg["date_tolerance_days"]))
+        paired, gaps, missing = plans_from_sheet(cfg, [r for r in rows if r.expense_id],
+                                                 sheet_path, int(cfg["date_tolerance_days"]))
         plans = [p for p, _ in paired]
+        if gaps:
+            print(f"\n작업지에 빠진 값이 있습니다 {len(gaps)}건. 그 부분은 채우지 못합니다:")
+            for entry, holes in gaps:
+                print(f"  {entry.when} {entry.amount:>9,}원  [{entry.type_name}] "
+                      f"-> {', '.join(holes)} 가 비어 있습니다")
         if missing:
             print(f"\n작업지에는 있으나 Concur에서 찾지 못한 것 {len(missing)}건:")
             for entry, why in missing:
