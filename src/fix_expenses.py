@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -57,13 +58,54 @@ PURPOSE_FIELD = "#businessPurpose"
 COMMENT_FIELD = "textarea#comment"
 
 # 라벨로 콤보박스를 찾는다. id는 React가 매번 새로 만들어서 못 쓴다.
+#
+# 라벨을 찾는 방법이 여럿이고 요소마다 다르다. inspect_page가 fields.json을
+# 만들 때 쓴 것과 똑같은 순서로 찾아야 한다. 감싼 form-field만 보다가
+# aria-label에 있는 라벨을 놓쳐서 참석자 검색창을 못 찾았다.
 FIND_COMBO_FN = """
-  const findCombo = (re) => [...document.querySelectorAll('[role="combobox"]')].find(c => {
-    const w = c.closest('[class*="form-field"]');
-    const l = w && w.querySelector('label');
-    return l && re.test(l.innerText || '');
-  });
+  const labelOf = (el) => {
+    const aria = el.getAttribute('aria-label');
+    if (aria) return aria.trim();
+    const by = el.getAttribute('aria-labelledby');
+    if (by) {
+      const t = by.split(/\\s+/)
+        .map(id => (document.getElementById(id) || {}).innerText || '')
+        .join(' ').trim();
+      if (t) return t;
+    }
+    if (el.id) {
+      const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+      if (l) return (l.innerText || '').trim();
+    }
+    const own = el.closest('label');
+    if (own) return (own.innerText || '').trim();
+    const wrap = el.closest('[class*="form-field"], [class*="form-group"]');
+    if (wrap) {
+      const l = wrap.querySelector('label');
+      if (l) return (l.innerText || '').trim();
+    }
+    return '';
+  };
+  const findCombo = (re) => [...document.querySelectorAll('[role="combobox"]')]
+    .find(c => re.test(labelOf(c)));
 """
+
+# 못 찾았을 때 화면의 콤보박스를 전부 남긴다. 추측 대신 근거로 고치기 위해서다.
+DUMP_COMBOS_JS = (
+    "() => {"
+    + FIND_COMBO_FN
+    + """
+  return [...document.querySelectorAll('[role="combobox"]')].map(c => ({
+    label: labelOf(c),
+    ariaLabel: c.getAttribute('aria-label'),
+    id: c.id || null,
+    cls: (typeof c.className === 'string' ? c.className : '').slice(0, 90),
+    text: (c.innerText || '').trim().slice(0, 60),
+    hasInput: !!c.querySelector('input'),
+    visible: c.offsetParent !== null,
+  }));
+}"""
+)
 
 TYPE_COMBO_READY_JS = "() => {" + FIND_COMBO_FN + " return !!findCombo(/Expense Type|경비 유형/); }"
 
@@ -162,6 +204,19 @@ def decide(row: Row) -> Plan | None:
     return None
 
 
+def _dump_combos(page, tag: str) -> str | None:
+    """화면의 콤보박스를 라벨과 함께 남긴다."""
+    try:
+        combos = _eval(page, DUMP_COMBOS_JS)
+    except Exception:
+        return None
+    out = Path("inspect-out")
+    out.mkdir(exist_ok=True)
+    path = out / f"combos-{tag}.json"
+    path.write_text(json.dumps(combos, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(path)
+
+
 def _wait_js(page, script: str, what: str, arg=None, timeout: int = 30000) -> None:
     """조건이 참이 될 때까지 기다린다.
 
@@ -178,7 +233,11 @@ def _wait_js(page, script: str, what: str, arg=None, timeout: int = 30000) -> No
 
 
 def _set_type(page, code: str, label: str) -> None:
-    _wait_js(page, TYPE_COMBO_READY_JS, "경비 유형 콤보박스")
+    try:
+        _wait_js(page, TYPE_COMBO_READY_JS, "경비 유형 콤보박스", timeout=25000)
+    except AttachError as exc:
+        dump = _dump_combos(page, "expense-type")
+        raise AttachError(f"{exc}" + (f" (화면의 콤보박스 목록: {dump})" if dump else "")) from None
     if not _eval(page, OPEN_TYPE_JS):
         raise AttachError("경비 유형 콤보박스를 찾지 못했다")
 
@@ -225,7 +284,11 @@ def _add_attendee(page, report_url: str, expense_id: str) -> bool:
         f"{expense_url(report_url, expense_id)}?modal=attendees&context=entry",
         wait_until="domcontentloaded",
     )
-    _wait_js(page, ATTENDEE_INPUT_JS, "참석자 검색창", timeout=40000)
+    try:
+        _wait_js(page, ATTENDEE_INPUT_JS, "참석자 검색창", timeout=30000)
+    except AttachError as exc:
+        dump = _dump_combos(page, "attendee")
+        raise AttachError(f"{exc}" + (f" (화면의 콤보박스 목록: {dump})" if dump else "")) from None
     selector = _eval(page, ATTENDEE_INPUT_JS)
 
     # fill 대신 실제 타이핑. 자동완성은 키 입력을 보고 검색을 띄운다.
