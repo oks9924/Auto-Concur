@@ -43,7 +43,7 @@ def precheck(folder: Path, sheet_path: Path | None) -> None:
 
 
 def run(folder: Path, apply: bool, tolerance: int, limit: int | None,
-        sheet_path: Path | None) -> int:
+        sheet_path: Path | None, again: bool = False) -> int:
     cfg = settings.load()
     precheck(folder, sheet_path)
     pw, ctx, page, report_url = open_report()
@@ -51,7 +51,7 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None,
         print("\n" + "-" * 64)
         print("[1/2] 영수증 첨부")
         print("-" * 64)
-        first = attach_phase(page, report_url, folder, apply, tolerance, limit)
+        first = attach_phase(page, report_url, folder, apply, tolerance, limit, again)
 
         # 첨부하면서 상세 화면을 여러 번 오갔다. 목록으로 돌아가 다시 읽게 한다.
         page.goto(report_url, wait_until="domcontentloaded")
@@ -80,12 +80,15 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true", help="실제로 반영합니다")
     ap.add_argument("--limit", type=int, help="각 단계에서 앞 N건만 처리합니다 (동작 확인용)")
     ap.add_argument("--tolerance", type=int, help="영수증 매칭에서 허용할 날짜 오차(일)입니다")
+    ap.add_argument("--again", action="store_true",
+                    help="영수증이 이미 붙어 있다는 판정을 무시하고 다시 붙입니다")
     args = ap.parse_args()
 
     folder = args.dir or Path(cfg["downloads_dir"])
     tolerance = args.tolerance if args.tolerance is not None else int(cfg["date_tolerance_days"])
     try:
-        return run(folder, args.apply, tolerance, args.limit, pick_sheet(folder, args.sheet))
+        return run(folder, args.apply, tolerance, args.limit,
+                   pick_sheet(folder, args.sheet), args.again)
     except (AttachError, sheet.SheetError) as exc:
         print(f"\n작업을 중단했습니다: {exc}")
         return 1

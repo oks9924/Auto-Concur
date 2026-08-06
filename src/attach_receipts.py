@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -83,6 +84,25 @@ DUMP_ROW_JS = (
     + """
   const r = gridRows()[i];
   return r ? r.outerHTML.slice(0, 12000) : null;
+}"""
+)
+
+# 영수증 판정의 근거를 남긴다. '전부 붙어 있다'가 정말인지, 아니면 칸을 보고
+# 붙었다고 잘못 읽은 것인지는 이 마크업을 봐야 안다.
+DUMP_RECEIPTS_JS = (
+    "() => {"
+    + ROWS_FN
+    + """
+  return gridRows().slice(0, 4).map((r, i) => {
+    const cell = r.querySelector(
+      '[data-nuiexp*="receipt" i], [data-testid*="receipt" i], [class*="receipt" i]'
+    );
+    return {
+      row: i,
+      found: !!cell,
+      inner: cell ? cell.outerHTML.slice(0, 1500) : null,
+    };
+  });
 }"""
 )
 
@@ -305,7 +325,7 @@ def attach(page, slip: Slip, row: Row, report_url: str, folder: Path) -> None:
 
 
 def attach_phase(page, report_url: str, folder: Path, apply: bool,
-                 tolerance: int, limit: int | None) -> int:
+                 tolerance: int, limit: int | None, again: bool = False) -> int:
     """열려 있는 리포트에 영수증을 붙인다. 브라우저는 부르는 쪽이 연다."""
     slips = load_manifest(folder)
     done = load_done(folder)
@@ -338,10 +358,28 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
     # 이미 영수증이 붙어 있는 경비는 다시 붙이지 않는다. 같은 파일이 두 장
     # 붙으면 감사에서 설명해야 한다. 화면에서 확인할 수 없었던 행(None)은
     # 붙은 것으로 치지 않는다 - 모른다고 건너뛰면 조용히 빠뜨리게 된다.
-    already = [(s, r) for s, r, _ in pairs if r.has_receipt]
+    already = [] if again else [(s, r) for s, r, _ in pairs if r.has_receipt]
     if already:
         pairs = [(s, r, h) for s, r, h in pairs if not r.has_receipt]
+        yes = sum(1 for r in dated if r.has_receipt)
+        no = sum(1 for r in dated if r.has_receipt is False)
+        unknown = len(dated) - yes - no
         print(f"\n이미 영수증이 붙어 있는 {len(already)}건은 건너뜁니다.")
+        print(f"  화면 판정: 붙음 {yes} / 안 붙음 {no} / 알 수 없음 {unknown}")
+        if no == 0:
+            # 전부 '붙음'이면 정말 다 붙은 것일 수도, 영수증 칸을 보고 잘못 읽은
+            # 것일 수도 있다. 둘을 가르려면 마크업을 봐야 한다.
+            dump = folder / "concur-receipts.json"
+            try:
+                dump.write_text(
+                    json.dumps(_eval(page, DUMP_RECEIPTS_JS), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                print(f"  전부 '붙음'으로 나왔습니다. 판정 근거를 남겼습니다: {dump}")
+            except Exception:
+                pass
+            print("  화면에 영수증 아이콘이 정말 다 있는지 한 번 봐 주세요.")
+            print("  아니라면 --again 을 붙여서 이 판정을 무시하고 붙일 수 있습니다.")
         for slip, _ in already:
             if apply:
                 mark_done(folder, slip.approval)
@@ -414,10 +452,10 @@ def open_report():
     return pw, ctx, page, page.url
 
 
-def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
+def run(folder: Path, apply: bool, tolerance: int, limit: int | None, again: bool) -> int:
     pw, ctx, page, report_url = open_report()
     try:
-        return attach_phase(page, report_url, folder, apply, tolerance, limit)
+        return attach_phase(page, report_url, folder, apply, tolerance, limit, again)
     finally:
         ctx.close()
         pw.stop()
@@ -430,11 +468,14 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true", help="실제로 첨부합니다")
     ap.add_argument("--tolerance", type=int, help="Concur 날짜 허용 오차(일)입니다. 없으면 설정값을 씁니다")
     ap.add_argument("--limit", type=int, help="앞에서 N건만 처리합니다 (동작 확인용)")
+    ap.add_argument("--again", action="store_true",
+                    help="이미 붙어 있다는 판정을 무시하고 다시 붙입니다")
     args = ap.parse_args()
     cfg = settings.load()
     tolerance = args.tolerance if args.tolerance is not None else int(cfg["date_tolerance_days"])
     try:
-        return run(args.dir or Path(cfg["downloads_dir"]), args.apply, tolerance, args.limit)
+        return run(args.dir or Path(cfg["downloads_dir"]), args.apply, tolerance,
+                   args.limit, args.again)
     except AttachError as exc:
         print(f"\n작업을 중단했습니다: {exc}")
         return 1
