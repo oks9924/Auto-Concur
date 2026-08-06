@@ -8,18 +8,18 @@ from datetime import date
 import pytest
 
 from src import settings, sheet
-from src.organize import MANIFEST_COLUMNS
+from src.organize import HIDDEN, MANIFEST_COLUMNS
 
 ROWS = [
     {
         "파일명": "a.pdf", "거래일": "2026-07-01", "거래시각": "12:00:00",
-        "합계": "75400", "승인번호": "00550817", "가맹점명": "쿠우쿠우울산동구점",
+        "금액": "75400", "승인번호": "00550817", "가맹점명": "쿠우쿠우울산동구점",
         "경비유형": "내부 직원간 식음료", "비즈니스목적": "현대 중공업 식대",
         "코멘트": "현대 중공업 출장 식대", "참석자": "kyungsik.oh",
     },
     {
         "파일명": "b.pdf", "거래일": "2026-07-19", "거래시각": "20:00:00",
-        "합계": "180000", "승인번호": "00999999", "가맹점명": "라한호텔울산",
+        "금액": "180000", "승인번호": "00999999", "가맹점명": "라한호텔울산",
         "경비유형": "숙박비", "비즈니스목적": "", "코멘트": "", "참석자": "",
     },
 ]
@@ -72,7 +72,7 @@ def test_승인번호가_빈_줄은_건너뛴다(tmp_path):
     with path.open("w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=MANIFEST_COLUMNS)
         w.writeheader()
-        w.writerows([*ROWS, {"거래일": "2026-07-02", "합계": "1000", "승인번호": ""}])
+        w.writerows([*ROWS, {"거래일": "2026-07-02", "금액": "1000", "승인번호": ""}])
     assert len(sheet.load(path)) == 2
 
 
@@ -85,6 +85,28 @@ def test_칼럼이_없으면_멈춘다(tmp_path):
 
 def test_숫자가_아니면_멈춘다(tmp_path):
     path = tmp_path / "bad.csv"
-    path.write_text("거래일,합계,승인번호\n2026-07-01,천원,001\n", encoding="utf-8-sig")
+    path.write_text("거래일,금액,승인번호\n2026-07-01,천원,001\n", encoding="utf-8-sig")
     with pytest.raises(sheet.SheetError, match="읽지 못했다"):
         sheet.load(path)
+
+
+def test_옛_합계_칼럼도_읽는다(tmp_path):
+    # 이름을 '금액'으로 바꾸기 전에 만든 작업지가 남아 있어도 그대로 쓸 수 있어야 한다.
+    path = tmp_path / "old.csv"
+    path.write_text("거래일,합계,승인번호\n2026-07-01,75400,00550817\n", encoding="utf-8-sig")
+    assert sheet.load(path)[0].amount == 75400
+
+
+def test_감춘_칼럼은_엑셀에서_안_보인다(tmp_path):
+    # 파일명·가맹점명 같은 것은 사람이 손댈 값이 아니다. 지우지는 않고 감추기만 한다.
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+
+    path = tmp_path / "hidden.xlsx"
+    sheet.write_xlsx(MANIFEST_COLUMNS, ROWS, path, TYPES, hidden=HIDDEN)
+    ws = load_workbook(path)["전표"]
+    for name in HIDDEN:
+        letter = get_column_letter(MANIFEST_COLUMNS.index(name) + 1)
+        assert ws.column_dimensions[letter].hidden, name
+    money = get_column_letter(MANIFEST_COLUMNS.index("금액") + 1)
+    assert not ws.column_dimensions[money].hidden

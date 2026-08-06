@@ -22,14 +22,15 @@ from .slip_parser import Slip, SlipParseError, parse_slip
 EDITABLE = ["경비유형", "비즈니스목적", "코멘트", "참석자"]
 
 # 엑셀에서 감출 칼럼. 지우지는 않는다 - 가맹점명은 후보가 여럿일 때 어느 경비인지
-# 가리는 데 쓰고, 나머지도 나중에 근거를 되짚을 때 필요하다. 보이지만 않게 한다.
-HIDDEN = ["가맹점명", "거래유형", "카드번호", "사업자등록번호", "전표번호", "원본파일명"]
+# 가리는 데 쓰고, 파일명은 첨부할 PDF를 찾는 데 쓴다. 나머지도 나중에 근거를
+# 되짚을 때 필요하다. 보이지만 않게 한다.
+HIDDEN = ["파일명", "가맹점명", "거래유형", "카드번호", "사업자등록번호", "전표번호", "원본파일명"]
 
 MANIFEST_COLUMNS = [
     "파일명",
     "거래일",
     "거래시각",
-    "합계",
+    "금액",
     "승인번호",
     "가맹점명",
     "매장명",
@@ -40,19 +41,6 @@ MANIFEST_COLUMNS = [
     "원본파일명",
     *EDITABLE,
 ]
-
-
-def _prefill(slip: Slip, cfg: dict) -> dict[str, str]:
-    """규칙대로 미리 채워둔다. 사람이 보고 고치라는 뜻이지 확정이 아니다."""
-    if slip.total >= int(cfg["lodging_threshold"]):
-        # 큰 금액은 숙박비로 본다. 식대가 아니므로 참석자·목적·코멘트는 비운다.
-        return {"경비유형": cfg["large_amount_type"], "비즈니스목적": "", "코멘트": "", "참석자": ""}
-    return {
-        "경비유형": "내부 직원간 식음료",
-        "비즈니스목적": cfg["business_purpose"],
-        "코멘트": cfg["comment"],
-        "참석자": cfg["attendee_query"],
-    }
 
 
 def _kept_edits(manifest: Path) -> dict[str, dict[str, str]]:
@@ -75,7 +63,7 @@ def _row(slip: Slip, filename: str) -> dict[str, str]:
         "파일명": filename,
         "거래일": slip.transacted_at.strftime("%Y-%m-%d"),
         "거래시각": slip.transacted_at.strftime("%H:%M:%S"),
-        "합계": str(slip.total),
+        "금액": str(slip.total),
         "승인번호": slip.approval_no,
         "가맹점명": slip.merchant_name,
         "매장명": slip.store_name,
@@ -122,7 +110,8 @@ def organize(folder: Path, apply: bool) -> int:
             print(f"  · {pdf.name}  ->  {target.name}")
 
         row = _row(slip, target.name)
-        row.update(kept.get(slip.approval_no) or _prefill(slip, cfg))
+        # 미리 채우지 않는다. Concur에 들어갈 값은 사람이 엑셀에서 정한다.
+        row.update(kept.get(slip.approval_no) or dict.fromkeys(EDITABLE, ""))
         rows.append(row)
 
     rows.sort(key=lambda r: (r["거래일"], r["거래시각"]))
@@ -134,7 +123,7 @@ def organize(folder: Path, apply: bool) -> int:
         writer.writeheader()
         writer.writerows(rows)
 
-    total = sum(int(r["합계"]) for r in rows)
+    total = sum(int(r["금액"]) for r in rows)
     print(f"\n전표 {len(rows)}건, 합계 {total:,}원  ->  {manifest}")
     # 엑셀본은 경비유형 칸에 드롭다운이 걸려 있어 오타로 못 쓰는 값을 막는다.
     book = folder / "manifest.xlsx"
@@ -144,7 +133,8 @@ def organize(folder: Path, apply: bool) -> int:
         print(f"작업지: {book}  (경비유형은 드롭다운에서만 고를 수 있다)")
     except sheet.SheetError as exc:
         print(f"xlsx는 못 만들었다: {exc}")
-    print(f"엑셀에서 {', '.join(EDITABLE)} 을 고친 뒤 update_concur 로 넘겨라.")
+    print(f"엑셀에서 {', '.join(EDITABLE)} 을 채운 뒤 update_concur 로 넘겨라.")
+    print("경비유형을 '내부 직원간 식음료'로 고르면 참석자 칸이 초록으로 바뀐다.")
     if not apply:
         print("미리보기다. 실제로 바꾸려면 --apply 를 붙여라.")
 

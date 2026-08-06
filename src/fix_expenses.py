@@ -381,35 +381,30 @@ def _fill_if_empty(page, selector: str, value: str, what: str) -> bool:
     return True
 
 
-def _add_attendee(page, report_url: str, expense_id: str, query: str) -> bool:
-    """참석자가 없을 때만 추가한다. 이미 있으면 건드리지 않는다."""
-    count = _eval(page, ATTENDEE_COUNT_JS)
-    if count is None:
-        raise AttachError("참석자 버튼을 찾지 못했다")
-    if count > 0:
-        return False
+def parse_attendees(value: str) -> list[str]:
+    """쉼표로 나눈다. 빈 항목은 버린다."""
+    return [x.strip() for x in (value or "").split(",") if x.strip()]
 
-    # 주소로 모달을 열면 앱 전체를 다시 띄운다. 넉넉히 기다려야 한다.
-    page.goto(
-        f"{expense_url(report_url, expense_id)}?modal=attendees&context=entry",
-        wait_until="domcontentloaded",
-    )
-    try:
-        _wait_js(page, ATTENDEE_COMBO_READY_JS, "참석자 검색 콤보박스", timeout=30000)
-        # 눌러야 입력창이 생긴다. 콤보박스 자체에는 input이 없다.
-        # 실제 마우스로 눌러야 한다. JS click은 React가 안 듣는다.
-        _click_marked(page, SELECT_ATTENDEE_COMBO_JS, "참석자 검색 콤보박스")
-        _wait_js(
-            page, ATTENDEE_INPUT_JS, "참석자 검색 입력창", arg=DETAIL_FIELD_IDS, timeout=15000
-        )
-    except AttachError as exc:
-        _dump(page, "combos-attendee", DUMP_COMBOS_JS)
-        inputs = _dump(page, "inputs-attendee", DUMP_INPUTS_JS)
-        raise AttachError(f"{exc}" + (f" (화면의 입력 목록: {inputs})" if inputs else "")) from None
+
+def _attendee_input(page) -> str:
+    """검색창 셀렉터. 닫혀 있으면 콤보박스를 눌러서 연다."""
     selector = _eval(page, ATTENDEE_INPUT_JS, DETAIL_FIELD_IDS)
+    if selector:
+        return selector
+    _wait_js(page, ATTENDEE_COMBO_READY_JS, "참석자 검색 콤보박스", timeout=30000)
+    # 실제 마우스로 눌러야 한다. JS click은 React가 안 듣는다.
+    _click_marked(page, SELECT_ATTENDEE_COMBO_JS, "참석자 검색 콤보박스")
+    _wait_js(page, ATTENDEE_INPUT_JS, "참석자 검색 입력창", arg=DETAIL_FIELD_IDS, timeout=15000)
+    return _eval(page, ATTENDEE_INPUT_JS, DETAIL_FIELD_IDS)
 
-    # fill 대신 실제 타이핑. 자동완성은 키 입력을 보고 검색을 띄운다.
+
+def _pick_attendee(page, query: str) -> None:
+    """한 명을 검색해서 고른다. 앞사람 검색어는 지우고 시작한다."""
+    selector = _attendee_input(page)
     page.click(selector)
+    page.keyboard.press("Control+A")
+    page.keyboard.press("Delete")
+    # fill 대신 실제 타이핑. 자동완성은 키 입력을 보고 검색을 띄운다.
     page.keyboard.type(query, delay=80)
 
     # 타이핑이 실제로 그 칸에 들어갔는지 먼저 본다. 검색 결과가 안 뜨는 것과
@@ -418,28 +413,61 @@ def _add_attendee(page, report_url: str, expense_id: str, query: str) -> bool:
         page,
         "(a) => { const el = document.querySelector(a.sel);"
         " return !!el && (el.value || '').includes(a.q); }",
-        "검색어가 입력창에 들어가는 것",
+        f"'{query}' 가 입력창에 들어가는 것",
         arg={"sel": selector, "q": query},
         timeout=10000,
     )
     _wait_js(page, HAS_ATTENDEE_OPTION_JS, f"'{query}' 검색 결과", timeout=25000)
-
     _click_marked(page, SELECT_ATTENDEE_OPTION_JS, f"'{query}' 검색 결과")
     page.wait_for_timeout(1500)
+
+
+def _add_attendees(page, report_url: str, expense_id: str, queries: list[str]) -> int:
+    """참석자가 하나도 없을 때만 추가한다. 이미 있으면 건드리지 않는다.
+
+    여러 명이면 한 명씩 검색·선택을 반복하고 저장은 마지막에 한 번만 한다.
+    중간에 실패하면 아무것도 저장되지 않으므로 다시 돌리면 처음부터 다시 한다.
+    """
+    if not queries:
+        return 0
+    count = _eval(page, ATTENDEE_COUNT_JS)
+    if count is None:
+        raise AttachError("참석자 버튼을 찾지 못했다")
+    if count > 0:
+        return 0
+
+    # 주소로 모달을 열면 앱 전체를 다시 띄운다. 넉넉히 기다려야 한다.
+    page.goto(
+        f"{expense_url(report_url, expense_id)}?modal=attendees&context=entry",
+        wait_until="domcontentloaded",
+    )
+    try:
+        for query in queries:
+            _pick_attendee(page, query)
+    except AttachError:
+        _dump(page, "combos-attendee", DUMP_COMBOS_JS)
+        _dump(page, "inputs-attendee", DUMP_INPUTS_JS)
+        raise
 
     # exact=True 가 중요하다. 기본은 부분 일치라 '저장'이 '경비 저장'에도
     # 걸려서 모달 버튼 대신 뒤쪽 버튼을 누를 수 있다.
     page.get_by_role("button", name="저장", exact=True).first.click()
 
-    # 참석자 수가 늘었는지로 확인한다. 모달이 닫혔는지나 주소가 바뀌었는지는
-    # 추측이었고, 원래 확인하려던 것은 참석자가 실제로 붙었는지다.
+    # 참석자 수가 넣은 만큼 늘었는지로 확인한다. 모달이 닫혔는지나 주소가
+    # 바뀌었는지는 추측이었고, 원래 확인하려던 것은 실제로 붙었는지다.
     try:
-        _wait_js(page, "() => {" + ATTENDEE_COUNT_JS_BODY + " return n !== null && n > 0; }",
-                 "참석자가 추가되는 것", timeout=30000)
+        _wait_js(
+            page,
+            "(want) => {" + ATTENDEE_COUNT_JS_BODY + " return n !== null && n >= want; }",
+            f"참석자 {len(queries)}명이 추가되는 것",
+            arg=len(queries),
+            timeout=30000,
+        )
     except AttachError:
+        actual = _eval(page, ATTENDEE_COUNT_JS)
         _dump(page, "inputs-attendee-save", DUMP_INPUTS_JS)
-        raise
-    return True
+        raise AttachError(f"참석자 {len(queries)}명을 넣으려 했는데 화면에는 {actual}명이다")
+    return len(queries)
 
 
 def apply_plan(page, plan: Plan, report_url: str) -> str:
@@ -467,8 +495,9 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
         page.wait_for_timeout(2000)
         _wait_js(page, WAIT_AMOUNT_JS, "저장 후 화면", arg=str(row.amount))
 
-    if plan.attendee and _add_attendee(page, report_url, row.expense_id, plan.attendee):
-        done.append("참석자")
+    added = _add_attendees(page, report_url, row.expense_id, parse_attendees(plan.attendee))
+    if added:
+        done.append(f"참석자 {added}명")
 
     return ", ".join(done) if done else "이미 되어 있음"
 

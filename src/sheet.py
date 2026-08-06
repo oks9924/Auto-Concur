@@ -14,8 +14,11 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-REQUIRED = ["거래일", "합계", "승인번호"]
+REQUIRED = ["거래일", "승인번호"]
 EDITABLE = ["경비유형", "비즈니스목적", "코멘트", "참석자"]
+
+# 금액 칼럼 이름. '합계'로 쓰던 시절의 작업지도 그대로 열리게 둘 다 받는다.
+AMOUNT_COLUMNS = ["금액", "합계"]
 
 
 @dataclass
@@ -59,6 +62,10 @@ def _rows_from_xlsx(path: Path) -> list[dict]:
     ]
 
 
+# 이 유형을 고르면 참석자를 넣어야 한다. 그 칸을 초록으로 물들여 알린다.
+ATTENDEE_REQUIRED_TYPE = "내부 직원간 식음료"
+
+
 def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: list[str],
                hidden: list[str] | None = None) -> None:
     """경비유형 칸에 드롭다운을 걸어서 내보낸다.
@@ -68,6 +75,8 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: lis
     """
     try:
         from openpyxl import Workbook
+        from openpyxl.formatting.rule import FormulaRule
+        from openpyxl.styles import PatternFill
         from openpyxl.utils import get_column_letter
         from openpyxl.worksheet.datavalidation import DataValidation
     except ImportError:
@@ -89,13 +98,30 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: lis
     dv = DataValidation(
         type="list",
         formula1=f"=경비유형!$A$1:$A${len(type_names)}",
-        allow_blank=True,
+        allow_blank=True,  # 빈 칸은 '유형을 건드리지 마라'는 뜻이라 허용한다
         showDropDown=False,  # False가 드롭다운 화살표를 '보이게' 한다 (openpyxl의 뜻이 반대다)
+        showErrorMessage=True,
+        errorStyle="stop",  # 경고가 아니라 거부. 목록 밖의 값은 아예 못 넣는다
     )
-    dv.error = "목록에 있는 경비유형만 쓸 수 있다"
+    dv.error = "목록에서 골라야 한다. 직접 입력할 수 없다."
     dv.errorTitle = "경비유형"
+    dv.prompt = "목록에서 고른다. 비워두면 경비유형을 건드리지 않는다."
+    dv.promptTitle = "경비유형"
+    dv.showInputMessage = True
     ws.add_data_validation(dv)
     dv.add(f"{col}2:{col}{len(rows) + 1}")
+
+    # 경비유형이 '내부 직원간 식음료'면 그 행의 참석자 칸을 초록으로 칠한다.
+    # 그 유형은 참석자가 있어야 하는데, 빈 칸은 눈에 안 띄어서 빠뜨리기 쉽다.
+    if "참석자" in columns and rows:
+        who = get_column_letter(columns.index("참석자") + 1)
+        ws.conditional_formatting.add(
+            f"{who}2:{who}{len(rows) + 1}",
+            FormulaRule(
+                formula=[f'${col}2="{ATTENDEE_REQUIRED_TYPE}"'],
+                fill=PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"),
+            ),
+        )
 
     for i, name in enumerate(columns, 1):
         dim = ws.column_dimensions[get_column_letter(i)]
@@ -114,6 +140,9 @@ def load(path: Path) -> list[SheetRow]:
         raise SheetError(f"작업지가 비어 있다: {path}")
 
     missing = [c for c in REQUIRED if c not in raw[0]]
+    money = next((c for c in AMOUNT_COLUMNS if c in raw[0]), None)
+    if money is None:
+        missing.append(AMOUNT_COLUMNS[0])
     if missing:
         raise SheetError(f"작업지에 칼럼이 없다: {', '.join(missing)} ({path})")
 
@@ -123,9 +152,9 @@ def load(path: Path) -> list[SheetRow]:
             continue
         try:
             when = datetime.strptime(str(r["거래일"]).strip()[:10], "%Y-%m-%d").date()
-            amount = int(float(str(r["합계"]).replace(",", "").strip()))
+            amount = int(float(str(r[money]).replace(",", "").strip()))
         except ValueError as exc:
-            raise SheetError(f"{path} {i}행의 거래일/합계를 읽지 못했다: {exc}") from None
+            raise SheetError(f"{path} {i}행의 거래일/{money}을 읽지 못했다: {exc}") from None
         out.append(
             SheetRow(
                 when=when,

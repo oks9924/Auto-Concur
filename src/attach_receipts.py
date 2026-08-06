@@ -148,7 +148,8 @@ def load_manifest(folder: Path) -> list[Slip]:
                 Slip(
                     path=pdf,
                     when=datetime.strptime(r["거래일"], "%Y-%m-%d").date(),
-                    amount=int(r["합계"]),
+                    # '합계'는 옛 이름이다. 예전에 만든 manifest도 그대로 읽힌다.
+                    amount=int(r.get("금액") or r["합계"]),
                     merchant=r["가맹점명"],
                     approval=r["승인번호"],
                 )
