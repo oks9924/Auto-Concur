@@ -9,7 +9,7 @@
      ↓
 [B] PDF 파싱 → 이름 변경 + manifest.csv                   ← 구현 완료
      ↓  여기서 사람이 눈으로 확인한다
-[C] Concur → 날짜/금액 매칭 → PDF 첨부                    ← 미구현
+[C] Concur → 날짜/금액 매칭 → PDF 첨부                    ← 매칭 구현, 첨부는 검증 전
      ↓
 [D] 식사·카페 건: 경비유형/참석자/목적/코멘트 입력         ← 미구현
 ```
@@ -112,7 +112,45 @@ C단계에서 매칭이 모호하면 **건너뛰고 사람에게 넘긴다** —
 596x843pt 페이지에 27.68pt 간격의 고정 그리드로 값이 배치되므로 좌표로 읽는다
 (`src/slip_parser.py`의 `ROWS`).
 
-## 다음 단계 (C, D)
+## C단계: Concur 첨부
+
+```bat
+venv\Scripts\python -m src.attach_receipts            :: 매칭 계획만 (아무것도 안 바꿈)
+venv\Scripts\python -m src.attach_receipts --apply    :: 실제 첨부
+```
+
+SSO 로그인과 리포트 열기는 사람이 한다. 경비 목록이 보이는 상태에서 Enter를
+누르면 목록을 읽어 `manifest.csv`와 맞춰본다.
+
+**매칭 규칙: 금액이 정확히 같고 거래일이 ±1일 안. 후보가 정확히 하나일 때만
+붙인다.** 없거나 둘 이상이면 건너뛰고 사람에게 넘긴다. 커피 두 잔처럼 같은 날
+같은 금액이 둘이면 자동으로 아무거나 붙이면 안 된다.
+
+±1일을 두는 이유는 카드 매입 처리 때문이다. 06/30 20:59 결제가 Concur에는
+07/01로 들어올 수 있다.
+
+**붙이기 직전에 한 번 더 확인한다.** 행을 클릭해 상세로 들어간 뒤 화면의
+`#transactionAmount` 값이 전표 금액과 같은지 보고, 다르면 첨부하지 않는다.
+엉뚱한 경비를 열었을 가능성을 막는 마지막 관문이다.
+
+화면 셀렉터 (2026-08 확인):
+
+| 요소 | 셀렉터 |
+|---|---|
+| 영수증 파일 input | `#upload-file` |
+| 금액 | `#transactionAmount` |
+| 거래일 | `#transactionDate-date-input-field-input` |
+| 공급업체 | `#vendorName` |
+| 사업 목적 | `#businessPurpose` |
+| 경비 저장 | `button` "경비 저장" |
+
+파일 input이 DOM에 그대로 있어서 **파일 선택 대화상자를 다룰 필요가 없다.**
+`set_input_files()`로 바로 넣는다.
+
+목록 행은 id가 없다. 난독화된 클래스명 대신 `role="row"` / `role="gridcell"`로
+읽는다. 접근성 표준이라 클래스명보다 오래 간다.
+
+## 다음 단계 (D)
 
 Concur도 Playwright 브라우저 자동화다. API는 **Client Web Services 라이선스
 별도 구매 + 회사 관리자 권한**이 필요해서 개인이 쓸 수 없다.
