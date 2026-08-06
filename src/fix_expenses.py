@@ -317,6 +317,7 @@ ROOM_RATE_INPUTS_JS = """
     index: parseInt(o.key.match(/(\\d+)$/)[1], 10),
     selector: '#' + CSS.escape(o.el.id),
     value: (o.el.value || '').trim(),
+    locked: o.el.disabled || o.el.readOnly || o.el.getAttribute('aria-disabled') === 'true',
   }))
   .sort((a, b) => a.index - b.index)
 """
@@ -694,6 +695,10 @@ def _pick_from_combo(page, hint: str, want: str, what: str) -> None:
     hint는 필드 id(custom10 같은 것)이거나 라벨의 일부다. id를 먼저 보고
     없으면 라벨로 찾는다. 정책이 바뀌어 번호가 달라져도 라벨로 걸린다.
     """
+    # 이미 그 값이면 건드리지 않는다. 잠겨 있는 콤보박스를 눌러 실패하는 일도 막는다.
+    if want in (_eval(page, COMBO_VALUE_JS, hint) or ""):
+        return
+
     try:
         _wait_js(page, COMBO_READY_JS, f"{what} 콤보박스", arg=hint, timeout=25000)
     except AttachError:
@@ -812,21 +817,34 @@ def _open_tab(page, selector: str, what: str) -> None:
     page.wait_for_timeout(1500)
 
 
-def _fill_room_rates(page, amounts: list[int]) -> int:
-    """일일 객실 요금을 채운다. 행 수가 숙박일수와 다르면 손대지 않는다.
+def _fill_room_rates(page, amounts: list[int]) -> tuple[str, bool]:
+    """일일 객실 요금을 채운다. (설명, 실제로 채웠는지)를 돌려준다.
 
     합이 경비 금액과 정확히 같아야 한다. 행이 하나라도 어긋나면 합이 틀어지고,
     틀어진 채로 저장하면 나중에 찾기 어렵다. 그래서 맞지 않으면 멈춘다.
     세금 칸은 건드리지 않는다 - 우리가 아는 값이 아니다.
+
+    이미 입력된 명세는 칸이 잠겨서 고칠 수 없다. 그때는 그냥 지나간다 -
+    이미 사람이 넣어둔 값을 우리가 다시 쓸 이유가 없다.
     """
-    _wait_js(
-        page,
-        "() => [...document.querySelectorAll('input')]"
-        ".some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.name || ''))",
-        "객실 요금 표",
-        timeout=25000,
-    )
+    try:
+        _wait_js(
+            page,
+            "() => [...document.querySelectorAll('input')]"
+            ".some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.name || ''))",
+            "객실 요금 표",
+            timeout=25000,
+        )
+    except AttachError:
+        # 표 자체가 없다. 이미 명세가 만들어져 있어서 입력 화면이 아닌 경우다.
+        return "항목별 명세는 이미 입력되어 있어 건드리지 않았습니다", False
+
     cells = _eval(page, ROOM_RATE_INPUTS_JS)
+    if cells and all(c["locked"] for c in cells):
+        return "항목별 명세가 잠겨 있어 건드리지 않았습니다", False
+    if cells and all(c["value"] for c in cells):
+        return "항목별 명세가 이미 채워져 있어 건드리지 않았습니다", False
+
     if len(cells) != len(amounts):
         dump = _dump(page, "itemization-rows", DUMP_ITEMIZATION_JS)
         raise AttachError(
@@ -839,7 +857,7 @@ def _fill_room_rates(page, amounts: list[int]) -> int:
     for cell, money in zip(cells, amounts):
         page.fill(cell["selector"], str(money))
         page.wait_for_timeout(150)
-    return len(amounts)
+    return f"일일 객실 요금 {len(amounts)}행 (합 {sum(amounts):,}원)", True
 
 
 def parse_attendees(value: str) -> list[str]:
@@ -1106,13 +1124,19 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
     _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
     page.wait_for_timeout(1500)
 
-    n = _fill_room_rates(page, amounts)
-    done.append(f"일일 객실 요금 {n}행 (합 {sum(amounts):,}원)")
+    what, filled = _fill_room_rates(page, amounts)
+    done.append(what)
 
-    # 명세를 저장한다. 이 탭의 버튼은 '경비 저장'이 아니라 '저장'이다.
-    # 여기서도 상세로 돌아온다 - 항목별 명세 탭에는 금액 필드가 없어서,
-    # 남아 있으면 다음 단계의 확인이 엉뚱하게 실패한다.
-    _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION)
+    if filled:
+        # 이 탭의 저장 버튼은 '경비 저장'이 아니라 '저장'이다. 저장하면 상세로
+        # 돌아온다 - 항목별 명세 탭에는 금액 필드가 없어서, 남아 있으면 다음
+        # 단계의 확인이 엉뚱하게 실패한다.
+        _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION)
+    else:
+        # 명세는 손대지 않았으니 이 탭에 저장 버튼이 없을 수 있다.
+        # 상세로 돌아가서 거기서 넣은 값만 저장한다.
+        _open_tab(page, TAB_DETAILS, "상세 정보")
+        _save_expense(page, plan.row, report_url)
     return done
 
 
