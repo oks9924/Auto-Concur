@@ -13,19 +13,19 @@ from __future__ import annotations
 import subprocess
 import sys
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from . import settings
 
 # 설정 창에 띄울 항목. (설정키, 라벨, 설명)
+#
+# 목적·코멘트·참석자는 여기 없다. 어차피 작업지(엑셀)에서 건별로 정한다.
+# 다만 그 값들이 작업지 미리채움의 출처라서 settings.json 에는 남겨둔다.
+# 바꿀 일이 생기면 그 파일을 직접 고치면 된다.
 FIELDS = [
-    ("business_purpose", "비즈니스 목적", "식대 건에 채울 문구"),
-    ("comment", "코멘트", "식대 건에 채울 문구"),
-    ("attendee_query", "참석자 검색어", "Concur 참석자 검색에 넣을 값"),
-    ("large_amount_type", "큰 금액 경비유형", "임계금액 이상이면 이 유형으로 바꾼다"),
+    ("large_amount_type", "큰 금액 경비유형", "임계금액 이상이면 이 유형으로 미리 채운다"),
     ("lodging_threshold", "임계 금액", "이 금액 이상 (원)"),
     ("date_tolerance_days", "날짜 허용 오차", "영수증 매칭에서 허용할 일수"),
-    ("downloads_dir", "전표 폴더", "전표 PDF와 manifest.csv 위치"),
 ]
 
 INT_FIELDS = {"lodging_threshold", "date_tolerance_days"}
@@ -60,8 +60,17 @@ class App(tk.Tk):
             self.vars[key] = var
             ttk.Entry(box, textvariable=var, width=34).grid(row=i, column=1, **pad)
             ttk.Label(box, text=hint, foreground="#666").grid(row=i, column=2, sticky="w", **pad)
+        # 전표 폴더는 직접 고르게 한다. 경로를 손으로 치면 오타가 난다.
+        row = len(FIELDS)
+        ttk.Label(box, text="전표 폴더").grid(row=row, column=0, sticky="w", **pad)
+        self.folder = tk.StringVar(value=str(self.cfg.get("downloads_dir", "downloads")))
+        picker = ttk.Frame(box)
+        picker.grid(row=row, column=1, columnspan=2, sticky="w", **pad)
+        ttk.Entry(picker, textvariable=self.folder, width=40).pack(side="left")
+        ttk.Button(picker, text="찾아보기", command=self.pick_folder).pack(side="left", padx=6)
+
         ttk.Button(box, text="설정 저장", command=self.save).grid(
-            row=len(FIELDS), column=1, sticky="e", **pad
+            row=row + 1, column=1, sticky="e", **pad
         )
 
         run = ttk.LabelFrame(self, text="실행")
@@ -103,7 +112,15 @@ class App(tk.Tk):
             tools, text="새 유형(택시 등)이 생겼을 때 코드를 뽑는다", foreground="#666"
         ).pack(side="left", padx=8)
 
+    def pick_folder(self) -> None:
+        chosen = filedialog.askdirectory(
+            title="전표 폴더 선택", initialdir=self.folder.get() or "."
+        )
+        if chosen:
+            self.folder.set(chosen)
+
     def save(self) -> bool:
+        self.cfg["downloads_dir"] = self.folder.get().strip() or "downloads"
         for key, var in self.vars.items():
             value = var.get().strip()
             if key in INT_FIELDS:
@@ -128,7 +145,8 @@ class App(tk.Tk):
     def step_download(self) -> None:
         if not self.save():
             return
-        args = ["src.download_slips", "--from", self.from_date.get(), "--to", self.to_date.get()]
+        args = ["src.download_slips", "--from", self.from_date.get(), "--to", self.to_date.get(),
+                "--out", self.cfg["downloads_dir"]]
         if self.limit.get().strip():
             args += ["--limit", self.limit.get().strip()]
         _run(args)

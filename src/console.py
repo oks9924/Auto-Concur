@@ -37,6 +37,24 @@ def _drain() -> None:
         msvcrt.getwch()
 
 
+def open_folder(path) -> None:
+    """작업이 끝난 폴더를 탐색기로 연다. 안 열려도 그냥 넘어간다."""
+    import subprocess
+    import sys as _sys
+
+    try:
+        if _sys.platform == "win32":
+            import os
+
+            os.startfile(path)  # noqa: S606 - Windows 전용
+        elif _sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+    except Exception:
+        pass  # 폴더가 안 열리는 것은 작업 결과와 상관없다
+
+
 def wait_enter(message: str) -> None:
     """빈 줄이 올 때까지 기다린다.
 

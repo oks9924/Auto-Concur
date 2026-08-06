@@ -148,6 +148,8 @@ def organize(folder: Path, apply: bool) -> int:
     if not apply:
         print("미리보기다. 실제로 바꾸려면 --apply 를 붙여라.")
 
+    console.open_folder(folder)
+
     if failures:
         print(f"\n실패 {len(failures)}건 (이름 안 바꿈):", file=sys.stderr)
         for pdf, msg in failures:

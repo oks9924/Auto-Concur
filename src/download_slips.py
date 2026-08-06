@@ -25,7 +25,7 @@ from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 from pypdf import PdfReader, PdfWriter
 
-from . import console
+from . import console, settings
 
 SLIP_PAGE = "https://mycompany.hyundaicard.com/hs/cs/HSCS1002.do?_method=s&_proc=authCard"
 PROFILE_DIR = Path("browser-profile") / "hyundaicard"
@@ -208,6 +208,7 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
     n = _split(bundle, out_dir, len(rows))
     print(f"{n}장으로 분리 -> {out_dir}")
     print(f"다음: python -m src.organize {out_dir}")
+    console.open_folder(out_dir)
     return 0
 
 
@@ -216,7 +217,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="현대카드 매출전표 PDF 다운로드")
     ap.add_argument("--from", dest="from_date", required=True, help="예: 2026.07.01")
     ap.add_argument("--to", dest="to_date", required=True, help="예: 2026.07.31")
-    ap.add_argument("--out", type=Path, default=Path("downloads"))
+    ap.add_argument("--out", type=Path, help="전표를 받을 폴더. 없으면 설정값")
     ap.add_argument("--limit", type=int, help="앞에서 N건만 (동작 확인용)")
     args = ap.parse_args()
     try:
