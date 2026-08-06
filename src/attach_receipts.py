@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import csv
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -26,7 +27,7 @@ from playwright.sync_api import Error as PWError
 from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 
-from . import console
+from . import console, hangul, settings
 
 PROFILE_DIR = Path("browser-profile") / "concur"
 START_URL = "https://travel.siemens.cloud"
@@ -202,8 +203,20 @@ def read_rows(page) -> list[Row]:
     return rows
 
 
+# 가맹점 유사도 판정. 실측으로 같은 가게는 1.00, 다른 가게는 0.3 미만이었다.
+VENDOR_MIN = 0.6  # 이보다 낮으면 같은 가게로 보지 않는다
+VENDOR_MARGIN = 0.15  # 2등과 이만큼 벌어져야 확실하다고 본다
+
+
 def match(slips: list[Slip], rows: list[Row], tolerance_days: int) -> tuple[list, list]:
-    """(확정 매칭, 건너뛴 것). 후보가 정확히 하나일 때만 확정한다."""
+    """(확정 매칭, 건너뛴 것).
+
+    날짜와 금액이 같은 후보가 여럿이면 가맹점명으로 가른다. manifest는 한글,
+    Concur는 로마자라서 옮겨서 견준다. 그것도 갈리지 않으면 앞에서부터
+    순서대로 배정한다 — 날짜와 금액이 같으면 어느 쪽이든 된다고 보기로 했다.
+
+    각 매칭은 (전표, 행, 어떻게 정했는지) 세 값이다.
+    """
     pairs, skipped = [], []
     used: set[int] = set()
     for slip in slips:
@@ -215,11 +228,22 @@ def match(slips: list[Slip], rows: list[Row], tolerance_days: int) -> tuple[list
             and r.when is not None
             and abs((r.when - slip.when).days) <= tolerance_days
         ]
-        if len(cands) == 1:
-            used.add(cands[0].index)
-            pairs.append((slip, cands[0]))
-        else:
-            skipped.append((slip, "후보 없음" if not cands else f"후보 {len(cands)}개 - 모호함"))
+        if not cands:
+            skipped.append((slip, "후보 없음"))
+            continue
+
+        chosen, how = cands[0], "단독"
+        if len(cands) > 1:
+            how = "순서"
+            scored = sorted(
+                ((hangul.similarity(slip.merchant, c.vendor), c) for c in cands),
+                key=lambda x: -x[0],
+            )
+            best, runner_up = scored[0], scored[1]
+            if best[0] >= VENDOR_MIN and best[0] - runner_up[0] >= VENDOR_MARGIN:
+                chosen, how = best[1], "가맹점"
+        used.add(chosen.index)
+        pairs.append((slip, chosen, how))
     return pairs, skipped
 
 
@@ -309,10 +333,16 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
             print(f"  경고: {len(rows) - len(dated)}행은 값을 못 읽어서 대상에서 뺐다")
 
         pairs, skipped = match(slips, dated, tolerance)
-        print(f"\n확정 매칭 {len(pairs)}건:")
-        for slip, row in pairs:
+        counts = Counter(how for _, _, how in pairs)
+        extra = ", ".join(f"{how} {n}건" for how, n in counts.items() if how != "단독")
+        print(f"\n확정 매칭 {len(pairs)}건" + (f" (그중 {extra})" if extra else ""))
+        for slip, row, how in pairs:
             gap = (row.when - slip.when).days
             mark = "" if gap == 0 else f"  (Concur 날짜 {gap:+d}일)"
+            if how == "가맹점":
+                mark += "  [가맹점으로 판별]"
+            elif how == "순서":
+                mark += "  [순서 배정 - 확인 권장]"
             print(f"  {slip.when} {slip.amount:>9,}원  {slip.merchant[:16]:16} -> {row.text[:50]}{mark}")
 
         if skipped:
@@ -331,7 +361,7 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
             print(f"\n--limit {limit} 이므로 {len(pairs)}건만 붙인다.")
 
         attached, failed = 0, []
-        for i, (slip, row) in enumerate(pairs, 1):
+        for i, (slip, row, _) in enumerate(pairs, 1):
             try:
                 attach(page, slip, row, report_url, folder)
                 mark_done(folder, slip.approval)
@@ -355,13 +385,15 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
 def main() -> int:
     console.setup()
     ap = argparse.ArgumentParser(description="Concur 경비에 전표 첨부")
-    ap.add_argument("--dir", type=Path, default=Path("downloads"), help="manifest.csv가 있는 폴더")
+    ap.add_argument("--dir", type=Path, help="manifest.csv가 있는 폴더. 없으면 설정값")
     ap.add_argument("--apply", action="store_true", help="실제로 첨부한다")
-    ap.add_argument("--tolerance", type=int, default=1, help="Concur 날짜 허용 오차(일)")
+    ap.add_argument("--tolerance", type=int, help="Concur 날짜 허용 오차(일). 없으면 설정값")
     ap.add_argument("--limit", type=int, help="앞에서 N건만 (동작 확인용)")
     args = ap.parse_args()
+    cfg = settings.load()
+    tolerance = args.tolerance if args.tolerance is not None else int(cfg["date_tolerance_days"])
     try:
-        return run(args.dir, args.apply, args.tolerance, args.limit)
+        return run(args.dir or Path(cfg["downloads_dir"]), args.apply, tolerance, args.limit)
     except AttachError as exc:
         print(f"\n중단: {exc}")
         return 1

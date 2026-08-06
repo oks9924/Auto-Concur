@@ -26,7 +26,8 @@ from pathlib import Path
 from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 
-from . import console
+from . import console, settings, sheet
+from .attach_receipts import match as match_rows
 from .attach_receipts import (
     START_URL,
     WAIT_AMOUNT_JS,
@@ -39,20 +40,8 @@ from .attach_receipts import (
 
 PROFILE_DIR = Path("browser-profile") / "concur"
 
-# 옵션 id가 '{React가만든id}-list-_-_-{코드}-_-_-{그룹}' 형태다. 앞부분은 매번
-# 바뀌므로 코드만 보고 잡는다.
-CODE_MEAL = "01182"  # 내부 직원간 식음료 (점심, 야근식대, 부서회식, 음료 등)
-CODE_LODGING = "LODNG"  # 숙박비
-
 LABEL_MEAL = "내부 직원간 식음료"
-LABEL_LODGING = "숙박비"
 LABEL_PERSONAL_MEAL = "개인 식사"
-
-LODGING_THRESHOLD = 100_000
-
-BUSINESS_PURPOSE = "현대 중공업 식대"
-COMMENT = "현대 중공업 출장 식대"
-ATTENDEE_QUERY = "kyungsik.oh"
 
 PURPOSE_FIELD = "#businessPurpose"
 COMMENT_FIELD = "textarea#comment"
@@ -243,34 +232,80 @@ ATTENDEE_COUNT_JS_BODY = """
 
 ATTENDEE_COUNT_JS = "() => {" + ATTENDEE_COUNT_JS_BODY + " return n; }"
 
+# 새 경비유형(택시 등)이 생겼을 때 코드를 알아내려고 쓴다.
+DUMP_TYPES_JS = """
+() => {
+  const seen = new Map();
+  for (const o of document.querySelectorAll('li[role="option"]')) {
+    const m = (o.id || '').match(/-_-_-(.+?)-_-_-/);
+    if (m && !seen.has(m[1])) seen.set(m[1], (o.innerText || '').trim());
+  }
+  return [...seen].map(([code, label]) => ({ code, label }));
+}
+"""
+
 
 @dataclass
 class Plan:
     row: Row
     type_code: str | None  # None이면 경비유형은 그대로 둔다
     type_label: str
-    fill_meal: bool  # 참석자·목적·코멘트를 채울지
+    purpose: str = ""
+    comment: str = ""
+    attendee: str = ""
+
+    @property
+    def fill_meal(self) -> bool:
+        return bool(self.purpose or self.comment or self.attendee)
 
     def summary(self) -> str:
         what = []
         if self.type_code:
             what.append(f"유형 -> {self.type_label}")
-        if self.fill_meal:
-            what.append("참석자·목적·코멘트")
-        return ", ".join(what)
+        filled = [n for n, v in (("목적", self.purpose), ("코멘트", self.comment),
+                                 ("참석자", self.attendee)) if v]
+        if filled:
+            what.append("·".join(filled))
+        return ", ".join(what) or "변경 없음"
 
 
-def decide(row: Row) -> Plan | None:
+@dataclass
+class Rules:
+    """규칙에 쓰는 값들. 규칙 자체는 코드에 둔다."""
+
+    threshold: int
+    large_code: str
+    large_label: str
+    meal_code: str
+    purpose: str
+    comment: str
+    attendee: str
+
+
+def rules_from(cfg: dict) -> Rules:
+    large = cfg["large_amount_type"]
+    return Rules(
+        threshold=int(cfg["lodging_threshold"]),
+        large_code=settings.code_for(cfg, large),
+        large_label=large,
+        meal_code=settings.code_for(cfg, LABEL_MEAL),
+        purpose=cfg["business_purpose"],
+        comment=cfg["comment"],
+        attendee=cfg["attendee_query"],
+    )
+
+
+def decide(row: Row, rules: Rules) -> Plan | None:
     """이 경비를 어떻게 고칠지. 대상이 아니면 None."""
     kind = row.expense_type or ""
-    if row.amount is not None and row.amount >= LODGING_THRESHOLD:
-        if LABEL_LODGING in kind:
-            return None  # 이미 숙박비다
-        return Plan(row, CODE_LODGING, LABEL_LODGING, fill_meal=False)
+    if row.amount is not None and row.amount >= rules.threshold:
+        if rules.large_label in kind:
+            return None  # 이미 그 유형이다
+        return Plan(row, rules.large_code, rules.large_label)
     if kind.startswith(LABEL_PERSONAL_MEAL):
-        return Plan(row, CODE_MEAL, LABEL_MEAL, fill_meal=True)
+        return Plan(row, rules.meal_code, LABEL_MEAL, rules.purpose, rules.comment, rules.attendee)
     if kind.startswith(LABEL_MEAL):
-        return Plan(row, None, kind, fill_meal=True)
+        return Plan(row, None, kind, rules.purpose, rules.comment, rules.attendee)
     return None
 
 
@@ -347,7 +382,7 @@ def _fill_if_empty(page, selector: str, value: str, what: str) -> bool:
     return True
 
 
-def _add_attendee(page, report_url: str, expense_id: str) -> bool:
+def _add_attendee(page, report_url: str, expense_id: str, query: str) -> bool:
     """참석자가 없을 때만 추가한다. 이미 있으면 건드리지 않는다."""
     count = _eval(page, ATTENDEE_COUNT_JS)
     if count is None:
@@ -376,7 +411,7 @@ def _add_attendee(page, report_url: str, expense_id: str) -> bool:
 
     # fill 대신 실제 타이핑. 자동완성은 키 입력을 보고 검색을 띄운다.
     page.click(selector)
-    page.keyboard.type(ATTENDEE_QUERY, delay=80)
+    page.keyboard.type(query, delay=80)
 
     # 타이핑이 실제로 그 칸에 들어갔는지 먼저 본다. 검색 결과가 안 뜨는 것과
     # 애초에 입력이 안 된 것은 원인이 다르다.
@@ -385,12 +420,12 @@ def _add_attendee(page, report_url: str, expense_id: str) -> bool:
         "(a) => { const el = document.querySelector(a.sel);"
         " return !!el && (el.value || '').includes(a.q); }",
         "검색어가 입력창에 들어가는 것",
-        arg={"sel": selector, "q": ATTENDEE_QUERY},
+        arg={"sel": selector, "q": query},
         timeout=10000,
     )
-    _wait_js(page, HAS_ATTENDEE_OPTION_JS, f"'{ATTENDEE_QUERY}' 검색 결과", timeout=25000)
+    _wait_js(page, HAS_ATTENDEE_OPTION_JS, f"'{query}' 검색 결과", timeout=25000)
 
-    _click_marked(page, SELECT_ATTENDEE_OPTION_JS, f"'{ATTENDEE_QUERY}' 검색 결과")
+    _click_marked(page, SELECT_ATTENDEE_OPTION_JS, f"'{query}' 검색 결과")
     page.wait_for_timeout(1500)
 
     # exact=True 가 중요하다. 기본은 부분 일치라 '저장'이 '경비 저장'에도
@@ -421,11 +456,10 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
         _set_type(page, plan.type_code, plan.type_label)
         done.append(f"유형->{plan.type_label}")
 
-    if plan.fill_meal:
-        if _fill_if_empty(page, PURPOSE_FIELD, BUSINESS_PURPOSE, "비즈니스 목적"):
-            done.append("목적")
-        if _fill_if_empty(page, COMMENT_FIELD, COMMENT, "코멘트"):
-            done.append("코멘트")
+    if plan.purpose and _fill_if_empty(page, PURPOSE_FIELD, plan.purpose, "비즈니스 목적"):
+        done.append("목적")
+    if plan.comment and _fill_if_empty(page, COMMENT_FIELD, plan.comment, "코멘트"):
+        done.append("코멘트")
 
     if done:
         page.get_by_role("button", name="경비 저장", exact=True).first.click()
@@ -434,13 +468,31 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
         page.wait_for_timeout(2000)
         _wait_js(page, WAIT_AMOUNT_JS, "저장 후 화면", arg=str(row.amount))
 
-    if plan.fill_meal and _add_attendee(page, report_url, row.expense_id):
+    if plan.attendee and _add_attendee(page, report_url, row.expense_id, plan.attendee):
         done.append("참석자")
 
     return ", ".join(done) if done else "이미 되어 있음"
 
 
-def run(apply: bool, limit: int | None) -> int:
+def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: int):
+    """작업지에 적힌 대로 계획을 만든다. 규칙 대신 사람이 정한 값을 쓴다."""
+    entries = sheet.load(sheet_path)
+    pairs, missing = match_rows(entries, rows, tolerance)
+    plans = []
+    for entry, row, how in pairs:
+        code, label = None, row.expense_type
+        if entry.type_name and entry.type_name not in (row.expense_type or ""):
+            code, label = settings.code_for(cfg, entry.type_name), entry.type_name
+        plan = Plan(row, code, label, entry.purpose, entry.comment, entry.attendee)
+        if plan.type_code or plan.fill_meal:
+            plans.append((plan, how))
+    return plans, missing
+
+
+def run(apply: bool, limit: int | None, list_types: bool = False,
+        sheet_path: Path | None = None) -> int:
+    cfg = settings.load()
+    rules = rules_from(cfg)
     with sync_playwright() as p:
         ctx = p.chromium.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR), headless=False
@@ -457,7 +509,32 @@ def run(apply: bool, limit: int | None) -> int:
         page.wait_for_timeout(2000)
         report_url = page.url
         rows = read_rows(page)
-        plans = [p for p in (decide(r) for r in rows if r.expense_id) if p]
+
+        if list_types:
+            usable = [r for r in rows if r.expense_id]
+            if not usable:
+                raise AttachError("경비가 하나도 없다. 리포트를 열고 다시 해라.")
+            page.goto(expense_url(report_url, usable[0].expense_id), wait_until="domcontentloaded")
+            _wait_js(page, TYPE_COMBO_READY_JS, "경비 유형 콤보박스", timeout=25000)
+            _click_marked(page, SELECT_TYPE_COMBO_JS, "경비 유형 콤보박스")
+            _wait_js(page, "() => !!document.querySelector('li[role=\"option\"]')", "경비 유형 목록")
+            types = _eval(page, DUMP_TYPES_JS)
+            ctx.close()
+            print(f"\n경비유형 {len(types)}개. settings.json 의 expense_type_codes 에 넣어 쓴다.\n")
+            for t in sorted(types, key=lambda x: x["label"]):
+                print(f'  "{t["label"]}": "{t["code"]}",')
+            return 0
+
+        if sheet_path:
+            paired, missing = plans_from_sheet(cfg, [r for r in rows if r.expense_id],
+                                               sheet_path, int(cfg["date_tolerance_days"]))
+            plans = [p for p, _ in paired]
+            if missing:
+                print(f"\n작업지에 있으나 Concur에서 못 찾은 것 {len(missing)}건:")
+                for entry, why in missing:
+                    print(f"  {entry.when} {entry.amount:>9,}원  {entry.merchant[:16]} - {why}")
+        else:
+            plans = [p for p in (decide(r, rules) for r in rows if r.expense_id) if p]
 
         print(f"\n경비 {len(rows)}건 중 손댈 것 {len(plans)}건\n")
         for plan in plans:
@@ -504,10 +581,17 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Concur 경비유형·참석자·목적·코멘트 채우기")
     ap.add_argument("--apply", action="store_true", help="실제로 고친다")
     ap.add_argument("--limit", type=int, help="앞에서 N건만 (동작 확인용)")
+    ap.add_argument("--sheet", nargs="?", const="", type=str,
+                    help="작업지(csv/xlsx)대로 넣는다. 값 없이 주면 전표 폴더의 manifest.csv")
+    ap.add_argument("--list-types", action="store_true",
+                    help="화면의 경비유형과 코드를 뽑는다 (새 유형이 생겼을 때)")
     args = ap.parse_args()
     try:
-        return run(args.apply, args.limit)
-    except AttachError as exc:
+        path = None
+        if args.sheet is not None:
+            path = Path(args.sheet) if args.sheet else Path(settings.load()["downloads_dir"]) / "manifest.csv"
+        return run(args.apply, args.limit, args.list_types, path)
+    except (AttachError, sheet.SheetError) as exc:
         print(f"\n중단: {exc}")
         return 1
 

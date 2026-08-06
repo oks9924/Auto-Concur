@@ -7,7 +7,8 @@
 ```
 [A] 현대카드(mycompany) → 월별 전표 PDF 다운로드          ← 실측 검증 완료 (2026-07, 48건)
      ↓
-[B] PDF 파싱 → 이름 변경 + manifest.csv                   ← 실측 검증 완료
+[B] PDF 파싱 → 이름 변경 + 작업지(csv/xlsx)               ← 실측 검증 완료
+     ↓  여기서 엑셀로 경비유형·목적·코멘트·참석자를 건별로 손본다
      ↓  여기서 사람이 눈으로 확인한다
 [C] Concur → 날짜/금액 매칭 → PDF 첨부                    ← 실측 검증 완료 (46건, 2건은 모호해 수동)
      ↓
@@ -123,9 +124,13 @@ venv\Scripts\python -m src.attach_receipts --apply            :: 나머지 전�
 SSO 로그인과 리포트 열기는 사람이 한다. 경비 목록이 보이는 상태에서 Enter를
 누르면 목록을 읽어 `manifest.csv`와 맞춰본다.
 
-**매칭 규칙: 금액이 정확히 같고 거래일이 ±1일 안. 후보가 정확히 하나일 때만
-붙인다.** 없거나 둘 이상이면 건너뛰고 사람에게 넘긴다. 커피 두 잔처럼 같은 날
-같은 금액이 둘이면 자동으로 아무거나 붙이면 안 된다.
+**매칭 규칙: 금액이 정확히 같고 거래일이 ±1일 안.** 후보가 여럿이면 가맹점명으로
+가른다. manifest는 한글(`라한호텔울산`), Concur는 로마자(`RA HAN HO TEL UL SAN`)라
+옮겨서 견준다. 실측으로 같은 가게는 1.00, 다른 가게는 0.3 미만이었다.
+
+가맹점으로도 안 갈리면 앞에서부터 순서대로 배정한다. 날짜와 금액이 같으면
+어느 쪽이든 된다고 보기로 했다. 다만 어떻게 정했는지는 출력에 표시한다
+(`[가맹점으로 판별]`, `[순서 배정 - 확인 권장]`).
 
 ±1일을 두는 이유는 카드 매입 처리 때문이다. 06/30 20:59 결제가 Concur에는
 07/01로 들어올 수 있다.
@@ -162,10 +167,28 @@ SSO 로그인과 리포트 열기는 사람이 한다. 경비 목록이 보이�
 
 ## D단계: 경비유형 · 참석자 · 목적 · 코멘트
 
+두 가지로 쓸 수 있다.
+
+**작업지대로 (권장)** — `organize`가 만든 `manifest.xlsx`를 엑셀에서 손본 뒤 넘긴다.
+건별로 다르게 지정할 수 있고, 넣기 전에 눈으로 다 볼 수 있다.
+
 ```bat
-venv\Scripts\python -m src.fix_expenses                     :: 계획만
-venv\Scripts\python -m src.fix_expenses --apply --limit 1   :: 한 건만
-venv\Scripts\python -m src.fix_expenses --apply             :: 나머지 전부
+venv\Scripts\python -m src.fix_expenses --sheet                    :: 계획만
+venv\Scripts\python -m src.fix_expenses --sheet --apply            :: 반영
+venv\Scripts\python -m src.fix_expenses --sheet downloads\manifest.xlsx --apply
+```
+
+**경비유형 칸은 드롭다운으로 막아뒀다.** 숨긴 시트에 목록을 두고 참조한다 —
+수식에 직접 넣으면 255자 제한에 걸린다(한글 유형명이 길다). 오타로 없는 유형을
+적으면 코드를 못 찾으므로 애초에 못 쓰게 한다.
+
+빈 칸은 건드리지 않는다. 예를 들어 숙박비 건은 참석자·목적·코멘트를 비워두면
+유형만 바꾸고 나머지는 그대로 둔다.
+
+**규칙대로 (작업지 없이)** — `--sheet` 없이 돌리면 아래 규칙을 쓴다.
+
+```bat
+venv\Scripts\python -m src.fix_expenses --apply --limit 1
 ```
 
 | 조건 | 처리 |
@@ -183,13 +206,34 @@ venv\Scripts\python -m src.fix_expenses --apply             :: 나머지 전부
 
 참석자 모달은 `?modal=attendees&context=entry` 로 주소로 열 수 있다.
 
+**새 경비유형(택시 등)이 생기면** 코드를 뽑아 `settings.json`에 넣는다.
+
+```bat
+venv\Scripts\python -m src.fix_expenses --list-types
+```
+
+참고로 택시는 이미 `대중교통비(지하철, 버스, 기차, 택시, 통행료 등)`(`TRAIN`)에 들어 있다.
+
+## 설정과 창
+
+값(목적·코멘트·참석자·임계금액 등)은 `settings.json`에 있다. 창으로 고칠 수 있고
+각 단계를 눌러 돌릴 수도 있다.
+
+```bat
+venv\Scripts\python -m src.gui
+```
+
+단계는 새 콘솔 창에서 돈다. 카드 인증이나 로그인을 마치고 Enter를 눌러야 하는
+대기가 있어서, 창 안에 출력을 가두면 그 조작을 할 수 없다.
+
 ## 매달 하는 일
 
 ```bat
 venv\Scripts\python -m src.download_slips --from 2026.08.01 --to 2026.08.31
 venv\Scripts\python -m src.organize .\downloads --apply
 venv\Scripts\python -m src.attach_receipts --apply
-venv\Scripts\python -m src.fix_expenses --apply
+:: manifest.xlsx 를 엑셀에서 훑어본 뒤
+venv\Scripts\python -m src.fix_expenses --sheet --apply
 ```
 
 사람이 하는 것은 현대카드 카드 인증과 Concur 로그인뿐이다.

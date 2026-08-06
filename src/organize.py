@@ -15,7 +15,11 @@ import sys
 from pathlib import Path
 
 from . import console
+from . import settings, sheet
 from .slip_parser import Slip, SlipParseError, parse_slip
+
+# 앞쪽은 전표에서 읽은 사실, 뒤쪽 EDITABLE은 사람이 고쳐서 Concur에 넣을 값이다.
+EDITABLE = ["경비유형", "비즈니스목적", "코멘트", "참석자"]
 
 MANIFEST_COLUMNS = [
     "파일명",
@@ -30,7 +34,36 @@ MANIFEST_COLUMNS = [
     "사업자등록번호",
     "전표번호",
     "원본파일명",
+    *EDITABLE,
 ]
+
+
+def _prefill(slip: Slip, cfg: dict) -> dict[str, str]:
+    """규칙대로 미리 채워둔다. 사람이 보고 고치라는 뜻이지 확정이 아니다."""
+    if slip.total >= int(cfg["lodging_threshold"]):
+        # 큰 금액은 숙박비로 본다. 식대가 아니므로 참석자·목적·코멘트는 비운다.
+        return {"경비유형": cfg["large_amount_type"], "비즈니스목적": "", "코멘트": "", "참석자": ""}
+    return {
+        "경비유형": "내부 직원간 식음료",
+        "비즈니스목적": cfg["business_purpose"],
+        "코멘트": cfg["comment"],
+        "참석자": cfg["attendee_query"],
+    }
+
+
+def _kept_edits(manifest: Path) -> dict[str, dict[str, str]]:
+    """이미 있는 manifest에서 사람이 고친 값을 승인번호로 기억해둔다.
+
+    다시 돌릴 때마다 미리채움으로 덮어쓰면 손으로 고친 것이 날아간다.
+    """
+    if not manifest.exists():
+        return {}
+    with manifest.open(encoding="utf-8-sig", newline="") as f:
+        return {
+            r["승인번호"]: {k: r.get(k, "") for k in EDITABLE}
+            for r in csv.DictReader(f)
+            if r.get("승인번호")
+        }
 
 
 def _row(slip: Slip, filename: str) -> dict[str, str]:
@@ -51,6 +84,8 @@ def _row(slip: Slip, filename: str) -> dict[str, str]:
 
 
 def organize(folder: Path, apply: bool) -> int:
+    cfg = settings.load()
+    kept = _kept_edits(folder / "manifest.csv")
     pdfs = sorted(folder.glob("*.pdf"))
     if not pdfs:
         print(f"PDF가 없다: {folder}", file=sys.stderr)
@@ -82,7 +117,9 @@ def organize(folder: Path, apply: bool) -> int:
         else:
             print(f"  · {pdf.name}  ->  {target.name}")
 
-        rows.append(_row(slip, target.name))
+        row = _row(slip, target.name)
+        row.update(kept.get(slip.approval_no) or _prefill(slip, cfg))
+        rows.append(row)
 
     rows.sort(key=lambda r: (r["거래일"], r["거래시각"]))
 
@@ -95,6 +132,14 @@ def organize(folder: Path, apply: bool) -> int:
 
     total = sum(int(r["합계"]) for r in rows)
     print(f"\n전표 {len(rows)}건, 합계 {total:,}원  ->  {manifest}")
+    # 엑셀본은 경비유형 칸에 드롭다운이 걸려 있어 오타로 못 쓰는 값을 막는다.
+    book = folder / "manifest.xlsx"
+    try:
+        sheet.write_xlsx(MANIFEST_COLUMNS, rows, book, list(cfg["expense_type_codes"]))
+        print(f"작업지: {book}  (경비유형은 드롭다운에서만 고를 수 있다)")
+    except sheet.SheetError as exc:
+        print(f"xlsx는 못 만들었다: {exc}")
+    print(f"뒤쪽 {', '.join(EDITABLE)} 칼럼을 고친 뒤 fix_expenses --sheet 로 넘겨라.")
     if not apply:
         print("미리보기다. 실제로 바꾸려면 --apply 를 붙여라.")
 

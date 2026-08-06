@@ -1,0 +1,137 @@
+"""작업지를 읽는다. manifest.csv 를 엑셀에서 고쳐 쓰는 것이 기본 흐름이다.
+
+organize가 전표에서 사실(거래일·금액·승인번호·가맹점)을 뽑아 채우고,
+뒤쪽 네 칼럼(경비유형·비즈니스목적·코멘트·참석자)은 사람이 보고 고친다.
+그 파일을 그대로 fix_expenses에 넘기면 적힌 대로 Concur에 넣는다.
+
+.csv 와 .xlsx 를 받는다. xlsx는 openpyxl이 있을 때만 된다.
+"""
+
+from __future__ import annotations
+
+import csv
+from dataclasses import dataclass
+from datetime import date, datetime
+from pathlib import Path
+
+REQUIRED = ["거래일", "합계", "승인번호"]
+EDITABLE = ["경비유형", "비즈니스목적", "코멘트", "참석자"]
+
+
+@dataclass
+class SheetRow:
+    """match()가 Slip처럼 다룰 수 있게 when/amount/merchant 이름을 맞춘다."""
+
+    when: date
+    amount: int
+    merchant: str
+    approval: str
+    type_name: str
+    purpose: str
+    comment: str
+    attendee: str
+
+
+class SheetError(Exception):
+    """작업지를 믿고 쓸 수 없을 때."""
+
+
+def _rows_from_csv(path: Path) -> list[dict]:
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+def _rows_from_xlsx(path: Path) -> list[dict]:
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        raise SheetError(
+            "xlsx를 읽으려면 openpyxl이 필요하다: pip install openpyxl\n"
+            "아니면 엑셀에서 CSV로 저장해서 넘겨라."
+        ) from None
+    ws = load_workbook(path, read_only=True, data_only=True).active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return []
+    header = [str(c).strip() if c is not None else "" for c in rows[0]]
+    return [
+        {h: ("" if v is None else str(v).strip()) for h, v in zip(header, r)} for r in rows[1:]
+    ]
+
+
+def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: list[str]) -> None:
+    """경비유형 칸에 드롭다운을 걸어서 내보낸다.
+
+    목록을 수식에 직접 넣으면 255자 제한에 걸린다(한글 유형명이 길다).
+    별도 시트에 적어두고 참조한다.
+    """
+    try:
+        from openpyxl import Workbook
+        from openpyxl.utils import get_column_letter
+        from openpyxl.worksheet.datavalidation import DataValidation
+    except ImportError:
+        raise SheetError("xlsx를 쓰려면 openpyxl이 필요하다: pip install openpyxl") from None
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "전표"
+    ws.append(columns)
+    for r in rows:
+        ws.append([r.get(c, "") for c in columns])
+
+    ref = wb.create_sheet("경비유형")
+    for name in type_names:
+        ref.append([name])
+    ref.sheet_state = "hidden"
+
+    col = get_column_letter(columns.index("경비유형") + 1)
+    dv = DataValidation(
+        type="list",
+        formula1=f"=경비유형!$A$1:$A${len(type_names)}",
+        allow_blank=True,
+        showDropDown=False,  # False가 드롭다운 화살표를 '보이게' 한다 (openpyxl의 뜻이 반대다)
+    )
+    dv.error = "목록에 있는 경비유형만 쓸 수 있다"
+    dv.errorTitle = "경비유형"
+    ws.add_data_validation(dv)
+    dv.add(f"{col}2:{col}{len(rows) + 1}")
+
+    for i, name in enumerate(columns, 1):
+        ws.column_dimensions[get_column_letter(i)].width = max(10, min(28, len(name) * 2 + 6))
+    ws.freeze_panes = "A2"
+    wb.save(path)
+
+
+def load(path: Path) -> list[SheetRow]:
+    if not path.exists():
+        raise SheetError(f"작업지가 없다: {path}. 먼저 src.organize 를 돌려라.")
+    raw = _rows_from_xlsx(path) if path.suffix.lower() == ".xlsx" else _rows_from_csv(path)
+    if not raw:
+        raise SheetError(f"작업지가 비어 있다: {path}")
+
+    missing = [c for c in REQUIRED if c not in raw[0]]
+    if missing:
+        raise SheetError(f"작업지에 칼럼이 없다: {', '.join(missing)} ({path})")
+
+    out = []
+    for i, r in enumerate(raw, 2):  # 2행부터 (1행은 머리글)
+        if not (r.get("승인번호") or "").strip():
+            continue
+        try:
+            when = datetime.strptime(str(r["거래일"]).strip()[:10], "%Y-%m-%d").date()
+            amount = int(float(str(r["합계"]).replace(",", "").strip()))
+        except ValueError as exc:
+            raise SheetError(f"{path} {i}행의 거래일/합계를 읽지 못했다: {exc}") from None
+        out.append(
+            SheetRow(
+                when=when,
+                amount=amount,
+                merchant=(r.get("가맹점명") or "").strip(),
+                approval=r["승인번호"].strip(),
+                type_name=(r.get("경비유형") or "").strip(),
+                purpose=(r.get("비즈니스목적") or "").strip(),
+                comment=(r.get("코멘트") or "").strip(),
+                attendee=(r.get("참석자") or "").strip(),
+            )
+        )
+    return out
