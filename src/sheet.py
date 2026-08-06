@@ -59,7 +59,8 @@ def _rows_from_xlsx(path: Path) -> list[dict]:
     ]
 
 
-def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: list[str]) -> None:
+def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: list[str],
+               hidden: list[str] | None = None) -> None:
     """경비유형 칸에 드롭다운을 걸어서 내보낸다.
 
     목록을 수식에 직접 넣으면 255자 제한에 걸린다(한글 유형명이 길다).
@@ -97,7 +98,10 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path, type_names: lis
     dv.add(f"{col}2:{col}{len(rows) + 1}")
 
     for i, name in enumerate(columns, 1):
-        ws.column_dimensions[get_column_letter(i)].width = max(10, min(28, len(name) * 2 + 6))
+        dim = ws.column_dimensions[get_column_letter(i)]
+        dim.width = max(10, min(28, len(name) * 2 + 6))
+        if hidden and name in hidden:
+            dim.hidden = True
     ws.freeze_panes = "A2"
     wb.save(path)
 

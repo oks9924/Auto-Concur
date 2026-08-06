@@ -290,7 +290,9 @@ def attach(page, slip: Slip, row: Row, report_url: str, folder: Path) -> None:
     page.wait_for_timeout(2000)
 
 
-def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
+def attach_phase(page, report_url: str, folder: Path, apply: bool,
+                 tolerance: int, limit: int | None) -> int:
+    """열려 있는 리포트에 영수증을 붙인다. 브라우저는 부르는 쪽이 연다."""
     slips = load_manifest(folder)
     done = load_done(folder)
     if done:
@@ -300,78 +302,59 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
         print("붙일 것이 없다.")
         return 0
 
-    with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR), headless=False, accept_downloads=True
+    rows = read_rows(page)
+    if not rows:
+        dump = folder / "concur-dump.html"
+        try:
+            dump.write_text(page.content(), encoding="utf-8")
+        except PWError:
+            dump = None
+        raise AttachError(
+            "경비 목록 행을 읽지 못했다."
+            + (f" 화면 HTML을 {dump} 에 남겼다." if dump else "")
         )
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        page.goto(START_URL, wait_until="domcontentloaded")
 
-        print("\n" + "=" * 64)
-        print("  Concur에 SSO로 로그인하고, 처리할 경비 리포트를 열어라.")
-        print("  경비 목록이 보이는 상태에서 Enter를 눌러라.")
-        print("=" * 64)
-        console.wait_enter("리포트를 열었으면 Enter > ")
+    dated = [r for r in rows if r.when and r.amount and r.expense_id]
+    print(f"\n경비 {len(rows)}행 중 날짜·금액·ID를 읽은 행 {len(dated)}개, 전표 {len(slips)}건")
+    if len(dated) != len(rows):
+        print(f"  경고: {len(rows) - len(dated)}행은 값을 못 읽어서 대상에서 뺐다")
 
-        page.wait_for_timeout(2000)  # Enter 직후에도 화면을 더 그린다
-        report_url = page.url
-        rows = read_rows(page)
-        if not rows:
-            dump = folder / "concur-dump.html"
-            try:
-                dump.write_text(page.content(), encoding="utf-8")
-            except PWError:
-                dump = None
-            raise AttachError(
-                "경비 목록 행을 읽지 못했다."
-                + (f" 화면 HTML을 {dump} 에 남겼다." if dump else "")
-            )
+    pairs, skipped = match(slips, dated, tolerance)
+    counts = Counter(how for _, _, how in pairs)
+    extra = ", ".join(f"{how} {n}건" for how, n in counts.items() if how != "단독")
+    print(f"\n확정 매칭 {len(pairs)}건" + (f" (그중 {extra})" if extra else ""))
+    for slip, row, how in pairs:
+        gap = (row.when - slip.when).days
+        mark = "" if gap == 0 else f"  (Concur 날짜 {gap:+d}일)"
+        if how == "가맹점":
+            mark += "  [가맹점으로 판별]"
+        elif how == "순서":
+            mark += "  [순서 배정 - 확인 권장]"
+        print(f"  {slip.when} {slip.amount:>9,}원  {slip.merchant[:16]:16} -> {row.text[:50]}{mark}")
 
-        dated = [r for r in rows if r.when and r.amount and r.expense_id]
-        print(f"\n경비 {len(rows)}행 중 날짜·금액·ID를 읽은 행 {len(dated)}개, 전표 {len(slips)}건")
-        if len(dated) != len(rows):
-            print(f"  경고: {len(rows) - len(dated)}행은 값을 못 읽어서 대상에서 뺐다")
+    if skipped:
+        print(f"\n건너뜀 {len(skipped)}건 (사람이 처리):")
+        for slip, why in skipped:
+            print(f"  {slip.when} {slip.amount:>9,}원  {slip.merchant[:16]:16} - {why}")
 
-        pairs, skipped = match(slips, dated, tolerance)
-        counts = Counter(how for _, _, how in pairs)
-        extra = ", ".join(f"{how} {n}건" for how, n in counts.items() if how != "단독")
-        print(f"\n확정 매칭 {len(pairs)}건" + (f" (그중 {extra})" if extra else ""))
-        for slip, row, how in pairs:
-            gap = (row.when - slip.when).days
-            mark = "" if gap == 0 else f"  (Concur 날짜 {gap:+d}일)"
-            if how == "가맹점":
-                mark += "  [가맹점으로 판별]"
-            elif how == "순서":
-                mark += "  [순서 배정 - 확인 권장]"
-            print(f"  {slip.when} {slip.amount:>9,}원  {slip.merchant[:16]:16} -> {row.text[:50]}{mark}")
+    if not apply:
+        print("\n계획만 출력했다. 실제로 붙이려면 --apply 를 붙여라.")
+        return 0
 
-        if skipped:
-            print(f"\n건너뜀 {len(skipped)}건 (사람이 처리):")
-            for slip, why in skipped:
-                print(f"  {slip.when} {slip.amount:>9,}원  {slip.merchant[:16]:16} - {why}")
+    if limit:
+        pairs = pairs[:limit]
+        print(f"\n--limit {limit} 이므로 {len(pairs)}건만 붙인다.")
 
-        if not apply:
-            print("\n계획만 출력했다. 실제로 붙이려면 --apply 를 붙여라.")
-            print("처음에는 --apply --limit 1 로 한 건만 해보고 Concur에서 확인해라.")
-            ctx.close()
-            return 0
-
-        if limit:
-            pairs = pairs[:limit]
-            print(f"\n--limit {limit} 이므로 {len(pairs)}건만 붙인다.")
-
-        attached, failed = 0, []
-        for i, (slip, row, _) in enumerate(pairs, 1):
-            try:
-                attach(page, slip, row, report_url, folder)
-                mark_done(folder, slip.approval)
-                attached += 1
-                print(f"  [{i}/{len(pairs)}] 첨부 {slip.path.name}")
-            except (AttachError, PWTimeout) as exc:
-                failed.append((slip, str(exc)))
-                print(f"  [{i}/{len(pairs)}] 실패 {slip.path.name}: {exc}")
-
-        ctx.close()
+    attached, failed = 0, []
+    for i, (slip, row, _) in enumerate(pairs, 1):
+        try:
+            attach(page, slip, row, report_url, folder)
+            mark_done(folder, slip.approval)
+            attached += 1
+            print(f"  [{i}/{len(pairs)}] 첨부 {slip.path.name}")
+        except (AttachError, PWTimeout) as exc:
+            failed.append((slip, str(exc)))
+            print(f"  [{i}/{len(pairs)}] 실패 {slip.path.name}: {exc}")
 
     print(f"\n{attached}건 첨부")
     if failed:
@@ -380,6 +363,38 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
             print(f"  ! {slip.path.name}: {why}")
         return 1
     return 0
+
+
+def open_report():
+    """브라우저를 열고 사람이 로그인·리포트 열기를 마칠 때까지 기다린다.
+
+    (playwright, context, page, report_url)을 준다. 닫는 것은 부르는 쪽 몫이다.
+    C·D단계를 한 세션에서 이어 하려고 분리했다.
+    """
+    pw = sync_playwright().start()
+    ctx = pw.chromium.launch_persistent_context(
+        user_data_dir=str(PROFILE_DIR), headless=False, accept_downloads=True
+    )
+    page = ctx.pages[0] if ctx.pages else ctx.new_page()
+    page.goto(START_URL, wait_until="domcontentloaded")
+
+    print("\n" + "=" * 64)
+    print("  Concur에 로그인하고 처리할 경비 리포트를 열어라.")
+    print("  경비 목록이 보이는 상태에서 Enter를 눌러라.")
+    print("=" * 64)
+    console.wait_enter("리포트를 열었으면 Enter > ")
+
+    page.wait_for_timeout(2000)  # Enter 직후에도 화면을 더 그린다
+    return pw, ctx, page, page.url
+
+
+def run(folder: Path, apply: bool, tolerance: int, limit: int | None) -> int:
+    pw, ctx, page, report_url = open_report()
+    try:
+        return attach_phase(page, report_url, folder, apply, tolerance, limit)
+    finally:
+        ctx.close()
+        pw.stop()
 
 
 def main() -> int:

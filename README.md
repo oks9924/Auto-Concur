@@ -10,9 +10,8 @@
 [B] PDF 파싱 → 이름 변경 + 작업지(csv/xlsx)               ← 실측 검증 완료
      ↓  여기서 엑셀로 경비유형·목적·코멘트·참석자를 건별로 손본다
      ↓  여기서 사람이 눈으로 확인한다
-[C] Concur → 날짜/금액 매칭 → PDF 첨부                    ← 실측 검증 완료 (46건, 2건은 모호해 수동)
-     ↓
-[D] 경비유형 · 참석자 · 목적 · 코멘트                     ← 실측 검증 완료
+[C] Concur 반영 — 영수증 첨부 + 유형·목적·코멘트·참석자   ← 실측 검증 완료
+     (한 세션에서 이어서 한다. 로그인은 한 번)
 ```
 
 **단계를 일부러 쪼갰다.** 통짜 스크립트로 만들면 어디서 깨졌는지 알 수 없고,
@@ -113,7 +112,22 @@ C단계에서 매칭이 모호하면 **건너뛰고 사람에게 넘긴다** —
 596x843pt 페이지에 27.68pt 간격의 고정 그리드로 값이 배치되므로 좌표로 읽는다
 (`src/slip_parser.py`의 `ROWS`).
 
-## C단계: Concur 첨부
+## C단계: Concur 반영
+
+```bat
+venv\Scripts\python -m src.update_concur                  :: 계획만
+venv\Scripts\python -m src.update_concur --apply --limit 1 :: 한 건만
+venv\Scripts\python -m src.update_concur --apply           :: 전부
+```
+
+영수증 첨부와 유형·목적·코멘트·참석자 입력을 **한 세션에서 이어서** 한다.
+따로 돌리면 브라우저를 두 번 띄우고 로그인·리포트 열기를 두 번 해야 한다.
+
+작업지(`manifest.xlsx` 또는 `manifest.csv`)가 있으면 거기 적힌 대로 넣는다.
+없으면 규칙대로 한다. 나눠서 돌리려면 `attach_receipts` 와 `fix_expenses` 를
+그대로 쓸 수 있다.
+
+### 영수증 첨부
 
 ```bat
 venv\Scripts\python -m src.attach_receipts                    :: 매칭 계획만 (아무것도 안 바꿈)
@@ -171,6 +185,11 @@ SSO 로그인과 리포트 열기는 사람이 한다. 경비 목록이 보이�
 
 **작업지대로 (권장)** — `organize`가 만든 `manifest.xlsx`를 엑셀에서 손본 뒤 넘긴다.
 건별로 다르게 지정할 수 있고, 넣기 전에 눈으로 다 볼 수 있다.
+`update_concur` 는 작업지가 있으면 알아서 쓴다.
+
+작업지에는 손댈 칸만 보인다. 가맹점명·거래유형·카드번호·사업자등록번호·전표번호·
+원본파일명은 **숨겨두되 지우지는 않는다** — 가맹점명은 후보가 여럿일 때 어느
+경비인지 가리는 데 쓰고, 나머지도 나중에 근거를 되짚을 때 필요하다.
 
 ```bat
 venv\Scripts\python -m src.fix_expenses --sheet                    :: 계획만
@@ -231,9 +250,8 @@ venv\Scripts\python -m src.gui
 ```bat
 venv\Scripts\python -m src.download_slips --from 2026.08.01 --to 2026.08.31
 venv\Scripts\python -m src.organize .\downloads --apply
-venv\Scripts\python -m src.attach_receipts --apply
 :: manifest.xlsx 를 엑셀에서 훑어본 뒤
-venv\Scripts\python -m src.fix_expenses --sheet --apply
+venv\Scripts\python -m src.update_concur --apply
 ```
 
 사람이 하는 것은 현대카드 카드 인증과 Concur 로그인뿐이다.

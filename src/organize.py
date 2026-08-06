@@ -21,6 +21,10 @@ from .slip_parser import Slip, SlipParseError, parse_slip
 # 앞쪽은 전표에서 읽은 사실, 뒤쪽 EDITABLE은 사람이 고쳐서 Concur에 넣을 값이다.
 EDITABLE = ["경비유형", "비즈니스목적", "코멘트", "참석자"]
 
+# 엑셀에서 감출 칼럼. 지우지는 않는다 - 가맹점명은 후보가 여럿일 때 어느 경비인지
+# 가리는 데 쓰고, 나머지도 나중에 근거를 되짚을 때 필요하다. 보이지만 않게 한다.
+HIDDEN = ["가맹점명", "거래유형", "카드번호", "사업자등록번호", "전표번호", "원본파일명"]
+
 MANIFEST_COLUMNS = [
     "파일명",
     "거래일",
@@ -135,11 +139,12 @@ def organize(folder: Path, apply: bool) -> int:
     # 엑셀본은 경비유형 칸에 드롭다운이 걸려 있어 오타로 못 쓰는 값을 막는다.
     book = folder / "manifest.xlsx"
     try:
-        sheet.write_xlsx(MANIFEST_COLUMNS, rows, book, list(cfg["expense_type_codes"]))
+        sheet.write_xlsx(MANIFEST_COLUMNS, rows, book, list(cfg["expense_type_codes"]),
+                         hidden=HIDDEN)
         print(f"작업지: {book}  (경비유형은 드롭다운에서만 고를 수 있다)")
     except sheet.SheetError as exc:
         print(f"xlsx는 못 만들었다: {exc}")
-    print(f"뒤쪽 {', '.join(EDITABLE)} 칼럼을 고친 뒤 fix_expenses --sheet 로 넘겨라.")
+    print(f"엑셀에서 {', '.join(EDITABLE)} 을 고친 뒤 update_concur 로 넘겨라.")
     if not apply:
         print("미리보기다. 실제로 바꾸려면 --apply 를 붙여라.")
 

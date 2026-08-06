@@ -24,12 +24,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PWTimeout
-from playwright.sync_api import sync_playwright
 
 from . import console, settings, sheet
 from .attach_receipts import match as match_rows
+from .attach_receipts import open_report
 from .attach_receipts import (
-    START_URL,
     WAIT_AMOUNT_JS,
     AttachError,
     Row,
@@ -489,83 +488,49 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
     return plans, missing
 
 
-def run(apply: bool, limit: int | None, list_types: bool = False,
-        sheet_path: Path | None = None) -> int:
-    cfg = settings.load()
+def fix_phase(page, report_url: str, cfg: dict, apply: bool,
+              limit: int | None, sheet_path: Path | None) -> int:
+    """열려 있는 리포트의 유형·목적·코멘트·참석자를 채운다."""
     rules = rules_from(cfg)
-    with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR), headless=False
-        )
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        page.goto(START_URL, wait_until="domcontentloaded")
+    rows = read_rows(page)
 
-        print("\n" + "=" * 64)
-        print("  Concur에 로그인하고 처리할 경비 리포트를 열어라.")
-        print("  경비 목록이 보이는 상태에서 Enter를 눌러라.")
-        print("=" * 64)
-        console.wait_enter("리포트를 열었으면 Enter > ")
+    if sheet_path:
+        paired, missing = plans_from_sheet(cfg, [r for r in rows if r.expense_id],
+                                           sheet_path, int(cfg["date_tolerance_days"]))
+        plans = [p for p, _ in paired]
+        if missing:
+            print(f"\n작업지에 있으나 Concur에서 못 찾은 것 {len(missing)}건:")
+            for entry, why in missing:
+                print(f"  {entry.when} {entry.amount:>9,}원  {entry.merchant[:16]} - {why}")
+    else:
+        plans = [p for p in (decide(r, rules) for r in rows if r.expense_id) if p]
 
-        page.wait_for_timeout(2000)
-        report_url = page.url
-        rows = read_rows(page)
+    print(f"\n경비 {len(rows)}건 중 손댈 것 {len(plans)}건\n")
+    for plan in plans:
+        r = plan.row
+        print(f"  {r.when} {r.amount:>9,}원  {r.expense_type[:22]:22} -> {plan.summary()}")
 
-        if list_types:
-            usable = [r for r in rows if r.expense_id]
-            if not usable:
-                raise AttachError("경비가 하나도 없다. 리포트를 열고 다시 해라.")
-            page.goto(expense_url(report_url, usable[0].expense_id), wait_until="domcontentloaded")
-            _wait_js(page, TYPE_COMBO_READY_JS, "경비 유형 콤보박스", timeout=25000)
-            _click_marked(page, SELECT_TYPE_COMBO_JS, "경비 유형 콤보박스")
-            _wait_js(page, "() => !!document.querySelector('li[role=\"option\"]')", "경비 유형 목록")
-            types = _eval(page, DUMP_TYPES_JS)
-            ctx.close()
-            print(f"\n경비유형 {len(types)}개. settings.json 의 expense_type_codes 에 넣어 쓴다.\n")
-            for t in sorted(types, key=lambda x: x["label"]):
-                print(f'  "{t["label"]}": "{t["code"]}",')
-            return 0
+    skipped = len(rows) - len(plans)
+    if skipped:
+        print(f"\n건드리지 않음 {skipped}건 (이미 맞거나 대상 아님)")
 
-        if sheet_path:
-            paired, missing = plans_from_sheet(cfg, [r for r in rows if r.expense_id],
-                                               sheet_path, int(cfg["date_tolerance_days"]))
-            plans = [p for p, _ in paired]
-            if missing:
-                print(f"\n작업지에 있으나 Concur에서 못 찾은 것 {len(missing)}건:")
-                for entry, why in missing:
-                    print(f"  {entry.when} {entry.amount:>9,}원  {entry.merchant[:16]} - {why}")
-        else:
-            plans = [p for p in (decide(r, rules) for r in rows if r.expense_id) if p]
+    if not apply:
+        print("\n계획만 출력했다. 실제로 고치려면 --apply 를 붙여라.")
+        return 0
 
-        print(f"\n경비 {len(rows)}건 중 손댈 것 {len(plans)}건\n")
-        for plan in plans:
-            r = plan.row
-            print(f"  {r.when} {r.amount:>9,}원  {r.expense_type[:22]:22} -> {plan.summary()}")
+    if limit:
+        plans = plans[:limit]
+        print(f"\n--limit {limit} 이므로 {len(plans)}건만 고친다.")
 
-        skipped = len(rows) - len(plans)
-        if skipped:
-            print(f"\n건드리지 않음 {skipped}건 (이미 맞거나 대상 아님)")
-
-        if not apply:
-            print("\n계획만 출력했다. 실제로 고치려면 --apply 를 붙여라.")
-            print("처음에는 --apply --limit 1 로 한 건만 해보고 Concur에서 확인해라.")
-            ctx.close()
-            return 0
-
-        if limit:
-            plans = plans[:limit]
-            print(f"\n--limit {limit} 이므로 {len(plans)}건만 고친다.")
-
-        done, failed = 0, []
-        for i, plan in enumerate(plans, 1):
-            try:
-                what = apply_plan(page, plan, report_url)
-                done += 1
-                print(f"  [{i}/{len(plans)}] {plan.row.when} {plan.row.amount:,}원 - {what}")
-            except (AttachError, PWTimeout) as exc:
-                failed.append((plan, str(exc)))
-                print(f"  [{i}/{len(plans)}] 실패 {plan.row.when} {plan.row.amount:,}원: {exc}")
-
-        ctx.close()
+    done, failed = 0, []
+    for i, plan in enumerate(plans, 1):
+        try:
+            what = apply_plan(page, plan, report_url)
+            done += 1
+            print(f"  [{i}/{len(plans)}] {plan.row.when} {plan.row.amount:,}원 - {what}")
+        except (AttachError, PWTimeout) as exc:
+            failed.append((plan, str(exc)))
+            print(f"  [{i}/{len(plans)}] 실패 {plan.row.when} {plan.row.amount:,}원: {exc}")
 
     print(f"\n{done}건 처리")
     if failed:
@@ -574,6 +539,34 @@ def run(apply: bool, limit: int | None, list_types: bool = False,
             print(f"  ! {plan.row.when} {plan.row.amount:,}원: {why}")
         return 1
     return 0
+
+
+def list_types_phase(page, report_url: str) -> int:
+    usable = [r for r in read_rows(page) if r.expense_id]
+    if not usable:
+        raise AttachError("경비가 하나도 없다. 리포트를 열고 다시 해라.")
+    page.goto(expense_url(report_url, usable[0].expense_id), wait_until="domcontentloaded")
+    _wait_js(page, TYPE_COMBO_READY_JS, "경비 유형 콤보박스", timeout=25000)
+    _click_marked(page, SELECT_TYPE_COMBO_JS, "경비 유형 콤보박스")
+    _wait_js(page, "() => !!document.querySelector('li[role=\"option\"]')", "경비 유형 목록")
+    types = _eval(page, DUMP_TYPES_JS)
+    print(f"\n경비유형 {len(types)}개. settings.json 의 expense_type_codes 에 넣어 쓴다.\n")
+    for t in sorted(types, key=lambda x: x["label"]):
+        print(f'  "{t["label"]}": "{t["code"]}",')
+    return 0
+
+
+def run(apply: bool, limit: int | None, list_types: bool = False,
+        sheet_path: Path | None = None) -> int:
+    cfg = settings.load()
+    pw, ctx, page, report_url = open_report()
+    try:
+        if list_types:
+            return list_types_phase(page, report_url)
+        return fix_phase(page, report_url, cfg, apply, limit, sheet_path)
+    finally:
+        ctx.close()
+        pw.stop()
 
 
 def main() -> int:

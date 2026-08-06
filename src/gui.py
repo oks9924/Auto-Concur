@@ -88,14 +88,13 @@ class App(tk.Tk):
 
         steps = [
             ("A. 전표 다운로드", self.step_download),
-            ("B. 파싱 · 정리", self.step_organize),
-            ("C. 영수증 첨부", self.step_attach),
-            ("D. 유형 · 참석자 · 목적", self.step_fix),
+            ("B. 파싱 · 작업지 생성", self.step_organize),
+            ("C. Concur 반영", self.step_update),
         ]
         bar = ttk.Frame(run)
         bar.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
         for text, cmd in steps:
-            ttk.Button(bar, text=text, width=20, command=cmd).pack(side="left", padx=3)
+            ttk.Button(bar, text=text, width=22, command=cmd).pack(side="left", padx=3)
 
         tools = ttk.Frame(self)
         tools.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 10))
@@ -142,13 +141,10 @@ class App(tk.Tk):
             args.append("--apply")
         _run(args)
 
-    def step_attach(self) -> None:
+    def step_update(self) -> None:
+        """첨부와 입력을 한 세션에서 한다. 로그인을 두 번 하지 않아도 된다."""
         if self.save():
-            _run(["src.attach_receipts", "--dir", self.cfg["downloads_dir"], *self._common()])
-
-    def step_fix(self) -> None:
-        if self.save():
-            _run(["src.fix_expenses", *self._common()])
+            _run(["src.update_concur", "--dir", self.cfg["downloads_dir"], *self._common()])
 
     def step_list_types(self) -> None:
         if self.save():
