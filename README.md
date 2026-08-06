@@ -123,7 +123,7 @@ Concur도 Playwright 브라우저 자동화다. API는 **Client Web Services 라
 셀렉터는 추측하지 않는다. 실제 화면을 떠서 확인한 뒤에 쓴다:
 
 ```bat
-venv\Scripts\python -m src.inspect_page "https://eu2.concursolutions.com/home" --name concur
+venv\Scripts\python -m src.inspect_page "https://travel.siemens.cloud" --name concur
 ```
 
 브라우저가 뜨면 로그인하고 원하는 화면까지 이동한다. 화면마다 Enter를 누르면
