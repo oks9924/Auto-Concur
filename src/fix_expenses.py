@@ -688,11 +688,14 @@ def _dismiss_dialog(page, wait_ms: int = 5000) -> str | None:
     return text
 
 
-def _save_expense(page, row: Row, report_url: str, labels: str = SAVE_DETAIL) -> None:
-    """저장하고, 뒤따라 뜨는 확인창까지 처리한 뒤 상세로 돌아온다.
+def _save_expense(page, row: Row, report_url: str, labels: str = SAVE_DETAIL,
+                  reopen: bool = True) -> None:
+    """저장하고, 뒤따라 뜨는 확인창까지 처리한다.
 
     확인창을 닫으면 리포트 목록으로 튕겨 나간다(실측). 저장은 이미 끝났으니
-    값은 남아 있다. 주소로 상세를 다시 열고, 금액으로 맞는 경비인지 확인한다.
+    값은 남아 있다. 이 경비에서 할 일이 더 남았으면(reopen) 주소로 상세를 다시
+    열고 금액으로 맞는 경비인지 확인한다. 마지막 저장이면 다시 열지 않는다 -
+    어차피 다음 경비로 넘어가므로 그 왕복이 헛걸음이다.
 
     labels는 찾을 버튼 이름들이다. 탭마다 다르다 - 상세 정보는 '경비 저장',
     항목별 명세는 '저장'. 여기 없는 이름이면 화면의 버튼을 파일로 남기고 멈춘다.
@@ -711,8 +714,9 @@ def _save_expense(page, row: Row, report_url: str, labels: str = SAVE_DETAIL) ->
         print(f"     (저장 후 안내창을 닫았습니다: {told})")
     page.wait_for_timeout(1000)
 
-    page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
-    _wait_js(page, WAIT_AMOUNT_JS, f"{row.amount:,}원 경비 상세", arg=str(row.amount))
+    if reopen:
+        page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
+        _wait_js(page, WAIT_AMOUNT_JS, f"{row.amount:,}원 경비 상세", arg=str(row.amount))
 
 
 def _open_tab(page, selector: str, what: str) -> None:
@@ -853,7 +857,9 @@ def _open_attendee_modal(page, report_url: str, row: Row) -> None:
         except AttachError:
             pass  # 버튼이 모달을 여는 것이 아니었다. 주소로 연다
 
-    _save_expense(page, row, report_url)
+    # 주소로 열면 저장 안 한 입력이 날아간다. 먼저 저장한다. 어차피 곧 주소로
+    # 넘어가므로 상세를 다시 열 필요는 없다.
+    _save_expense(page, row, report_url, reopen=False)
     page.goto(
         f"{expense_url(report_url, row.expense_id)}?modal=attendees&context=entry",
         wait_until="domcontentloaded",
@@ -953,7 +959,7 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
     # 숙박비는 _apply_lodging 안에서 이미 저장했다. 나머지는 여기서 한 번 저장한다.
     # 참석자만 바뀐 경우는 모달의 저장으로 끝나서 따로 저장하지 않아도 된다.
     if fields_changed and not plan.lodging:
-        _save_expense(page, row, report_url)
+        _save_expense(page, row, report_url, reopen=False)
 
     return ", ".join(done) if done else "이미 되어 있음"
 
@@ -988,10 +994,11 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
     # 이미 입력된 명세인지 먼저 본다. 그때는 요금 칸이 수정 불가라 '반복'을
     # 고를 수도 없다. 순서를 거꾸로 했다가, 있지도 않은 콤보박스를 25초 동안
     # 찾고 실패했다. 손댈 수 없으면 경비 저장으로 빠져나와 다음 경비로 간다.
+    later = bool(parse_attendees(plan.attendee))  # 뒤에 참석자를 넣을 것이 있나
     locked = _itemization_locked(page)
     if locked:
         done.append(locked)
-        _save_expense(page, plan.row, report_url)
+        _save_expense(page, plan.row, report_url, reopen=later)
         return done
 
     _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
@@ -1002,7 +1009,7 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
     # 이 탭의 저장 버튼은 '경비 저장'이 아니라 '저장'이다. 저장하면 상세로
     # 돌아온다 - 항목별 명세 탭에는 금액 필드가 없어서, 남아 있으면 다음
     # 단계의 확인이 엉뚱하게 실패한다.
-    _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION)
+    _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION, reopen=later)
     return done
 
 
