@@ -38,25 +38,35 @@ VENDOR_FIELD = "#vendorName"
 
 # Concur 목록은 role=row / role=gridcell 을 쓴다. 접근성 표준이라 난독화된
 # 클래스명(sapcnqr-...-b8e75c)보다 오래 간다.
-READ_ROWS_JS = """
-() => [...document.querySelectorAll('[role="row"]')]
-  .map((r, i) => ({
-    index: i,
-    cells: [...r.querySelectorAll('[role="gridcell"], [role="cell"]')]
-      .map(c => (c.innerText || '').trim().replace(/\\s+/g, ' ')),
-    // 상세로 가는 링크가 있으면 클릭 대신 주소로 바로 간다. 훨씬 덜 깨진다.
-    href: (r.querySelector('a[href*="/expenses/"]') || {}).href || null,
-  }))
-  .filter(r => r.cells.length)
+# 행 목록은 반드시 한 곳에서만 정의한다. 읽을 때와 누를 때 목록이 다르면
+# 인덱스가 어긋나서 엉뚱한 행을 누른다(실제로 합계 행을 눌렀다).
+ROWS_FN = """
+  const cellsOf = r => [...r.querySelectorAll('[role="gridcell"], [role="cell"]')];
+  const gridRows = () => [...document.querySelectorAll('[role="row"]')]
+    .filter(r => cellsOf(r).length);
 """
 
-DUMP_ROW_JS = """
-(i) => {
-  const rows = [...document.querySelectorAll('[role="row"]')]
-    .filter(r => r.querySelectorAll('[role="gridcell"], [role="cell"]').length);
-  return rows[i] ? rows[i].outerHTML.slice(0, 12000) : null;
-}
-"""
+READ_ROWS_JS = (
+    "() => {"
+    + ROWS_FN
+    + """
+  return gridRows().map((r, i) => ({
+    index: i,
+    cells: cellsOf(r).map(c => (c.innerText || '').trim().replace(/\\s+/g, ' ')),
+    // 상세로 가는 링크가 있으면 클릭 대신 주소로 바로 간다. 훨씬 덜 깨진다.
+    href: (r.querySelector('a[href*="/expenses/"]') || {}).href || null,
+  }));
+}"""
+)
+
+DUMP_ROW_JS = (
+    "(i) => {"
+    + ROWS_FN
+    + """
+  const r = gridRows()[i];
+  return r ? r.outerHTML.slice(0, 12000) : null;
+}"""
+)
 
 # 상세 폼이 이 전표의 금액을 보여줄 때까지 기다린다. 대기와 검증을 한 번에 한다.
 # SPA라 행을 눌러도 load 이벤트가 안 나므로 네비게이션을 기다리면 안 된다.
@@ -67,22 +77,22 @@ WAIT_AMOUNT_JS = """
 }
 """
 
-# 행을 클릭해 상세로 들어가는 방법을 모른다. 행 안에서 누를 만한 것을 찾아 누른다.
-CLICK_ROW_JS = """
-(i) => {
-  const rows = [...document.querySelectorAll('[role="row"]')]
-    .filter(r => r.querySelectorAll('[role="gridcell"], [role="cell"]').length);
-  const row = rows[i];
+# 행 안의 버튼은 누르면 안 된다. 알림(오류/경고) 버튼과 카드 버튼은 팝오버만
+# 열고 상세는 안 열린다. 날짜가 든 셀을 그대로 누른다.
+CLICK_ROW_JS = (
+    "(i) => {"
+    + ROWS_FN
+    + """
+  const row = gridRows()[i];
   if (!row) return false;
-  const cells = [...row.querySelectorAll('[role="gridcell"], [role="cell"]')];
-  for (const c of cells) {
-    const link = c.querySelector('a, button:not([class*="checkbox"])');
-    if (link && (link.innerText || '').trim()) { link.click(); return true; }
-  }
-  cells[1]?.click() ?? row.click();
+  const cells = cellsOf(row);
+  const target = cells.find(c => /\\d{4}-\\d{2}-\\d{2}/.test(c.innerText || ''))
+              || cells.find(c => (c.innerText || '').trim() && !c.querySelector('button, input'));
+  if (!target) return false;
+  target.click();
   return true;
-}
-"""
+}"""
+)
 
 DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 AMOUNT_RE = re.compile(r"^-?[\d,]+(?:\.\d+)?$")
