@@ -107,17 +107,25 @@ DUMP_COMBOS_JS = (
 }"""
 )
 
+# 요소에 표시를 남기고 셀렉터를 돌려준다. 실제 클릭은 Playwright가 한다.
+#
+# JS의 element.click()은 click 이벤트 하나만 쏜다. React 드롭다운은 보통
+# onMouseDown/onPointerDown을 들어서 반응하지 않는다. 참석자 콤보박스가
+# 눌리지 않은 이유였다.
+MARK_FN = """
+  const mark = (el) => {
+    if (!el) return null;
+    document.querySelectorAll('[data-auto-target]')
+      .forEach(e => e.removeAttribute('data-auto-target'));
+    el.setAttribute('data-auto-target', '1');
+    return '[data-auto-target="1"]';
+  };
+"""
+
 TYPE_COMBO_READY_JS = "() => {" + FIND_COMBO_FN + " return !!findCombo(/Expense Type|경비 유형/); }"
 
-OPEN_TYPE_JS = (
-    "() => {"
-    + FIND_COMBO_FN
-    + """
-  const cb = findCombo(/Expense Type|경비 유형/);
-  if (!cb) return false;
-  cb.click();
-  return true;
-}"""
+SELECT_TYPE_COMBO_JS = (
+    "() => {" + FIND_COMBO_FN + MARK_FN + " return mark(findCombo(/Expense Type|경비 유형/)); }"
 )
 
 HAS_TYPE_OPTION_JS = """
@@ -125,15 +133,14 @@ HAS_TYPE_OPTION_JS = """
   .some(o => (o.id || '').includes('-_-_-' + code + '-_-_-'))
 """
 
-PICK_TYPE_JS = """
-(code) => {
-  const opt = [...document.querySelectorAll('li[role="option"]')]
-    .find(o => (o.id || '').includes('-_-_-' + code + '-_-_-'));
-  if (!opt) return false;
-  opt.click();
-  return true;
-}
-"""
+SELECT_TYPE_OPTION_JS = (
+    "(code) => {"
+    + MARK_FN
+    + """
+  return mark([...document.querySelectorAll('li[role="option"]')]
+    .find(o => (o.id || '').includes('-_-_-' + code + '-_-_-')));
+}"""
+)
 
 # 참석자 모달. 콤보박스(텍스트 '참석자 추가')를 눌러야 입력창이 생긴다.
 # 입력창은 콤보박스의 자식이 아니라 같은 form-field 안의 형제다.
@@ -141,15 +148,8 @@ ATTENDEE_COMBO_READY_JS = (
     "() => {" + FIND_COMBO_FN + " return !!findCombo(/이름 또는 기업 이메일/); }"
 )
 
-OPEN_ATTENDEE_JS = (
-    "() => {"
-    + FIND_COMBO_FN
-    + """
-  const cb = findCombo(/이름 또는 기업 이메일/);
-  if (!cb) return false;
-  cb.click();
-  return true;
-}"""
+SELECT_ATTENDEE_COMBO_JS = (
+    "() => {" + FIND_COMBO_FN + MARK_FN + " return mark(findCombo(/이름 또는 기업 이메일/)); }"
 )
 
 # 상세 폼의 입력들. 위로 올라가다 이것들을 잘못 집으면 엉뚱한 데 타이핑한다.
@@ -184,15 +184,14 @@ HAS_ATTENDEE_OPTION_JS = """
   .some(o => !(o.id || '').includes('CREATE_NEW_ATTENDEE'))
 """
 
-PICK_ATTENDEE_JS = """
-() => {
-  const opt = [...document.querySelectorAll('li[role="option"]')]
-    .find(o => !(o.id || '').includes('CREATE_NEW_ATTENDEE'));
-  if (!opt) return false;
-  opt.click();
-  return true;
-}
-"""
+SELECT_ATTENDEE_OPTION_JS = (
+    "() => {"
+    + MARK_FN
+    + """
+  return mark([...document.querySelectorAll('li[role="option"]')]
+    .find(o => !(o.id || '').includes('CREATE_NEW_ATTENDEE')));
+}"""
+)
 
 # 참석자 버튼은 '참석자 (0)' 처럼 개수를 달고 있다.
 ATTENDEE_COUNT_JS = """
@@ -263,18 +262,24 @@ def _wait_js(page, script: str, what: str, arg=None, timeout: int = 30000) -> No
         raise AttachError(f"{what}을(를) 기다렸지만 나타나지 않았다") from None
 
 
+def _click_marked(page, script: str, what: str, arg=None) -> None:
+    """JS로 대상을 표시하고 실제 마우스로 누른다."""
+    selector = _eval(page, script) if arg is None else _eval(page, script, arg)
+    if not selector:
+        raise AttachError(f"{what}을(를) 찾지 못했다")
+    page.click(selector, timeout=15000)
+
+
 def _set_type(page, code: str, label: str) -> None:
     try:
         _wait_js(page, TYPE_COMBO_READY_JS, "경비 유형 콤보박스", timeout=25000)
     except AttachError as exc:
         dump = _dump_combos(page, "expense-type")
         raise AttachError(f"{exc}" + (f" (화면의 콤보박스 목록: {dump})" if dump else "")) from None
-    if not _eval(page, OPEN_TYPE_JS):
-        raise AttachError("경비 유형 콤보박스를 찾지 못했다")
+    _click_marked(page, SELECT_TYPE_COMBO_JS, "경비 유형 콤보박스")
 
     _wait_js(page, HAS_TYPE_OPTION_JS, f"경비 유형 옵션({code})", arg=code, timeout=20000)
-    if not _eval(page, PICK_TYPE_JS, code):
-        raise AttachError(f"경비 유형 옵션({code})을 찾지 못했다")
+    _click_marked(page, SELECT_TYPE_OPTION_JS, f"경비 유형 옵션({code})", arg=code)
 
     # 고른 값이 실제로 반영됐는지 본다. 눌렀다고 바뀐 것은 아니다.
     _wait_js(
@@ -318,7 +323,8 @@ def _add_attendee(page, report_url: str, expense_id: str) -> bool:
     try:
         _wait_js(page, ATTENDEE_COMBO_READY_JS, "참석자 검색 콤보박스", timeout=30000)
         # 눌러야 입력창이 생긴다. 콤보박스 자체에는 input이 없다.
-        _eval(page, OPEN_ATTENDEE_JS)
+        # 실제 마우스로 눌러야 한다. JS click은 React가 안 듣는다.
+        _click_marked(page, SELECT_ATTENDEE_COMBO_JS, "참석자 검색 콤보박스")
         _wait_js(
             page, ATTENDEE_INPUT_JS, "참석자 검색 입력창", arg=DETAIL_FIELD_IDS, timeout=15000
         )
@@ -343,8 +349,7 @@ def _add_attendee(page, report_url: str, expense_id: str) -> bool:
     )
     _wait_js(page, HAS_ATTENDEE_OPTION_JS, f"'{ATTENDEE_QUERY}' 검색 결과", timeout=25000)
 
-    if not _eval(page, PICK_ATTENDEE_JS):
-        raise AttachError(f"'{ATTENDEE_QUERY}' 검색 결과를 고르지 못했다")
+    _click_marked(page, SELECT_ATTENDEE_OPTION_JS, f"'{ATTENDEE_QUERY}' 검색 결과")
     page.wait_for_timeout(1500)
     page.get_by_role("button", name="저장").first.click()
 
