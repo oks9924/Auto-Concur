@@ -5,13 +5,13 @@
 ## 전체 흐름
 
 ```
-[A] 현대카드(mycompany) → 월별 전표 PDF 다운로드          ← 구현, 실행 검증 전
+[A] 현대카드(mycompany) → 월별 전표 PDF 다운로드          ← 실측 검증 완료 (2026-07, 48건)
      ↓
-[B] PDF 파싱 → 이름 변경 + manifest.csv                   ← 구현 완료
+[B] PDF 파싱 → 이름 변경 + manifest.csv                   ← 실측 검증 완료
      ↓  여기서 사람이 눈으로 확인한다
-[C] Concur → 날짜/금액 매칭 → PDF 첨부                    ← 매칭 구현, 첨부는 검증 전
+[C] Concur → 날짜/금액 매칭 → PDF 첨부                    ← 실측 검증 완료 (46건, 2건은 모호해 수동)
      ↓
-[D] 경비유형 · 참석자 · 목적 · 코멘트                     ← 구현, 실행 검증 전
+[D] 경비유형 · 참석자 · 목적 · 코멘트                     ← 실측 검증 완료
 ```
 
 **단계를 일부러 쪼갰다.** 통짜 스크립트로 만들면 어디서 깨졌는지 알 수 없고,
@@ -183,7 +183,19 @@ venv\Scripts\python -m src.fix_expenses --apply             :: 나머지 전부
 
 참석자 모달은 `?modal=attendees&context=entry` 로 주소로 열 수 있다.
 
-## 다음 단계
+## 매달 하는 일
+
+```bat
+venv\Scripts\python -m src.download_slips --from 2026.08.01 --to 2026.08.31
+venv\Scripts\python -m src.organize .\downloads --apply
+venv\Scripts\python -m src.attach_receipts --apply
+venv\Scripts\python -m src.fix_expenses --apply
+```
+
+사람이 하는 것은 현대카드 카드 인증과 Concur 로그인뿐이다.
+각 단계는 계획 출력(`--apply` 없이)으로 먼저 확인할 수 있고, 두 번 돌려도 안전하다.
+
+## 화면이 바뀌어 깨지면
 
 Concur도 Playwright 브라우저 자동화다. API는 **Client Web Services 라이선스
 별도 구매 + 회사 관리자 권한**이 필요해서 개인이 쓸 수 없다.
