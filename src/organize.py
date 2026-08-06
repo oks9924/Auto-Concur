@@ -22,10 +22,9 @@ from .slip_parser import Slip, SlipParseError, parse_slip
 # 숙박비 칸(입실·퇴실·숙박위치·Booking Channel)은 sheet가 정의를 갖고 있다.
 EDITABLE = list(sheet.EDITABLE)
 
-# 이 두 칸만 미리 채운다. 고를 값이 두 개뿐이고 거의 늘 같은 쪽이라, 빈 칸으로
-# 두면 매번 같은 값을 다시 고르게 된다. 다른 경우에만 드롭다운에서 바꾸면 된다.
-# 나머지(경비유형·목적·코멘트·참석자·날짜)는 비워둔다 - 짐작으로 채울 값이 아니다.
-PREFILL = {"숙박위치": "국내", "Booking Channel": "Others"}
+# 미리 채우지 않는다. Concur에 들어갈 값은 사람이 엑셀에서 정한다.
+# 숙박위치·Booking Channel만 예외인데, 그것도 값이 아니라 수식으로 넣는다
+# (sheet.TYPE_DEFAULTS). 경비유형을 숙박비로 고른 행에만 나타난다.
 
 # 엑셀에서 감출 칼럼. 지우지는 않는다 - 가맹점명은 후보가 여럿일 때 어느 경비인지
 # 가리는 데 쓰고, 파일명은 첨부할 PDF를 찾는 데, 승인번호는 다시 돌릴 때 사람이
@@ -127,9 +126,6 @@ def organize(folder: Path, apply: bool) -> int:
         row = _row(slip, target.name)
         # 사람이 엑셀에 적어둔 값이 있으면 그것이 우선이다. 없으면 빈 칸이다.
         row.update(kept.get(slip.approval_no) or dict.fromkeys(EDITABLE, ""))
-        for column, value in PREFILL.items():
-            if not row.get(column):
-                row[column] = value
         rows.append(row)
 
     rows.sort(key=lambda r: (r["거래일"], r["거래시각"]))

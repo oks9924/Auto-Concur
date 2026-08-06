@@ -145,6 +145,12 @@ def _width(header: str, values: list) -> float:
     return max(WIDTH_MIN, min(WIDTH_MAX, longest + WIDTH_PAD))
 
 
+# 유형을 고르면 따라 채워질 값. 사람이 유형을 고르기 전에는 무엇이 맞는지 알 수
+# 없으므로 값이 아니라 수식을 넣는다. 숙박비를 고르면 나타나고, 다른 유형이면
+# 빈 칸으로 남는다. 사람이 드롭다운에서 다른 값을 고르면 수식은 그 값으로 덮인다.
+TYPE_DEFAULTS = {LODGING_TYPE: {"숙박위치": "국내", "Booking Channel": "Others"}}
+
+
 def write_xlsx(columns: list[str], rows: list[dict], path: Path,
                choices: dict[str, list[str]], hidden: list[str] | None = None) -> None:
     """드롭다운으로 고를 칸에 목록을 걸어서 내보낸다.
@@ -187,6 +193,16 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path,
             cell = ws.cell(row=line, column=at + 1)
             cell.value = _as_date(cell.value)
             cell.number_format = DATE_FORMAT
+
+    type_col = get_column_letter(columns.index("경비유형") + 1)
+    for line in range(2, len(rows) + 2):
+        for type_name, defaults in TYPE_DEFAULTS.items():
+            for name, value in defaults.items():
+                if name not in columns:
+                    continue
+                cell = ws.cell(row=line, column=columns.index(name) + 1)
+                if cell.value in (None, ""):
+                    cell.value = f'=IF(${type_col}{line}="{type_name}","{value}","")'
 
     for name, options in choices.items():
         if name not in columns or not options:

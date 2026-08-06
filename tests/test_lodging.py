@@ -118,11 +118,66 @@ def test_식음료인데_참석자가_없으면_짚어준다():
     assert _gaps(Entry(), "내부 직원간 식음료") == ["참석자"]
 
 
-def test_숙박위치와_채널은_기본값이_들어간다():
-    # 고를 값이 두 개뿐이라 빈 칸으로 두면 매번 같은 값을 다시 고르게 된다.
-    from src import settings
-    from src.organize import PREFILL
+def test_숙박비를_고른_행에만_기본값이_나온다(tmp_path):
+    """유형을 고르기 전에는 무엇이 맞는지 모른다. 그래서 값이 아니라 수식을 넣는다."""
+    from openpyxl import load_workbook
 
+    from src import settings
+    from src.organize import MANIFEST_COLUMNS
+    from src.sheet import TYPE_DEFAULTS
+
+    base = dict.fromkeys(MANIFEST_COLUMNS, "")
+    rows = [base | {"거래일": "2026-08-02", "금액": "450000", "승인번호": "1"}]
+    path = tmp_path / "m.xlsx"
+    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS))
+
+    ws = load_workbook(path)["전표"]
+    셀 = ws.cell(row=2, column=MANIFEST_COLUMNS.index("숙박위치") + 1)
+    assert 셀.value == '=IF($M2="숙박비","국내","")'
+    셀 = ws.cell(row=2, column=MANIFEST_COLUMNS.index("Booking Channel") + 1)
+    assert 셀.value == '=IF($M2="숙박비","Others","")'
+
+    # 기본값은 드롭다운 목록 안에 있어야 한다. 아니면 사람이 고칠 수도 없다.
     고를수있는값 = settings.choices(settings.DEFAULTS)
-    assert PREFILL["숙박위치"] in 고를수있는값["숙박위치"]
-    assert PREFILL["Booking Channel"] in 고를수있는값["Booking Channel"]
+    assert TYPE_DEFAULTS["숙박비"]["숙박위치"] in 고를수있는값["숙박위치"]
+    assert TYPE_DEFAULTS["숙박비"]["Booking Channel"] in 고를수있는값["Booking Channel"]
+
+
+def test_사람이_적은_값은_수식으로_덮이지_않는다(tmp_path):
+    from openpyxl import load_workbook
+
+    from src import settings
+    from src.organize import MANIFEST_COLUMNS
+
+    base = dict.fromkeys(MANIFEST_COLUMNS, "")
+    rows = [base | {"거래일": "2026-08-02", "금액": "450000", "승인번호": "1", "숙박위치": "해외"}]
+    path = tmp_path / "m.xlsx"
+    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS))
+
+    ws = load_workbook(path)["전표"]
+    assert ws.cell(row=2, column=MANIFEST_COLUMNS.index("숙박위치") + 1).value == "해외"
+
+
+def test_칸이_비어_있으면_설정_기본값을_쓴다(tmp_path):
+    """엑셀 수식이 계산되지 않은 채 저장되면 빈 칸으로 읽힌다. 그때도 채워야 한다."""
+    import csv
+
+    from src import fix_expenses as fx
+    from src import settings
+    from src.attach_receipts import Row
+
+    cols = ["거래일", "금액", "승인번호", "경비유형", "입실날짜", "퇴실날짜", "숙박위치",
+            "Booking Channel", "비즈니스목적", "코멘트", "참석자"]
+    path = tmp_path / "m.csv"
+    with path.open("w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        w.writerow({"거래일": "2026-08-02", "금액": "450000", "승인번호": "1",
+                    "경비유형": "숙박비", "입실날짜": "2026-08-02", "퇴실날짜": "2026-08-08",
+                    "숙박위치": "", "Booking Channel": "", "비즈니스목적": "",
+                    "코멘트": "", "참석자": ""})
+
+    screen = [Row(0, date(2026, 8, 2), 450000, "숙박비", "ID1", "숙박비", "HOTEL")]
+    plans, _, _ = fx.plans_from_sheet(settings.DEFAULTS, screen, path, 1)
+    stay = plans[0][0].lodging
+    assert stay.location == "국내" and stay.channel == "Others"

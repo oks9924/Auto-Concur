@@ -873,7 +873,14 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
             code, label = settings.code_for(cfg, entry.type_name), entry.type_name
         lodging = None
         if entry.checkin and entry.checkout:
-            lodging = Lodging(entry.checkin, entry.checkout, entry.location, entry.channel)
+            # 작업지의 수식이 계산되지 않은 채 저장되면 빈 칸으로 읽힌다.
+            # 그때는 설정의 기본값을 쓴다 - 엑셀이 보여주던 값과 같다.
+            lodging = Lodging(
+                entry.checkin,
+                entry.checkout,
+                entry.location or cfg.get("lodging_location_default", ""),
+                entry.channel or cfg.get("booking_channel_default", ""),
+            )
         plan = Plan(row, code, label, entry.purpose, entry.comment, entry.attendee, lodging)
 
         # 숙박비인데 날짜가 없으면 상세를 못 채운다. 코멘트만 넣고 지나가면

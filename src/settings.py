@@ -57,6 +57,10 @@ DEFAULTS = {
     "expense_type_codes": EXPENSE_TYPE_CODES,
     "lodging_locations": LODGING_LOCATIONS,
     "booking_channels": BOOKING_CHANNELS,
+    # 작업지의 그 칸이 비어 있을 때 쓸 값. 엑셀 수식이 계산되지 않은 채로
+    # 저장되면 빈 칸으로 읽히는데, 그때도 숙박비는 이 값으로 채운다.
+    "lodging_location_default": "국내",
+    "booking_channel_default": "Others",
 }
 
 # 작업지에서 드롭다운으로만 고르게 할 칸. {칼럼: 설정키}
