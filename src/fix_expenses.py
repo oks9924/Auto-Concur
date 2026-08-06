@@ -343,9 +343,14 @@ DIALOG_BUTTON_JS = (
   const dlg = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
     .find(d => d.getBoundingClientRect().width > 0);
   if (!dlg) return null;
-  const btn = [...dlg.querySelectorAll('button')]
-    .find(b => want.includes((b.innerText || '').trim()));
-  return mark(btn);
+  const buttons = [...dlg.querySelectorAll('button')];
+  const text = (b) => (b.innerText || '').trim();
+  // 정확히 맞는 것을 먼저 본다. 없으면 '아니'로 시작하는 것을 찾는다 -
+  // 화면 문구가 '아니오'인지 '아니요'인지에 걸려 못 닫은 적이 있다.
+  return mark(
+    buttons.find(b => want.includes(text(b)))
+    || buttons.find(b => /^(아니|No\b)/i.test(text(b)))
+  );
 }"""
 )
 
@@ -361,7 +366,7 @@ DUMP_DIALOG_JS = """
 # '아니오'를 누르면 리포트 목록으로 돌아가버린다(실측). 저장 자체는 이미 됐으니
 # 값이 날아가지는 않지만, 화면이 바뀌므로 다음 단계는 경비를 다시 열고 시작해야
 # 한다. 그래서 이 창을 닫은 뒤에는 늘 주소로 상세를 다시 연다.
-DIALOG_DISMISS = "아니오,No,닫기,취소"
+DIALOG_DISMISS = "아니요,아니오,No,닫기,취소"
 
 LABEL_LODGING = "숙박비"
 RECUR_DIFFERENT_DAILY = "일일 금액 다름"
