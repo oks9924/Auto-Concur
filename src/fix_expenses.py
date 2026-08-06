@@ -135,13 +135,32 @@ PICK_TYPE_JS = """
 }
 """
 
-# 참석자 모달: 검색창에 넣고, '새 참석자 생성'이 아닌 첫 후보를 고른다.
+# 참석자 모달. 콤보박스(텍스트 '참석자 추가')를 눌러야 입력창이 생긴다.
+# 입력창은 콤보박스의 자식이 아니라 같은 form-field 안의 형제다.
+ATTENDEE_COMBO_READY_JS = (
+    "() => {" + FIND_COMBO_FN + " return !!findCombo(/이름 또는 기업 이메일/); }"
+)
+
+OPEN_ATTENDEE_JS = (
+    "() => {"
+    + FIND_COMBO_FN
+    + """
+  const cb = findCombo(/이름 또는 기업 이메일/);
+  if (!cb) return false;
+  cb.click();
+  return true;
+}"""
+)
+
 ATTENDEE_INPUT_JS = (
     "() => {"
     + FIND_COMBO_FN
     + """
   const cb = findCombo(/이름 또는 기업 이메일/);
-  const el = cb && cb.querySelector('input');
+  if (!cb) return null;
+  const wrap = cb.closest('[class*="form-field"]') || cb.parentElement;
+  const el = (wrap && wrap.querySelector('input:not([type=hidden])'))
+          || cb.querySelector('input');
   if (!el) return null;
   if (!el.id) el.id = 'auto-concur-attendee-input';
   return '#' + CSS.escape(el.id);
@@ -285,7 +304,10 @@ def _add_attendee(page, report_url: str, expense_id: str) -> bool:
         wait_until="domcontentloaded",
     )
     try:
-        _wait_js(page, ATTENDEE_INPUT_JS, "참석자 검색창", timeout=30000)
+        _wait_js(page, ATTENDEE_COMBO_READY_JS, "참석자 검색 콤보박스", timeout=30000)
+        # 눌러야 입력창이 생긴다. 콤보박스 자체에는 input이 없다.
+        _eval(page, OPEN_ATTENDEE_JS)
+        _wait_js(page, ATTENDEE_INPUT_JS, "참석자 검색 입력창", timeout=15000)
     except AttachError as exc:
         dump = _dump_combos(page, "attendee")
         raise AttachError(f"{exc}" + (f" (화면의 콤보박스 목록: {dump})" if dump else "")) from None
