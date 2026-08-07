@@ -438,7 +438,16 @@ SAVE_BUTTON_JS = (
     + """
   const buttons = [...document.querySelectorAll('button')].filter(b => {
     const r = b.getBoundingClientRect();
-    return r.width > 0 && r.height > 0 && !b.disabled;
+    if (!(r.width > 0 && r.height > 0) || b.disabled) return false;
+    // 화면 밖에 놓인 버튼은 크기가 있어도 누를 수 없다. 실측: '경비 저장'과
+    // 같은 글자를 가진 exp-save-expense-hidden 버튼이 뷰포트 밖에 있어서
+    // 30초를 기다리다 실패했다.
+    if (r.bottom < 0 || r.right < 0) return false;
+    if (r.top > innerHeight || r.left > innerWidth) return false;
+    const cls = typeof b.className === 'string' ? b.className : '';
+    if (/hidden/i.test(cls)) return false;
+    if (/hidden/i.test(b.getAttribute('data-nuiexp') || '')) return false;
+    return true;
   });
   const text = (b) => (b.innerText || '').trim();
   for (const want of csv.split(',')) {
@@ -746,30 +755,114 @@ def _open_tab(page, selector: str, what: str) -> None:
     page.wait_for_timeout(800)
 
 
-ITEMIZATION_READY_JS = (
-    "() => !!document.querySelector('[name=\"recurrence\"]')"
-    " || [...document.querySelectorAll('input')]"
-    ".some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.name || ''))"
+# 항목별 명세 탭은 세 가지 얼굴이 있다(실측).
+#   1) 입력 폼   - '반복' 콤보박스나 객실 요금 칸이 있다. 바로 채운다.
+#   2) 빈 화면   - '항목별 명세 없음' 그림과 '항목별 명세 추가' 버튼만 있다.
+#                  버튼을 눌러야 1)이 나온다.
+#   3) 이미 있음 - 명세 표가 그려져 있다. 건드리지 않는다.
+# 2)를 1)로 잘못 보고 '반복'을 25초 동안 찾다 실패한 적이 있다. 그래서 '무엇이
+# 보이는가'를 먼저 읽고 나서 무엇을 할지 정한다.
+EMPTY_ITEMIZATION_TEXT = "항목별 명세 없음"
+ADD_ITEMIZATION_TEXT = "항목별 명세 추가"
+
+ITEMIZATION_STATE_JS = (
+    """
+(() => {
+  const rates = [...document.querySelectorAll('input')]
+    .some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.getAttribute('name') || ''));
+  const add = [...document.querySelectorAll('button')].some(b => {
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && (b.innerText || '').includes('"""
+    + ADD_ITEMIZATION_TEXT
+    + """');
+  });
+  return {
+    form: rates || !!document.querySelector('[name="recurrence"]'),
+    add: add,
+    empty: (document.body.innerText || '').includes('"""
+    + EMPTY_ITEMIZATION_TEXT
+    + """'),
+  };
+})
+"""
+)
+
+# '추가' 버튼은 명세가 이미 있을 때도 있다(한 건 더 넣으라고). 그래서 이 버튼을
+# 누르는 것은 화면이 '항목별 명세 없음'이라고 말할 때뿐이다 - 잘못 누르면 필요
+# 없는 명세가 하나 더 생긴다.
+ADD_ITEMIZATION_JS = (
+    "() => {"
+    + MARK_FN
+    + """
+  const buttons = [...document.querySelectorAll('button')].filter(b => {
+    const r = b.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && !b.disabled;
+  });
+  return mark(buttons.find(b => (b.innerText || '').includes('"""
+    + ADD_ITEMIZATION_TEXT
+    + """')));
+}"""
+)
+
+# 어느 얼굴인지 알 수 있을 때까지 기다린다. '추가' 버튼은 2)와 3) 양쪽에 있어서
+# 탭이 그려졌다는 신호로 쓰기 좋다.
+ITEMIZATION_SETTLED_JS = (
+    "() => { const s = (" + ITEMIZATION_STATE_JS.strip() + ")(); return s.form || s.add || s.empty; }"
 )
 
 
-def _itemization_locked(page) -> str | None:
-    """손댈 수 없는 명세면 그 이유를, 채울 수 있으면 None을 준다.
+def itemization_step(state: dict) -> str:
+    """화면 상태를 보고 다음에 할 일을 정한다: 'fill' / 'add' / 'skip'.
 
-    이미 입력된 명세는 요금 칸이 수정 불가다. 사람이 넣어둔 값을 우리가 다시
-    쓸 이유도 없다. 그때는 건드리지 않고 지나간다.
+    '추가' 버튼만으로 판단하면 안 된다. 명세가 이미 있을 때도 (한 건 더 넣으라고)
+    같은 버튼이 있어서, 누르면 필요 없는 명세가 하나 더 생긴다. 누르는 것은
+    화면이 '항목별 명세 없음'이라고 말할 때뿐이다.
+    """
+    if state.get("form"):
+        return "fill"
+    if state.get("empty"):
+        return "add"
+    return "skip"
+
+
+def _itemization_ready(page) -> str | None:
+    """객실 요금을 채울 수 있는 상태로 만든다. 못 채우면 그 이유를 돌려준다.
+
+    빈 화면이면 '항목별 명세 추가'를 눌러 입력 폼을 띄운다. 이미 명세가
+    들어가 있으면 건드리지 않는다 - 사람이 넣어둔 값을 우리가 다시 쓸 이유가
+    없고, 요금 칸도 수정 불가다.
     """
     try:
-        # 탭을 눌렀다고 바로 그려지지 않는다. 둘 중 하나가 나타날 때까지 기다린다.
-        # 오래 기다릴 이유는 없다 - 이미 명세가 있는 건은 요금 칸도 '반복'도
-        # 아예 없어서, 기다려봐야 그대로다. 20초를 기다렸더니 멈춘 것처럼 보였다.
-        _wait_js(page, ITEMIZATION_READY_JS, "항목별 명세 화면", timeout=8000)
+        _wait_js(page, ITEMIZATION_SETTLED_JS, "항목별 명세 화면", timeout=15000)
     except AttachError:
+        dump = _dump(page, "itemization-panel", DUMP_BUTTONS_JS)
+        raise AttachError(
+            "항목별 명세 화면이 그려지지 않았습니다"
+            + (f" (화면의 버튼 목록: {dump})" if dump else "")
+        ) from None
+
+    step = itemization_step(_eval(page, ITEMIZATION_STATE_JS))
+    if step == "skip":
         return "항목별 명세가 이미 있어 건드리지 않았습니다"
+    if step == "add":
+        _click_marked(page, ADD_ITEMIZATION_JS, f"'{ADD_ITEMIZATION_TEXT}' 버튼")
+        try:
+            _wait_js(
+                page,
+                "() => (" + ITEMIZATION_STATE_JS.strip() + ")().form",
+                "항목별 명세 입력 화면",
+                timeout=20000,
+            )
+        except AttachError:
+            dump = _dump(page, "itemization-panel", DUMP_BUTTONS_JS)
+            raise AttachError(
+                f"'{ADD_ITEMIZATION_TEXT}'를 눌렀는데 입력 화면이 나오지 않았습니다"
+                + (f" (화면의 버튼 목록: {dump})" if dump else "")
+            ) from None
 
     cells = _eval(page, ROOM_RATE_INPUTS_JS)
     if not cells:
-        return None  # 아직 표가 없다. '반복'을 골라야 생긴다
+        return None  # 폼은 떴고 표는 '반복'을 골라야 생긴다
     if all(c["locked"] for c in cells):
         return "항목별 명세가 수정 불가라 건드리지 않았습니다"
     if all(c["value"] for c in cells):
@@ -1065,11 +1158,10 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
     # 다 넣고 한 번만 저장한다.
     _open_tab(page, TAB_ITEMIZATION, "항목별 명세")
 
-    # 이미 입력된 명세인지 먼저 본다. 그때는 요금 칸이 수정 불가라 '반복'을
-    # 고를 수도 없다. 순서를 거꾸로 했다가, 있지도 않은 콤보박스를 25초 동안
-    # 찾고 실패했다. 손댈 수 없으면 경비 저장으로 빠져나와 다음 경비로 간다.
+    # 화면이 어떤 상태인지 먼저 읽는다. 비어 있으면 '항목별 명세 추가'를 눌러
+    # 입력 폼을 띄우고, 이미 명세가 있으면 손대지 않고 경비 저장으로 빠져나온다.
     later = bool(parse_attendees(plan.attendee))  # 뒤에 참석자를 넣을 것이 있나
-    locked = _itemization_locked(page)
+    locked = _itemization_ready(page)
     if locked:
         done.append(locked)
         _save_expense(page, plan.row, report_url, reopen=later)

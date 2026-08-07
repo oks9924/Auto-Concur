@@ -96,6 +96,50 @@ def test_엑셀에서_8슬래시2로_적어도_읽는다(tmp_path):
     assert loaded.location == "울산" and loaded.channel == "직접 예약"
 
 
+def test_빈_항목별_명세는_추가_버튼을_누른다():
+    """'항목별 명세 없음' 화면에는 '반복' 콤보박스가 없다. 버튼부터 눌러야 생긴다."""
+    from src.fix_expenses import itemization_step
+
+    화면 = {"form": False, "add": True, "empty": True}
+    assert itemization_step(화면) == "add"
+
+
+def test_이미_있는_명세는_추가를_누르지_않는다():
+    """명세가 있을 때도 '추가' 버튼은 있다. 누르면 필요 없는 명세가 하나 더 생긴다."""
+    from src.fix_expenses import itemization_step
+
+    화면 = {"form": False, "add": True, "empty": False}
+    assert itemization_step(화면) == "skip"
+
+
+def test_입력_폼이_떠_있으면_바로_채운다():
+    from src.fix_expenses import itemization_step
+
+    assert itemization_step({"form": True, "add": True, "empty": False}) == "fill"
+
+
+def test_화면_상태는_보이는_글자로_읽는다():
+    """셀렉터를 추측하지 않는다. 화면에 뜨는 글자가 근거다."""
+    from src.fix_expenses import (
+        ADD_ITEMIZATION_JS,
+        ADD_ITEMIZATION_TEXT,
+        EMPTY_ITEMIZATION_TEXT,
+        ITEMIZATION_STATE_JS,
+    )
+
+    assert EMPTY_ITEMIZATION_TEXT in ITEMIZATION_STATE_JS
+    assert ADD_ITEMIZATION_TEXT in ITEMIZATION_STATE_JS
+    assert ADD_ITEMIZATION_TEXT in ADD_ITEMIZATION_JS
+
+
+def test_숨은_저장_버튼은_고르지_않는다():
+    """실측: 화면 밖의 exp-save-expense-hidden 이 걸려 30초를 기다리다 실패했다."""
+    from src.fix_expenses import SAVE_BUTTON_JS
+
+    assert "hidden" in SAVE_BUTTON_JS
+    assert "innerHeight" in SAVE_BUTTON_JS  # 뷰포트 밖도 거른다
+
+
 def test_숙박비인데_날짜가_없으면_짚어준다():
     # 코멘트만 넣고 지나가면 다 된 것처럼 보인다. 빠진 값을 알려줘야 한다.
     from src.fix_expenses import _gaps
