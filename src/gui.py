@@ -81,15 +81,13 @@ class App(tk.Tk):
         run = ttk.LabelFrame(self, text="실행")
         run.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
 
-        self.apply = tk.BooleanVar(value=False)
+        # 버튼을 누르면 항상 실제로 반영한다. 창에서 계획만 보는 일이 없어서
+        # 체크박스는 매번 켜는 손이 하나 더 가는 것뿐이었다.
         self.limit = tk.StringVar(value="")
         opts = ttk.Frame(run)
         opts.grid(row=0, column=0, sticky="w", **pad)
-        ttk.Checkbutton(
-            opts, text="실제로 반영합니다 (체크하지 않으면 계획만 보여 드립니다)", variable=self.apply
-        ).pack(side="left")
-        ttk.Label(opts, text="   앞에서 N건만:").pack(side="left")
-        ttk.Entry(opts, textvariable=self.limit, width=6).pack(side="left")
+        ttk.Label(opts, text="앞에서 N건만 (비워두면 전부):").pack(side="left")
+        ttk.Entry(opts, textvariable=self.limit, width=6).pack(side="left", padx=6)
 
         steps = [
             ("A. 전표 다운로드", self.step_download),
@@ -125,9 +123,7 @@ class App(tk.Tk):
         return True
 
     def _common(self) -> list[str]:
-        args = []
-        if self.apply.get():
-            args.append("--apply")
+        args = ["--apply"]
         if self.limit.get().strip():
             args += ["--limit", self.limit.get().strip()]
         return args
@@ -143,10 +139,7 @@ class App(tk.Tk):
 
     def step_organize(self) -> None:
         self.save()
-        args = ["src.organize", self.cfg["downloads_dir"]]
-        if self.apply.get():
-            args.append("--apply")
-        _run(args)
+        _run(["src.organize", self.cfg["downloads_dir"], "--apply"])
 
     def step_update(self) -> None:
         """첨부와 입력을 한 세션에서 한다. 로그인을 두 번 하지 않아도 된다."""
