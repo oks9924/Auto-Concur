@@ -60,3 +60,72 @@ def test_이름이_비슷해도_다른_사람은_안_맞는다():
     # kyungsik 과 kyungmin 은 다른 사람이다
     assert not name_matches("kyungsik.oh", "Lee Kyungmin")
     assert not name_matches("kyungmin.lee", "Oh Kyungsik")
+
+
+def test_참석자가_비어_있으면_설정값을_쓴다(tmp_path):
+    """작업지에 수식을 넣으면 이름을 덧붙이기 어렵다. 빈 칸으로 두고 여기서 채운다."""
+    import csv
+
+    from src import fix_expenses as fx
+    from src import settings
+    from src.attach_receipts import Row
+
+    cols = ["거래일", "금액", "승인번호", "경비유형", "참석자", "비즈니스목적", "코멘트"]
+    path = tmp_path / "m.csv"
+    with path.open("w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        w.writerow({"거래일": "2026-07-02", "금액": "13500", "승인번호": "1",
+                    "경비유형": "내부 직원간 식음료", "참석자": "",
+                    "비즈니스목적": "", "코멘트": ""})
+
+    cfg = {**settings.DEFAULTS, "attendee_default": "kyungsik.oh"}
+    screen = [Row(0, date(2026, 7, 2), 13500, "", "ID1", "환급 불가", "CAFE")]
+    plans, gaps, _ = fx.plans_from_sheet(cfg, screen, path, 1)
+    assert plans[0][0].attendee == "kyungsik.oh"
+    assert not gaps  # 설정으로 채워지므로 '빠진 값'이 아니다
+
+
+def test_작업지에_적은_참석자가_우선이다(tmp_path):
+    import csv
+
+    from src import fix_expenses as fx
+    from src import settings
+    from src.attach_receipts import Row
+
+    cols = ["거래일", "금액", "승인번호", "경비유형", "참석자", "비즈니스목적", "코멘트"]
+    path = tmp_path / "m.csv"
+    with path.open("w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        w.writerow({"거래일": "2026-07-02", "금액": "13500", "승인번호": "1",
+                    "경비유형": "내부 직원간 식음료",
+                    "참석자": "kyungsik.oh, hong.gildong",
+                    "비즈니스목적": "", "코멘트": ""})
+
+    cfg = {**settings.DEFAULTS, "attendee_default": "kyungsik.oh"}
+    screen = [Row(0, date(2026, 7, 2), 13500, "", "ID1", "환급 불가", "CAFE")]
+    plans, _, _ = fx.plans_from_sheet(cfg, screen, path, 1)
+    assert fx.parse_attendees(plans[0][0].attendee) == ["kyungsik.oh", "hong.gildong"]
+
+
+def test_식음료가_아니면_설정값을_넣지_않는다(tmp_path):
+    import csv
+
+    from src import fix_expenses as fx
+    from src import settings
+    from src.attach_receipts import Row
+
+    cols = ["거래일", "금액", "승인번호", "경비유형", "참석자", "비즈니스목적", "코멘트"]
+    path = tmp_path / "m.csv"
+    with path.open("w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols)
+        w.writeheader()
+        w.writerow({"거래일": "2026-07-02", "금액": "13500", "승인번호": "1",
+                    "경비유형": "주차비", "참석자": "",
+                    "비즈니스목적": "", "코멘트": "출장 주차"})
+
+    cfg = {**settings.DEFAULTS, "attendee_default": "kyungsik.oh"}
+    screen = [Row(0, date(2026, 7, 2), 13500, "", "ID1", "환급 불가", "PARK")]
+    plans, _, _ = fx.plans_from_sheet(cfg, screen, path, 1)
+    assert plans[0][0].attendee == ""

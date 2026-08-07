@@ -65,8 +65,11 @@ CHOICE_COLUMNS = {
 # 경비유형을 고르면 그 행에 따라 채워질 값. {유형: {칼럼: 설정키}}
 # 값이 아니라 엑셀 수식으로 들어간다 - 작업지를 만드는 시점에는 그 경비가
 # 무슨 유형인지 알 수 없기 때문이다(유형은 사람이 나중에 고른다).
+#
+# 참석자는 여기 넣지 않는다. 수식이 들어 있으면 사람이 이름을 덧붙이기 어렵다.
+# 그 칸은 빈 칸으로 두고, 비어 있으면 설정의 참석자를 쓴다(_default_attendee).
+# 그래야 한 명 더 넣고 싶을 때 그냥 쉼표로 적으면 된다.
 TYPE_DEFAULT_KEYS = {
-    "내부 직원간 식음료": {"참석자": "attendee_default"},
     "숙박비": {
         "숙박위치": "lodging_location_default",
         "Booking Channel": "booking_channel_default",

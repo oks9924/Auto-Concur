@@ -1063,6 +1063,20 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
     return done
 
 
+def _attendee_for(cfg: dict, entry, label: str) -> str:
+    """작업지의 참석자. 식음료인데 비어 있으면 설정에 적어둔 사람을 쓴다.
+
+    작업지에 수식을 넣어두면 이름을 덧붙이기 어렵다. 그래서 그 칸은 빈 칸으로
+    두고 여기서 채운다. 다른 사람이거나 여러 명이면 엑셀에 쉼표로 적으면 되고,
+    적힌 것이 있으면 그것이 우선이다.
+    """
+    if entry.attendee:
+        return entry.attendee
+    if LABEL_MEAL in (entry.type_name or label or ""):
+        return cfg.get("attendee_default", "") or ""
+    return ""
+
+
 def _gaps(entry, label: str) -> list[str]:
     """작업지에 빠진 값. 채우지 않고 지나가면 사람이 알아채기 어렵다."""
     holes = []
@@ -1075,6 +1089,14 @@ def _gaps(entry, label: str) -> list[str]:
             holes.append("Booking channel")
     elif LABEL_MEAL in (label or "") and not entry.attendee:
         holes.append("참석자")
+    return holes
+
+
+def _gaps_with_defaults(cfg: dict, entry, label: str) -> list[str]:
+    """설정으로 채워지는 것은 빠진 값이 아니다."""
+    holes = _gaps(entry, label)
+    if "참석자" in holes and cfg.get("attendee_default"):
+        holes.remove("참석자")
     return holes
 
 
@@ -1102,11 +1124,12 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
                 entry.location or cfg.get("lodging_location_default", ""),
                 entry.channel or cfg.get("booking_channel_default", ""),
             )
-        plan = Plan(row, code, label, entry.purpose, entry.comment, entry.attendee, lodging)
+        plan = Plan(row, code, label, entry.purpose, entry.comment,
+                    _attendee_for(cfg, entry, label), lodging)
 
         # 숙박비인데 날짜가 없으면 상세를 못 채운다. 코멘트만 넣고 지나가면
         # 다 된 것처럼 보이므로 여기서 짚어준다.
-        holes = _gaps(entry, entry.type_name or label)
+        holes = _gaps_with_defaults(cfg, entry, entry.type_name or label)
         if holes:
             gaps.append((entry, holes))
         if plan.type_code or plan.fill_meal or plan.lodging:
