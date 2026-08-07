@@ -6,6 +6,8 @@
 
 1. 이 폴더를 통째로 받는다 (zip을 풀거나 `git clone`).
 2. **`setup.bat` 을 더블클릭한다.** Python이 없으면 설치까지 해 준다. 몇 분 걸린다.
+   (배치 파일 안내는 영어다. cmd가 콘솔 코드페이지로 파일을 읽어서, 한글을 넣으면
+   PC마다 깨지고 깨진 글자를 명령으로 실행해버린다. 그래서 ASCII만 쓴다.)
    - 회사 네트워크가 막아서 실패하면 안내가 뜬다. 그때는
      [python.org](https://www.python.org/downloads/) 에서 직접 설치하고
      (**'Add python.exe to PATH' 체크**) `setup.bat` 을 다시 돌린다.
