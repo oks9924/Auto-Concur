@@ -170,6 +170,56 @@ def test_숨은_저장_버튼은_뒤로_밀되_버리지_않는다():
     assert "return found.map" in SAVE_BUTTONS_JS  # 후보를 전부 돌려준다
 
 
+def _숙박흐름(monkeypatch, *, 날짜바뀜, 위치바뀜, 명세):
+    """_apply_lodging 을 화면 없이 돌린다. 어디를 눌렀는지만 본다."""
+    from src import fix_expenses as fx
+    from src.attach_receipts import Row
+
+    한일 = []
+    monkeypatch.setattr(fx, "_open_tab", lambda p, sel, what: 한일.append(f"탭:{what}"))
+    monkeypatch.setattr(fx, "_set_date_range", lambda p, a, b: 날짜바뀜)
+    monkeypatch.setattr(fx, "_pick_from_combo", lambda p, h, w, what: 위치바뀜)
+    monkeypatch.setattr(fx, "_itemization_ready", lambda p: 명세)
+    monkeypatch.setattr(fx, "_fill_room_rates", lambda p, a: "요금")
+    monkeypatch.setattr(fx, "needs_recurrence", lambda n, f: False)
+    monkeypatch.setattr(fx, "_save_expense",
+                        lambda p, r, u, labels=fx.SAVE_DETAIL, reopen=True: 한일.append(f"저장:{labels}"))
+
+    plan = fx.Plan(
+        row=Row(0, date(2026, 7, 5), 711_620, "숙박비", "ID1", "숙박비", "HOTEL"),
+        type_code=None, type_label="숙박비", purpose="", comment="", attendee="",
+        lodging=Lodging(date(2026, 7, 5), date(2026, 7, 6), "국내", "Others"),
+    )
+    fx._apply_lodging(None, plan, "http://x", changed=False)
+    return 한일
+
+
+def test_바뀐_것이_없으면_저장하지_않는다(monkeypatch):
+    """실측 2026-07-05 711,620원: 다 되어 있는 건에서 저장 버튼만 찾다 실패했다."""
+    한일 = _숙박흐름(monkeypatch, 날짜바뀜=False, 위치바뀜=False, 명세="이미 있음")
+    assert not [x for x in 한일 if x.startswith("저장")]
+
+
+def test_명세가_있어도_상세를_바꿨으면_저장한다(monkeypatch):
+    """저장은 상세 정보 탭으로 돌아가서 한다.
+
+    항목별 명세 탭에는 '경비 저장'이 화면 밖에만 있는 화면이 있다. 거기 보이는
+    '항목별 명세 저장'을 누르면 열려 있는 명세 입력 폼이 저장돼버린다.
+    """
+    from src.fix_expenses import SAVE_DETAIL
+
+    한일 = _숙박흐름(monkeypatch, 날짜바뀜=True, 위치바뀜=False, 명세="이미 있음")
+    assert 한일[-2:] == ["탭:상세 정보", f"저장:{SAVE_DETAIL}"]
+
+
+def test_명세를_채웠으면_항목별_명세_저장으로_저장한다(monkeypatch):
+    from src.fix_expenses import SAVE_ITEMIZATION
+
+    한일 = _숙박흐름(monkeypatch, 날짜바뀜=False, 위치바뀜=False, 명세=None)
+    assert 한일[-1] == f"저장:{SAVE_ITEMIZATION}"
+    assert "항목별 명세 저장" in SAVE_ITEMIZATION
+
+
 def test_숙박비인데_날짜가_없으면_짚어준다():
     # 코멘트만 넣고 지나가면 다 된 것처럼 보인다. 빠진 값을 알려줘야 한다.
     from src.fix_expenses import _gaps

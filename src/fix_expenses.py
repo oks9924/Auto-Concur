@@ -642,15 +642,15 @@ def _set_field(page, selector: str, value: str, what: str, required: bool = True
     return True
 
 
-def _pick_from_combo(page, hint: str, want: str, what: str) -> None:
-    """콤보박스를 찾아 열고, 보이는 글자로 옵션을 고른다.
+def _pick_from_combo(page, hint: str, want: str, what: str) -> bool:
+    """콤보박스를 찾아 열고, 보이는 글자로 옵션을 고른다. 바꿨으면 True.
 
     hint는 필드 id(custom10 같은 것)이거나 라벨의 일부다. id를 먼저 보고
     없으면 라벨로 찾는다. 정책이 바뀌어 번호가 달라져도 라벨로 걸린다.
     """
     # 이미 그 값이면 건드리지 않는다. 잠겨 있는 콤보박스를 눌러 실패하는 일도 막는다.
     if want in (_eval(page, COMBO_VALUE_JS, hint) or ""):
-        return
+        return False
 
     try:
         _wait_js(page, COMBO_READY_JS, f"{what} 콤보박스", arg=hint, timeout=25000)
@@ -677,13 +677,18 @@ def _pick_from_combo(page, hint: str, want: str, what: str) -> None:
     shown = _eval(page, COMBO_VALUE_JS, hint) or ""
     if want not in shown:
         raise AttachError(f"{what}이(가) '{want}' 로 바뀌지 않았습니다 (화면: '{shown.strip()}')")
+    return True
 
 
-def _set_date_range(page, checkin: date, checkout: date) -> None:
-    """'날짜 범위' 한 칸에 입실과 퇴실을 함께 넣는다.
+def _set_date_range(page, checkin: date, checkout: date) -> bool:
+    """'날짜 범위' 한 칸에 입실과 퇴실을 함께 넣는다. 바꿨으면 True.
 
     입실·퇴실이 따로 있는 게 아니라 한 입력이다. 화면이 알려주는 형식은
     'YYYY-MM-DD - YYYY-MM-DD' 라 그대로 친다. 달력을 눌러 고르는 것보다 확실하다.
+
+    이미 그 날짜면 건드리지 않는다. 다시 돌릴 때 같은 값을 또 쳐 넣으면
+    바뀐 것이 없는데도 저장을 해야 하고, 저장할 일이 없는 화면에서 저장
+    버튼을 찾다가 실패한다.
     """
     want = f"{checkin:%Y-%m-%d} - {checkout:%Y-%m-%d}"
     try:
@@ -694,6 +699,10 @@ def _set_date_range(page, checkin: date, checkout: date) -> None:
             "날짜 범위 입력칸을 찾지 못했습니다"
             + (f" (화면의 입력 목록: {dump})" if dump else "")
         ) from None
+
+    already = page.input_value(DATE_RANGE_FIELD).strip()
+    if checkin.strftime("%Y-%m-%d") in already and checkout.strftime("%Y-%m-%d") in already:
+        return False
 
     page.click(DATE_RANGE_FIELD)
     page.keyboard.press("Control+A")
@@ -706,6 +715,7 @@ def _set_date_range(page, checkin: date, checkout: date) -> None:
     shown = page.input_value(DATE_RANGE_FIELD).strip()
     if checkin.strftime("%Y-%m-%d") not in shown or checkout.strftime("%Y-%m-%d") not in shown:
         raise AttachError(f"날짜 범위가 '{want}' 로 들어가지 않았습니다 (화면: '{shown}')")
+    return True
 
 
 def _dismiss_dialog(page, wait_ms: int = 2500) -> str | None:
@@ -1162,7 +1172,8 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
 
     if plan.lodging:
         # 숙박비는 탭을 오가야 해서 저장 시점이 따로다. 안에서 저장까지 한다.
-        done += _apply_lodging(page, plan, report_url)
+        # 여기까지 바꾼 것(유형·코멘트)도 같이 저장되도록 넘겨준다.
+        done += _apply_lodging(page, plan, report_url, changed=fields_changed)
 
     # 참석자를 넣고 나서 한 번에 저장한다. 참석자가 빈 채로 저장하면 Concur가
     # '필수 정보가 누락되었습니다' 창을 띄우고, 그 창을 닫으면 리포트로 튕겨
@@ -1179,27 +1190,31 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
     return ", ".join(done) if done else "이미 되어 있음"
 
 
-def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
-    """숙박비 상세와 항목별 명세를 채운다.
+def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> list[str]:
+    """숙박비 상세와 항목별 명세를 채운다. 저장까지 여기서 한다.
 
     순서를 지켜야 한다. 날짜 범위를 먼저 넣고 저장해야 항목별 명세 표가 그
     날짜로 만들어진다. 실측: 범위를 2026-08-02 - 2026-08-07 로 넣으면 표는
     8/2부터 8/6까지 5행이 생겼다. 즉 행 하나가 하룻밤이고 퇴실일은 빠진다.
+
+    changed는 이 함수에 오기 전에(유형·코멘트) 이미 바꾼 것이 있는지다.
+    바뀐 것이 하나도 없으면 저장하지 않는다.
     """
     lodging = plan.lodging
     amounts = nightly_split(plan.row.amount or 0, lodging.nights)
     done = []
 
     _open_tab(page, TAB_DETAILS, "상세 정보")
-    _set_date_range(page, lodging.checkin, lodging.checkout)
-    done.append(f"숙박 {_md(lodging.checkin)}~{_md(lodging.checkout)} ({lodging.nights}박)")
+    if _set_date_range(page, lodging.checkin, lodging.checkout):
+        changed = True
+        done.append(f"숙박 {_md(lodging.checkin)}~{_md(lodging.checkout)} ({lodging.nights}박)")
 
-    if lodging.location:
-        _pick_from_combo(page, HINT_LOCATION, lodging.location, "숙박 위치")
+    if lodging.location and _pick_from_combo(page, HINT_LOCATION, lodging.location, "숙박 위치"):
         done.append("숙박 위치")
-    if lodging.channel:
-        _pick_from_combo(page, HINT_CHANNEL, lodging.channel, "Booking channel")
+        changed = True
+    if lodging.channel and _pick_from_combo(page, HINT_CHANNEL, lodging.channel, "Booking channel"):
         done.append("Booking channel")
+        changed = True
 
     # 중간에 저장하지 않는다. 객실 요금이 비어 있는 채로 저장하면 '필수 정보가
     # 누락되었습니다' 창이 뜨고, 그 창을 닫으면 리포트로 튕겨 나간다. 넣을 것을
@@ -1207,12 +1222,20 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
     _open_tab(page, TAB_ITEMIZATION, "항목별 명세")
 
     # 화면이 어떤 상태인지 먼저 읽는다. 비어 있으면 '항목별 명세 추가'를 눌러
-    # 입력 폼을 띄우고, 이미 명세가 있으면 손대지 않고 경비 저장으로 빠져나온다.
+    # 입력 폼을 띄우고, 이미 명세가 있으면 손대지 않는다.
     later = bool(parse_attendees(plan.attendee))  # 뒤에 참석자를 넣을 것이 있나
     locked = _itemization_ready(page)
     if locked:
         done.append(locked)
-        _save_expense(page, plan.row, report_url, reopen=later)
+        # 바꾼 것이 없으면 저장할 것도 없다. 다시 돌릴 때 이미 다 되어 있는
+        # 건에서, 저장할 이유가 없는 화면의 저장 버튼을 찾다가 실패했다.
+        if changed:
+            # 저장은 상세 정보 탭으로 돌아가서 한다. 항목별 명세 탭에는 '경비
+            # 저장'이 화면 밖(-10001, -9893)에만 있고 보이는 것은 '항목별 명세
+            # 저장'뿐인 화면이 있다(실측 2026-07-05 711,620원). 그 버튼을 누르면
+            # 열려 있는 명세 입력 폼이 저장돼서, 우리가 넣지 않은 명세가 생긴다.
+            _open_tab(page, TAB_DETAILS, "상세 정보")
+            _save_expense(page, plan.row, report_url, reopen=later)
         return done
 
     if needs_recurrence(len(amounts), lambda: bool(_eval(page, COMBO_READY_JS, HINT_RECURRENCE))):
@@ -1223,9 +1246,9 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
 
     done.append(_fill_room_rates(page, amounts))
 
-    # 이 탭의 저장 버튼은 '경비 저장'이 아니라 '저장'이다. 저장하면 상세로
-    # 돌아온다 - 항목별 명세 탭에는 금액 필드가 없어서, 남아 있으면 다음
-    # 단계의 확인이 엉뚱하게 실패한다.
+    # 이 탭의 저장 버튼은 '경비 저장'이 아니라 '항목별 명세 저장'이다(실측:
+    # data-nuiexp="itm-save-itemization"). 방금 채운 명세를 저장하는 것이므로
+    # 이 버튼이 맞다. 저장하면 상세로 돌아온다.
     _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION, reopen=later)
     return done
 
