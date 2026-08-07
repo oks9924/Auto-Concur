@@ -442,9 +442,8 @@ def open_report():
 
     print("\n" + "=" * 64)
     print("  Concur에 로그인하시고 처리할 경비 리포트를 열어 주세요.")
-    print("  경비 목록이 보이는 상태에서 Enter를 눌러 주세요.")
     print("=" * 64)
-    console.wait_enter("리포트를 여셨으면 Enter > ")
+    console.wait_enter("경비 목록이 보이면")
 
     page.wait_for_timeout(2000)  # Enter 직후에도 화면을 더 그린다
     return pw, ctx, page, page.url

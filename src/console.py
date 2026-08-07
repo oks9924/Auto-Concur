@@ -81,15 +81,19 @@ def open_folder(path) -> None:
 
 
 def wait_enter(message: str) -> None:
-    """빈 줄이 올 때까지 기다린다.
+    """사람이 브라우저에서 할 일을 마칠 때까지 기다린다.
 
-    앞 단계가 끝난 줄 알고 다음 명령을 쳐 넣는 일이 실제로 있었다. 그냥
-    input()이면 그 명령이 Enter로 먹혀서 카드 인증 전에 조회로 넘어가버린다.
-    빈 줄만 통과시키고, 뭔가 입력하면 무시했다고 알려준다.
+    message는 '카드 인증을 끝내셨으면' 처럼 끝나는 말이다. 무엇을 눌러야
+    하는지는 여기서 붙인다 - 콘솔이면 Enter, 창이면 확인 버튼이라서
+    부르는 쪽이 알 수 없다.
+
+    콘솔에서는 빈 줄만 통과시킨다. 앞 단계가 끝난 줄 알고 다음 명령을 쳐
+    넣는 일이 실제로 있었는데, 그냥 input()이면 그 명령이 Enter로 먹혀서
+    카드 인증 전에 조회로 넘어가버린다.
     """
     if _ask is not None:
-        _ask(message)
+        _ask(f"{message} 아래 확인 버튼을 눌러 주세요.")
         return
     _drain()
-    while input(message).strip():
+    while input(f"{message} Enter를 눌러 주세요 > ").strip():
         print("  (그냥 Enter만 눌러 주세요. 방금 입력하신 내용은 실행되지 않았습니다.)")

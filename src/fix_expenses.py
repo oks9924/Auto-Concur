@@ -1222,9 +1222,8 @@ def list_lodging_phase(page, cfg: dict) -> int:
     """
     print("\n" + "=" * 64)
     print("  숙박비 경비 하나를 열어 주세요 (상세 화면이 보이는 상태).")
-    print("  숙박위치와 Booking Channel 드롭다운이 보이면 Enter를 눌러 주세요.")
     print("=" * 64)
-    console.wait_enter("숙박비 상세를 여셨으면 Enter > ")
+    console.wait_enter("숙박위치와 Booking channel 드롭다운이 보이면")
 
     found = {}
     for key, hint, what in (

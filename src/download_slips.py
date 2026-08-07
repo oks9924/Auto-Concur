@@ -161,9 +161,8 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
 
         print("\n" + "=" * 64)
         print("  브라우저에서 카드 인증을 직접 해 주세요 (가상키패드라 자동 입력이 안 됩니다).")
-        print("  매출내역 목록이 뜬 다음에 Enter를 눌러 주세요.")
         print("=" * 64)
-        console.wait_enter("인증을 끝내셨으면 Enter > ")
+        console.wait_enter("매출내역 목록이 뜨는 것까지 확인하셨으면")
 
         _set_date(page, "#inqFromDt", from_date)
         _set_date(page, "#inqToDt", to_date)

@@ -164,7 +164,7 @@ class App(tk.Tk):
     def _ask(self, message: str) -> None:
         """단계 스레드가 부른다. 창이 뜨고 사람이 누를 때까지 여기서 기다린다."""
         done = threading.Event()
-        self.events.put(("ask", (message.strip().rstrip(">").strip(), done)))
+        self.events.put(("ask", (message.strip(), done)))
         done.wait()
 
     def _start(self, title: str, work) -> None:
