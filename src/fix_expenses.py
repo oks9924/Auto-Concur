@@ -235,29 +235,53 @@ ATTENDEE_COUNT_JS_BODY = """
 
 ATTENDEE_COUNT_JS = "() => {" + ATTENDEE_COUNT_JS_BODY + " return n; }"
 
-# 참석자 모달 안을 통째로 남긴다. 지우는 기능을 만들려면 이 표가 어떻게 생겼는지
-# 알아야 한다. 짐작으로 버튼을 눌렀다가 멀쩡한 참석자를 지운 적이 있다(2026-08).
-DUMP_ATTENDEE_MODAL_JS = """
-() => {
-  const modal = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
-    .find(d => d.getBoundingClientRect().width > 0);
-  const root = modal || document.body;
+# 참석자 모달 (실측 2026-08). 표가 <table>이 아니라 div[role="table"]이다.
+# tbody tr 로 찾다가 한 줄도 못 읽었고, 그래서 이미 맞게 들어 있는 참석자를
+# '다르다'고 판단했다. 훅이 다 붙어 있으니 짐작할 필요가 없다.
+ATTENDEE_MODAL = '[data-nuiexp="attendees-dialog"]'
+ATTENDEE_SAVE = '[data-nuiexp="sat-btn-save"]'
+ATTENDEE_CANCEL = '[data-nuiexp="sat-btn-cancel"]'
+ATTENDEE_REMOVE = '[data-nuiexp="sat-btn-remove-attendee"]'
+
+ATTENDEE_ROWS_FN = """
+  const modal = document.querySelector('[data-nuiexp="attendees-dialog"]');
+  const rows = () => modal
+    ? [...modal.querySelectorAll('[role="row"][data-testid="data-row"]')]
+    : [];
+  const nameOf = (r) => {
+    const n = r.querySelector('[data-nuiexp="name"]');
+    return n ? (n.innerText || '').trim() : '';
+  };
+"""
+
+ATTENDEE_NAMES_JS = (
+    "() => {" + ATTENDEE_ROWS_FN + " return rows().map(nameOf).filter(Boolean); }"
+)
+
+# 지울 사람의 체크박스를 고른다. 그 다음 툴바의 '제거'를 누른다. 행마다 있는
+# ... 메뉴를 여는 것보다 단계가 적고, 여러 명을 한 번에 지울 수도 있다.
+CHECK_ATTENDEE_JS = (
+    "(want) => {"
+    + MARK_FN
+    + ATTENDEE_ROWS_FN
+    + """
+  const row = rows().find(r => nameOf(r) === want);
+  if (!row) return null;
+  return mark(row.querySelector('[data-testid="selection-cell"] input[type="checkbox"]'));
+}"""
+)
+
+DUMP_ATTENDEE_MODAL_JS = (
+    "() => {"
+    + ATTENDEE_ROWS_FN
+    + """
   return {
     isModal: !!modal,
-    html: root.outerHTML.slice(0, 40000),
-    rows: [...root.querySelectorAll('tr, [role="row"]')]
-      .filter(r => r.getBoundingClientRect().width > 0)
-      .map(r => ({
-        text: (r.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 80),
-        buttons: [...r.querySelectorAll('button')].map(b => ({
-          text: (b.innerText || '').trim().slice(0, 20),
-          ariaLabel: b.getAttribute('aria-label'),
-          haspopup: b.getAttribute('aria-haspopup'),
-        })),
-      })),
+    names: rows().map(nameOf),
+    html: (modal || document.body).outerHTML.slice(0, 40000),
   };
-}
-"""
+}"""
+)
 
 SELECT_ATTENDEE_BUTTON_JS = "() => {" + MARK_FN + ATTENDEE_COUNT_JS_BODY + " return mark(b); }"
 
@@ -894,14 +918,48 @@ def _open_attendee_modal(page, report_url: str, row: Row) -> None:
     _wait_js(page, ATTENDEE_COMBO_READY_JS, "참석자 검색 콤보박스", timeout=30000)
 
 
+def _attendee_names(page) -> list[str]:
+    """모달에 올라와 있는 참석자 이름."""
+    return [n for n in (_eval(page, ATTENDEE_NAMES_JS) or []) if n]
+
+
+def _remove_attendees(page, names: list[str]) -> None:
+    """작업지에 없는 사람을 지운다. 체크박스로 고르고 툴바의 '제거'를 누른다."""
+    for name in names:
+        selector = _eval(page, CHECK_ATTENDEE_JS, name)
+        if not selector:
+            dump = _dump(page, "attendee-modal", DUMP_ATTENDEE_MODAL_JS)
+            raise AttachError(
+                f"'{name}' 행을 찾지 못했습니다"
+                + (f" (참석자 화면: {dump})" if dump else "")
+            )
+        page.check(selector)
+        page.wait_for_timeout(300)
+
+    # 고르기 전에는 '제거'가 비활성이다. 눌리게 된 다음에 누른다.
+    _wait_js(
+        page,
+        "(sel) => { const b = document.querySelector(sel); return !!b && !b.disabled; }",
+        "'제거' 버튼",
+        arg=ATTENDEE_REMOVE,
+        timeout=10000,
+    )
+    page.click(ATTENDEE_REMOVE)
+    page.wait_for_timeout(1000)
+
+    left = _attendee_names(page)
+    still = [n for n in names if n in left]
+    if still:
+        raise AttachError(f"지워지지 않았습니다: {', '.join(still)}")
+
+
 def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
-    """참석자가 하나도 없을 때만 넣는다. 이미 있으면 건드리지 않는다.
+    """화면의 참석자를 작업지에 적힌 사람들과 맞춘다.
 
-    한때 '작업지와 다르면 지우고 다시 넣기'를 했는데, 화면을 잘못 읽어 멀쩡한
-    참석자를 지웠다(2026-08). 되돌릴 방법이 없는 동작이라 되돌렸다. 이미 들어
-    있는 참석자는 사람이 보고 고치는 것이 맞다.
+    작업지에 없는 사람은 지우고, 빠진 사람은 넣는다. 이름 형태가 달라도 같은
+    사람으로 본다 - 작업지의 'kyungsik.oh' 와 화면의 'Oh Kyungsik' 은 같다.
 
-    여러 명이면 한 명씩 검색·선택을 반복하고 저장은 마지막에 한 번만 한다.
+    바꿀 것이 없으면 모달을 닫고 지나간다. 저장은 마지막에 한 번만 한다.
     중간에 실패하면 아무것도 저장되지 않으므로 다시 돌리면 처음부터 다시 한다.
     """
     if not queries:
@@ -909,50 +967,55 @@ def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
     count = _eval(page, ATTENDEE_COUNT_JS)
     if count is None:
         raise AttachError("참석자 버튼을 찾지 못했습니다")
-    if count == len(queries):
-        return 0  # 수가 맞는다. 이미 들어 있는 사람은 건드리지 않는다
-    if count > 0:
-        # 수가 다르다. 지우려면 이 표가 어떻게 생겼는지 알아야 하는데, 짐작으로
-        # 눌렀다가 멀쩡한 참석자를 지운 적이 있다(2026-08). 화면을 파일로 남기고
-        # 이 건은 사람에게 넘긴다.
-        _open_attendee_modal(page, report_url, row)
+
+    _open_attendee_modal(page, report_url, row)
+    names = _attendee_names(page)
+    if count and not names:
+        # 있다는데 한 줄도 못 읽었다. 이 상태로 지우고 넣으면 안 된다.
         dump = _dump(page, "attendee-modal", DUMP_ATTENDEE_MODAL_JS)
+        page.click(ATTENDEE_CANCEL)
         raise AttachError(
-            f"참석자가 화면에는 {count}명, 작업지에는 {len(queries)}명입니다. "
-            "지우는 것은 아직 하지 못해서 아무것도 바꾸지 않았습니다. "
-            "이 건은 직접 고쳐 주세요."
+            f"참석자가 {count}명이라는데 목록을 읽지 못했습니다. 아무것도 바꾸지 않았습니다."
             + (f" (참석자 화면: {dump})" if dump else "")
         )
 
-    _open_attendee_modal(page, report_url, row)
+    extra = [n for n in names if not any(name_matches(q, n) for q in queries)]
+    missing = [q for q in queries if not any(name_matches(q, n) for n in names)]
+    if not extra and not missing:
+        page.click(ATTENDEE_CANCEL)  # 이미 작업지대로다
+        page.wait_for_timeout(500)
+        return 0
 
     try:
-        for query in queries:
+        if extra:
+            _remove_attendees(page, extra)
+            print(f"     (작업지에 없는 참석자를 지웠습니다: {', '.join(extra)})")
+        for query in missing:
             _pick_attendee(page, query)
     except AttachError:
+        _dump(page, "attendee-modal", DUMP_ATTENDEE_MODAL_JS)
         _dump(page, "combos-attendee", DUMP_COMBOS_JS)
-        _dump(page, "inputs-attendee", DUMP_INPUTS_JS)
         raise
 
-    # exact=True 가 중요하다. 기본은 부분 일치라 '저장'이 '경비 저장'에도
-    # 걸려서 모달 버튼 대신 뒤쪽 버튼을 누를 수 있다.
-    page.get_by_role("button", name="저장", exact=True).first.click()
+    page.click(ATTENDEE_SAVE)
 
-    # 참석자 수가 넣은 만큼 늘었는지로 확인한다. 모달이 닫혔는지나 주소가
-    # 바뀌었는지는 추측이었고, 원래 확인하려던 것은 실제로 붙었는지다.
+    # 참석자 수가 작업지와 같아졌는지로 확인한다. 모달이 닫혔는지나 주소가
+    # 바뀌었는지는 추측이었고, 원래 확인하려던 것은 실제로 반영됐는지다.
     try:
         _wait_js(
             page,
-            "(want) => {" + ATTENDEE_COUNT_JS_BODY + " return n !== null && n >= want; }",
-            f"참석자 {len(queries)}명이 추가되는 것",
+            "(want) => {" + ATTENDEE_COUNT_JS_BODY + " return n === want; }",
+            f"참석자가 {len(queries)}명이 되는 것",
             arg=len(queries),
             timeout=30000,
         )
     except AttachError:
         actual = _eval(page, ATTENDEE_COUNT_JS)
-        _dump(page, "inputs-attendee-save", DUMP_INPUTS_JS)
-        raise AttachError(f"참석자 {len(queries)}명을 넣으려 했는데 화면에는 {actual}명만 있습니다")
-    return len(queries)
+        _dump(page, "attendee-modal", DUMP_ATTENDEE_MODAL_JS)
+        raise AttachError(
+            f"참석자를 {len(queries)}명으로 맞추려 했는데 화면에는 {actual}명입니다"
+        )
+    return len(missing) + len(extra)
 
 
 def apply_plan(page, plan: Plan, report_url: str) -> str:

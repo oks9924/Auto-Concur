@@ -39,3 +39,24 @@ def test_참석자_이름_대조():
     assert name_matches("kyungsik.oh", "Oh Kyungsik (kyungsik.oh@x.com)")
     assert not name_matches("kyungsik.oh", "Kim Minsu")
     assert not name_matches("", "Oh Kyungsik")  # 빈 검색어는 아무나 맞추면 안 된다
+
+
+def test_화면_이름과_작업지_검색어를_맞춘다():
+    # 실측: 화면 이름은 'Oh Kyungsik', 'Lee Kyungmin'. 작업지는 'kyungsik.oh'.
+    from src.fix_expenses import name_matches
+
+    화면 = ["Lee Kyungmin", "Oh Kyungsik"]
+    작업지 = ["kyungsik.oh"]
+
+    지울사람 = [n for n in 화면 if not any(name_matches(q, n) for q in 작업지)]
+    넣을사람 = [q for q in 작업지 if not any(name_matches(q, n) for n in 화면)]
+    assert 지울사람 == ["Lee Kyungmin"]
+    assert 넣을사람 == []
+
+
+def test_이름이_비슷해도_다른_사람은_안_맞는다():
+    from src.fix_expenses import name_matches
+
+    # kyungsik 과 kyungmin 은 다른 사람이다
+    assert not name_matches("kyungsik.oh", "Lee Kyungmin")
+    assert not name_matches("kyungmin.lee", "Oh Kyungsik")
