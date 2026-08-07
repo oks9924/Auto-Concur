@@ -1064,17 +1064,19 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
 
 
 def _attendee_for(cfg: dict, entry, label: str) -> str:
-    """작업지의 참석자. 식음료인데 비어 있으면 설정에 적어둔 사람을 쓴다.
+    """작업지의 참석자. 식음료 행에서만 쓴다.
 
-    작업지에 수식을 넣어두면 이름을 덧붙이기 어렵다. 그래서 그 칸은 빈 칸으로
-    두고 여기서 채운다. 다른 사람이거나 여러 명이면 엑셀에 쉼표로 적으면 되고,
-    적힌 것이 있으면 그것이 우선이다.
+    작업지에는 창에 적어둔 사람이 값으로 들어가 있다(모든 행에). 그런데 참석자
+    칸은 식음료 유형에만 있어서, 주차비 같은 행에 넣으려 하면 그 버튼이 없어
+    실패한다. 그래서 여기서 유형을 보고 거른다.
+
+    비어 있으면 설정에 적어둔 사람을 쓴다 - 엑셀에서 지웠더라도 식음료면
+    본인은 들어가야 한다. 다른 사람이거나 여러 명이면 엑셀에 쉼표로 적으면 되고,
+    적힌 것이 우선이다.
     """
-    if entry.attendee:
-        return entry.attendee
-    if LABEL_MEAL in (entry.type_name or label or ""):
-        return cfg.get("attendee_default", "") or ""
-    return ""
+    if LABEL_MEAL not in (entry.type_name or label or ""):
+        return ""
+    return entry.attendee or cfg.get("attendee_default", "") or ""
 
 
 def _gaps(entry, label: str) -> list[str]:

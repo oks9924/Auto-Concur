@@ -129,3 +129,37 @@ def test_식음료가_아니면_설정값을_넣지_않는다(tmp_path):
     screen = [Row(0, date(2026, 7, 2), 13500, "", "ID1", "환급 불가", "PARK")]
     plans, _, _ = fx.plans_from_sheet(cfg, screen, path, 1)
     assert plans[0][0].attendee == ""
+
+
+def test_창에_적은_참석자가_엑셀에_값으로_들어간다(tmp_path):
+    """수식이 아니라 값이어야 이름을 뒤에 덧붙일 수 있다."""
+    from openpyxl import load_workbook
+
+    from src import settings, sheet
+    from src.organize import MANIFEST_COLUMNS
+
+    base = dict.fromkeys(MANIFEST_COLUMNS, "")
+    rows = [base | {"거래일": "2026-07-02", "금액": "13500", "승인번호": "1"}]
+    path = tmp_path / "m.xlsx"
+    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS),
+                     fill={"참석자": "kyungsik.oh"})
+
+    셀 = load_workbook(path)["전표"].cell(row=2, column=MANIFEST_COLUMNS.index("참석자") + 1)
+    assert 셀.value == "kyungsik.oh"  # =IF(...) 가 아니다
+
+
+def test_사람이_적은_참석자를_덮지_않는다(tmp_path):
+    from openpyxl import load_workbook
+
+    from src import settings, sheet
+    from src.organize import MANIFEST_COLUMNS
+
+    base = dict.fromkeys(MANIFEST_COLUMNS, "")
+    rows = [base | {"거래일": "2026-07-02", "금액": "13500", "승인번호": "1",
+                    "참석자": "kyungsik.oh, hong.gildong"}]
+    path = tmp_path / "m.xlsx"
+    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS),
+                     fill={"참석자": "kyungsik.oh"})
+
+    셀 = load_workbook(path)["전표"].cell(row=2, column=MANIFEST_COLUMNS.index("참석자") + 1)
+    assert 셀.value == "kyungsik.oh, hong.gildong"

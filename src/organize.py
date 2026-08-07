@@ -22,9 +22,9 @@ from .slip_parser import Slip, SlipParseError, parse_slip
 # 숙박비 칸(입실·퇴실·숙박위치·Booking Channel)은 sheet가 정의를 갖고 있다.
 EDITABLE = list(sheet.EDITABLE)
 
-# 미리 채우지 않는다. Concur에 들어갈 값은 사람이 엑셀에서 정한다.
-# 참석자·숙박위치·Booking Channel만 예외인데, 그것도 값이 아니라 수식으로 넣는다
-# (settings.TYPE_DEFAULT_KEYS). 그 경비유형을 고른 행에만 나타난다.
+# 미리 채우지 않는다. Concur에 들어갈 값은 사람이 엑셀에서 정한다. 예외 둘:
+#   참석자 - 창에 적어둔 사람을 값으로 넣는다. 수식이면 이름을 덧붙이기 어렵다.
+#   숙박위치·Booking Channel - 수식으로 넣어서 숙박비를 고른 행에만 나타난다.
 
 # 엑셀에서 감출 칼럼. 지우지는 않는다 - 가맹점명은 후보가 여럿일 때 어느 경비인지
 # 가리는 데 쓰고, 파일명은 첨부할 PDF를 찾는 데, 승인번호는 다시 돌릴 때 사람이
@@ -143,7 +143,8 @@ def organize(folder: Path, apply: bool) -> int:
     book = folder / "manifest.xlsx"
     try:
         sheet.write_xlsx(MANIFEST_COLUMNS, rows, book, settings.choices(cfg),
-                         hidden=HIDDEN, type_defaults=settings.type_defaults(cfg))
+                         hidden=HIDDEN, type_defaults=settings.type_defaults(cfg),
+                         fill={"참석자": cfg.get("attendee_default", "")})
         print(f"작업지를 만들었습니다: {book}  (경비유형은 드롭다운에서만 고르실 수 있습니다)")
     except sheet.SheetError as exc:
         print(f"xlsx는 만들지 못했습니다: {exc}")

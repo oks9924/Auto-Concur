@@ -147,7 +147,8 @@ def _width(header: str, values: list) -> float:
 
 def write_xlsx(columns: list[str], rows: list[dict], path: Path,
                choices: dict[str, list[str]], hidden: list[str] | None = None,
-               type_defaults: dict[str, dict[str, str]] | None = None) -> None:
+               type_defaults: dict[str, dict[str, str]] | None = None,
+               fill: dict[str, str] | None = None) -> None:
     """드롭다운으로 고를 칸에 목록을 걸어서 내보낸다.
 
     choices는 {칼럼 이름: 고를 수 있는 값들}. 목록을 수식에 직접 넣으면 255자
@@ -188,6 +189,17 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path,
             cell = ws.cell(row=line, column=at + 1)
             cell.value = _as_date(cell.value)
             cell.number_format = DATE_FORMAT
+
+    # 그냥 값으로 채울 칸. 참석자가 그렇다 - 수식을 넣으면 이름을 덧붙이려 할 때
+    # 수식을 통째로 지우고 다시 쳐야 한다. 값이면 뒤에 ', 이름' 만 붙이면 된다.
+    for name, value in (fill or {}).items():
+        if name not in columns or not value:
+            continue
+        at = columns.index(name) + 1
+        for line in range(2, len(rows) + 2):
+            cell = ws.cell(row=line, column=at)
+            if cell.value in (None, ""):
+                cell.value = value
 
     # 유형을 고르면 따라 채워질 값. 사람이 유형을 고르기 전에는 무엇이 맞는지
     # 알 수 없으므로 값이 아니라 수식을 넣는다. 그 유형을 고르면 나타나고 다른
