@@ -118,6 +118,30 @@ def test_입력_폼이_떠_있으면_바로_채운다():
     assert itemization_step({"form": True, "add": True, "empty": False}) == "fill"
 
 
+def test_1박은_반복_칸을_찾지_않는다():
+    """반복할 밤이 없어서 '일일 금액 동일/다름' 칸이 아예 안 나온다."""
+    from src.fix_expenses import needs_recurrence
+
+    assert not needs_recurrence(1, lambda: False)
+    assert nightly_split(120_000, 1) == [120_000]  # 한 행이면 동일이든 다름이든 같다
+
+
+def test_1박이라도_칸이_있으면_고른다():
+    from src.fix_expenses import needs_recurrence
+
+    assert needs_recurrence(1, lambda: True)
+
+
+def test_여러_박이면_화면을_보지_않고_고른다():
+    """아직 안 그려졌을 때 미리 보고 '없다'고 판단하면 안 된다."""
+    from src.fix_expenses import needs_recurrence
+
+    def 보면안됨():
+        raise AssertionError("여러 박이면 화면을 볼 것도 없이 골라야 한다")
+
+    assert needs_recurrence(6, 보면안됨)
+
+
 def test_화면_상태는_보이는_글자로_읽는다():
     """셀렉터를 추측하지 않는다. 화면에 뜨는 글자가 근거다."""
     from src.fix_expenses import (
@@ -132,12 +156,18 @@ def test_화면_상태는_보이는_글자로_읽는다():
     assert ADD_ITEMIZATION_TEXT in ADD_ITEMIZATION_JS
 
 
-def test_숨은_저장_버튼은_고르지_않는다():
-    """실측: 화면 밖의 exp-save-expense-hidden 이 걸려 30초를 기다리다 실패했다."""
-    from src.fix_expenses import SAVE_BUTTON_JS
+def test_숨은_저장_버튼은_뒤로_밀되_버리지_않는다():
+    """실측 두 번.
 
-    assert "hidden" in SAVE_BUTTON_JS
-    assert "innerHeight" in SAVE_BUTTON_JS  # 뷰포트 밖도 거른다
+    1) 화면 밖의 exp-save-expense-hidden 이 먼저 걸려 30초를 기다리다 실패했다.
+    2) 그래서 목록에서 아예 뺐더니 '저장 버튼을 찾지 못했습니다'로 그냥
+       넘어가버렸다. 빼지 말고 순서만 뒤로 미는 것이 맞다.
+    """
+    from src.fix_expenses import SAVE_BUTTONS_JS
+
+    assert "save-hidden-button" in SAVE_BUTTONS_JS
+    assert "found.sort" in SAVE_BUTTONS_JS  # 거르는 게 아니라 순서만 민다
+    assert "return found.map" in SAVE_BUTTONS_JS  # 후보를 전부 돌려준다
 
 
 def test_숙박비인데_날짜가_없으면_짚어준다():

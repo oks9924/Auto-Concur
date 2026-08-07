@@ -432,36 +432,56 @@ DIALOG_DISMISS = "아니요,아니오,No,닫기,취소"
 # '저장'이다. 앞에 적은 이름부터 찾는다. get_by_role(name=...)은 기본이 부분
 # 일치라 '저장'이 '경비 저장'에도 걸려서 엉뚱한 버튼을 누른다 - 여기서는
 # 정확히 같은 글자만 본다.
-SAVE_BUTTON_JS = (
-    "(csv) => {"
-    + MARK_FN
-    + """
+#
+# 글자가 같은 버튼이 여럿이다. 하나는 화면에 안 보이게 숨겨둔 것이라 누를 수
+# 없다(실측: data-nuiexp="exp-save-expense-hidden", class에 save-hidden-button,
+# "element is outside of the viewport"). 그렇다고 이런 버튼을 목록에서 빼버리면
+# 안 된다 - 빼고 나니 '저장 버튼을 찾지 못했습니다'로 그냥 넘어가버렸다.
+# 후보를 전부 모아 누를 만한 것부터 차례로 눌러 본다.
+SAVE_BUTTONS_JS = """
+(csv) => {
+  document.querySelectorAll('[data-auto-save]')
+    .forEach(e => e.removeAttribute('data-auto-save'));
+  const hidden = (b) => {
+    const cls = typeof b.className === 'string' ? b.className : '';
+    return /save-hidden-button/.test(cls) || /-hidden$/.test(b.getAttribute('data-nuiexp') || '');
+  };
   const buttons = [...document.querySelectorAll('button')].filter(b => {
     const r = b.getBoundingClientRect();
-    if (!(r.width > 0 && r.height > 0) || b.disabled) return false;
-    // 화면 밖에 놓인 버튼은 크기가 있어도 누를 수 없다. 실측: '경비 저장'과
-    // 같은 글자를 가진 exp-save-expense-hidden 버튼이 뷰포트 밖에 있어서
-    // 30초를 기다리다 실패했다.
-    if (r.bottom < 0 || r.right < 0) return false;
-    if (r.top > innerHeight || r.left > innerWidth) return false;
-    const cls = typeof b.className === 'string' ? b.className : '';
-    if (/hidden/i.test(cls)) return false;
-    if (/hidden/i.test(b.getAttribute('data-nuiexp') || '')) return false;
-    return true;
+    return r.width > 0 && r.height > 0 && !b.disabled;
   });
   const text = (b) => (b.innerText || '').trim();
+  const found = [];
   for (const want of csv.split(',')) {
-    const hit = buttons.find(b => text(b) === want);
-    if (hit) return mark(hit);
+    for (const b of buttons) {
+      if (text(b) === want && !found.includes(b)) found.push(b);
+    }
   }
-  return null;
-}"""
-)
+  // 숨긴 버튼은 뒤로 민다. 앞의 것이 눌리면 거기까지 가지도 않는다.
+  found.sort((a, b) => (hidden(a) ? 1 : 0) - (hidden(b) ? 1 : 0));
+  return found.map((b, i) => {
+    b.setAttribute('data-auto-save', String(i));
+    return '[data-auto-save="' + i + '"]';
+  });
+}
+"""
 
+# 못 눌렀을 때 남길 근거. 글자만 남기면 같은 글자 버튼 중 무엇이 문제였는지
+# 알 수 없다. 어떤 버튼인지(hook, class)와 어디에 있는지까지 남긴다.
 DUMP_BUTTONS_JS = """
 () => [...document.querySelectorAll('button')]
   .filter(b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.height > 0; })
-  .map(b => ({ text: (b.innerText || '').trim().slice(0, 40), disabled: b.disabled }))
+  .map(b => {
+    const r = b.getBoundingClientRect();
+    return {
+      text: (b.innerText || '').trim().slice(0, 40),
+      disabled: b.disabled,
+      hook: b.getAttribute('data-nuiexp') || null,
+      cls: (typeof b.className === 'string' ? b.className : '').slice(0, 90),
+      at: [Math.round(r.left), Math.round(r.top)],
+      onScreen: r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth,
+    };
+  })
 """
 
 SAVE_DETAIL = "경비 저장,저장"
@@ -725,15 +745,30 @@ def _save_expense(page, row: Row, report_url: str, labels: str = SAVE_DETAIL,
 
     labels는 찾을 버튼 이름들이다. 탭마다 다르다 - 상세 정보는 '경비 저장',
     항목별 명세는 '저장'. 여기 없는 이름이면 화면의 버튼을 파일로 남기고 멈춘다.
+
+    같은 글자의 버튼이 여럿이면 차례로 눌러 본다. 하나가 못 눌리는 것(화면 밖에
+    숨겨둔 버튼)과 저장할 수 없는 것은 다르다. 하나도 못 누르면 멈춘다 -
+    저장이 안 된 것을 넘어가면 안 된다.
     """
-    selector = _eval(page, SAVE_BUTTON_JS, labels)
-    if not selector:
+    selectors = _eval(page, SAVE_BUTTONS_JS, labels) or []
+    if not selectors:
         dump = _dump(page, "buttons", DUMP_BUTTONS_JS)
         raise AttachError(
             f"저장 버튼({labels})을 찾지 못했습니다"
             + (f" (화면의 버튼 목록: {dump})" if dump else "")
         )
-    page.click(selector)
+    for selector in selectors:
+        try:
+            page.click(selector, timeout=10000)
+            break
+        except PWTimeout:
+            continue
+    else:
+        dump = _dump(page, "buttons", DUMP_BUTTONS_JS)
+        raise AttachError(
+            f"저장 버튼({labels})을 {len(selectors)}개 찾았지만 하나도 누르지 못했습니다"
+            + (f" (화면의 버튼 목록: {dump})" if dump else "")
+        )
     page.wait_for_timeout(800)
     # 넣을 것을 다 넣고 저장하므로 확인창은 안 뜨는 것이 정상이다. 뜰 때만
     # 짧게 잡는다 - 매번 오래 기다리면 건마다 그만큼 늦어진다.
@@ -809,6 +844,19 @@ ADD_ITEMIZATION_JS = (
 ITEMIZATION_SETTLED_JS = (
     "() => { const s = (" + ITEMIZATION_STATE_JS.strip() + ")(); return s.form || s.add || s.empty; }"
 )
+
+
+def needs_recurrence(nights: int, on_screen) -> bool:
+    """'반복'(일일 금액 동일/다름)을 골라야 하는가.
+
+    1박은 반복할 밤이 없어서 이 칸이 아예 안 나온다. 없는 콤보박스를 25초
+    찾다가 건 전체가 실패했다. 여러 박이면 반드시 있어야 하니 그때는 기다리고,
+    1박은 화면에 있을 때만 고른다 - 한 행뿐이라 동일이든 다름이든 결과가 같다.
+
+    on_screen은 화면을 보는 함수다. 1박일 때만 부른다 - 여러 박이면 볼 것도
+    없이 골라야 하고, 아직 안 그려졌을 때 미리 봐서 없다고 판단하면 안 된다.
+    """
+    return nights > 1 or bool(on_screen())
 
 
 def itemization_step(state: dict) -> str:
@@ -1167,8 +1215,11 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
         _save_expense(page, plan.row, report_url, reopen=later)
         return done
 
-    _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
-    page.wait_for_timeout(800)
+    if needs_recurrence(len(amounts), lambda: bool(_eval(page, COMBO_READY_JS, HINT_RECURRENCE))):
+        _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
+        page.wait_for_timeout(800)
+    else:
+        print("     (1박이라 '반복' 칸이 없습니다. 바로 객실 요금을 채웁니다)")
 
     done.append(_fill_room_rates(page, amounts))
 
