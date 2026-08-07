@@ -33,6 +33,9 @@ PROFILE_DIR = Path("browser-profile") / "hyundaicard"
 # 합본 생성은 건수가 많으면 오래 걸린다.
 DOWNLOAD_TIMEOUT_MS = 300_000
 
+# 조회 결과가 그려질 때까지 기다릴 시간.
+QUERY_TIMEOUT_MS = 30_000
+
 # dhtmlxGrid 객체는 전역 변수에 있는데 이름을 모른다. 이름으로 추측하지 말고
 # getAllRowIds를 가진 객체를 찾아서 확인한다. 체크박스 칼럼도 타입('ch')으로 찾는다.
 FIND_GRID_JS = """
@@ -165,14 +168,26 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
         _set_date(page, "#inqFromDt", from_date)
         _set_date(page, "#inqToDt", to_date)
         page.click("#btnIqry")
-        page.wait_for_timeout(3000)
 
-        grid = page.evaluate(FIND_GRID_JS)
+        # 조회 결과가 올 때까지 기다린다. 3초만 기다렸더니 아직 안 온 화면을
+        # 읽어서 '선택 칸이 없다'(chCol: -1, rows: ['1'])로 멈춘 적이 있다.
+        # 체크박스 칼럼이 생기는 것이 결과가 다 왔다는 신호다.
+        grid = None
+        for _ in range(int(QUERY_TIMEOUT_MS / 1000)):
+            grid = page.evaluate(FIND_GRID_JS)
+            if grid and grid["chCol"] >= 0:
+                break
+            page.wait_for_timeout(1000)
+
         if not grid:
             _dump_modal(page, out_dir)
             raise DownloadError("거래 목록을 찾지 못했습니다. 조회가 됐는지 화면을 확인해 주세요.")
         if grid["chCol"] < 0:
-            raise DownloadError(f"목록에서 선택 칸을 찾지 못했습니다: {grid}")
+            raise DownloadError(
+                "조회 결과를 기다렸지만 선택 칸이 생기지 않았습니다. "
+                "그 기간에 거래가 없거나 조회가 끝나지 않은 것 같습니다. "
+                f"화면을 확인하고 다시 시도해 주세요: {grid}"
+            )
 
         rows = grid["rows"]
         print(f"거래 {len(rows)}건을 찾았습니다.")

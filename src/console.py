@@ -20,6 +20,15 @@ import sys
 # (실제로 "리포트 열고 Enter 눌렀더니 그냥 꺼졌다"는 일이 있었다.)
 HOLD_ENV = "AUTO_CONCUR_HOLD"
 
+# 창(GUI)에서 돌릴 때는 콘솔이 없다. 창이 자기 방식으로 물어보게 갈아끼운다.
+_ask = None
+
+
+def set_prompt(fn) -> None:
+    """'Enter를 눌러 주세요'를 어떻게 물을지 정한다. None이면 콘솔 입력."""
+    global _ask
+    _ask = fn
+
 
 def _hold() -> None:
     try:
@@ -78,6 +87,9 @@ def wait_enter(message: str) -> None:
     input()이면 그 명령이 Enter로 먹혀서 카드 인증 전에 조회로 넘어가버린다.
     빈 줄만 통과시키고, 뭔가 입력하면 무시했다고 알려준다.
     """
+    if _ask is not None:
+        _ask(message)
+        return
     _drain()
     while input(message).strip():
         print("  (그냥 Enter만 눌러 주세요. 방금 입력하신 내용은 실행되지 않았습니다.)")

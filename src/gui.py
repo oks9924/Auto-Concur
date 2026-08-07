@@ -4,46 +4,52 @@
 
 Tkinter를 쓴다. Windows 파이썬에 기본으로 들어 있어서 따로 설치할 게 없다.
 
-각 단계는 새 콘솔 창에서 돌린다. 카드 인증이나 로그인을 마치고 Enter를 눌러야
-하는 대기가 있어서, 창 안에 출력을 가두면 그 조작을 할 수 없다.
+단계는 이 창 안에서 돈다. 예전에는 새 콘솔 창을 띄웠는데, 카드 인증이나 로그인을
+마치고 'Enter' 를 누르라는 안내가 그 검은 창에 떠서 어디를 봐야 하는지 알기
+어려웠다. 지금은 진행 상황이 아래 칸에 찍히고, 눌러야 할 때는 창이 뜬다.
 
-창에는 기간·전표 폴더·참석자만 둔다. 나머지는 전부 작업지(엑셀)에서 정한다.
-참석자는 늘 같은 사람이라 여기서 한 번 적어두면 작업지의 '내부 직원간 식음료'
-행마다 자동으로 들어간다. 다른 사람이면 엑셀에서 고치면 된다.
+브라우저 작업이 오래 걸리므로 별도 스레드에서 돌린다. tkinter 위젯은 메인
+스레드에서만 건드려야 해서, 스레드는 큐에만 넣고 화면 갱신은 after()가 한다.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
+import queue
+import threading
 import tkinter as tk
-from tkinter import filedialog, ttk
+import traceback
+from pathlib import Path
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from . import console, settings
 
 
-def _run(args: list[str]) -> None:
-    """새 콘솔 창에서 단계를 돌린다.
+class _Writer:
+    """print() 출력을 큐로 보낸다. 화면에 붙이는 것은 메인 스레드가 한다."""
 
-    끝나도 창이 저절로 닫히지 않게 한다. 닫혀버리면 마지막에 찍힌 안내나
-    오류를 읽을 수 없다.
-    """
-    cmd = [sys.executable, "-m", *args]
-    env = {**os.environ, console.HOLD_ENV: "1"}
-    kwargs = {"env": env}
-    if sys.platform == "win32":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
-    subprocess.Popen(cmd, **kwargs)
+    def __init__(self, box: queue.Queue) -> None:
+        self.box = box
+
+    def write(self, text: str) -> int:
+        if text:
+            self.box.put(("log", text))
+        return len(text)
+
+    def flush(self) -> None:
+        pass
 
 
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Concur 경비 자동화")
-        self.resizable(False, False)
         self.cfg = settings.load()
+        self.events: queue.Queue = queue.Queue()
+        self.busy = False
         self._build()
+        self.after(100, self._drain)
+
+    # --- 화면 ---------------------------------------------------------------
 
     def _build(self) -> None:
         pad = {"padx": 8, "pady": 4}
@@ -89,25 +95,36 @@ class App(tk.Tk):
         ttk.Label(opts, text="앞에서 N건만 (비워두면 전부):").pack(side="left")
         ttk.Entry(opts, textvariable=self.limit, width=6).pack(side="left", padx=6)
 
-        steps = [
+        self.buttons = []
+        bar = ttk.Frame(run)
+        bar.grid(row=1, column=0, sticky="w", **pad)
+        for text, cmd in (
             ("A. 전표 다운로드", self.step_download),
             ("B. 파싱 · 작업지 생성", self.step_organize),
             ("C. Concur 반영", self.step_update),
-        ]
-        bar = ttk.Frame(run)
-        bar.grid(row=1, column=0, sticky="w", **pad)
-        for text, cmd in steps:
-            ttk.Button(bar, text=text, width=22, command=cmd).pack(side="left", padx=3)
+        ):
+            button = ttk.Button(bar, text=text, width=22, command=cmd)
+            button.pack(side="left", padx=3)
+            self.buttons.append(button)
 
         tools = ttk.Frame(self)
-        tools.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 10))
-        ttk.Button(tools, text="경비유형 코드 확인", command=self.step_list_types).pack(side="left")
-        ttk.Button(tools, text="숙박비 목록 확인", command=self.step_list_lodging).pack(
-            side="left", padx=6
-        )
+        tools.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 4))
+        for text, cmd in (
+            ("경비유형 코드 확인", self.step_list_types),
+            ("숙박비 목록 확인", self.step_list_lodging),
+        ):
+            button = ttk.Button(tools, text=text, command=cmd)
+            button.pack(side="left", padx=(0, 6))
+            self.buttons.append(button)
         ttk.Label(
             tools, text="드롭다운 값이 바뀌었을 때 다시 뽑습니다", foreground="#666"
         ).pack(side="left", padx=8)
+
+        self.log = scrolledtext.ScrolledText(self, width=100, height=20, state="disabled")
+        self.log.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.rowconfigure(3, weight=1)
+        self.columnconfigure(0, weight=1)
+        self._say("버튼을 누르면 여기에 진행 상황이 찍힙니다.\n")
 
     def pick_folder(self) -> None:
         chosen = filedialog.askdirectory(
@@ -116,43 +133,126 @@ class App(tk.Tk):
         if chosen:
             self.folder.set(chosen)
 
-    def save(self) -> bool:
+    def _say(self, text: str) -> None:
+        self.log.configure(state="normal")
+        self.log.insert("end", text)
+        self.log.see("end")
+        self.log.configure(state="disabled")
+
+    # --- 단계 실행 -----------------------------------------------------------
+
+    def _drain(self) -> None:
+        """스레드가 큐에 넣은 것을 화면에 옮긴다. 메인 스레드에서만 돈다."""
+        try:
+            while True:
+                kind, payload = self.events.get_nowait()
+                if kind == "log":
+                    self._say(payload)
+                elif kind == "ask":
+                    message, done = payload
+                    messagebox.showinfo("확인", message, parent=self)
+                    done.set()
+                elif kind == "end":
+                    self.busy = False
+                    for button in self.buttons:
+                        button.state(["!disabled"])
+                    self._say(payload)
+        except queue.Empty:
+            pass
+        self.after(100, self._drain)
+
+    def _ask(self, message: str) -> None:
+        """단계 스레드가 부른다. 창이 뜨고 사람이 누를 때까지 여기서 기다린다."""
+        done = threading.Event()
+        self.events.put(("ask", (message.strip().rstrip(">").strip(), done)))
+        done.wait()
+
+    def _start(self, title: str, work) -> None:
+        if self.busy:
+            messagebox.showinfo("잠깐만요", "앞 단계가 아직 돌고 있습니다.", parent=self)
+            return
+        self.save()
+        self.busy = True
+        for button in self.buttons:
+            button.state(["disabled"])
+        self._say(f"\n{'=' * 60}\n{title}\n{'=' * 60}\n")
+
+        def run() -> None:
+            import sys
+
+            writer = _Writer(self.events)
+            sys.stdout = sys.stderr = writer
+            console.set_prompt(self._ask)
+            try:
+                work()
+                self.events.put(("end", f"\n{title} 을(를) 마쳤습니다.\n"))
+            except Exception as exc:
+                writer.write("\n" + traceback.format_exc())
+                self.events.put(("end", f"\n{title} 중에 멈췄습니다: {exc}\n"))
+            finally:
+                console.set_prompt(None)
+                sys.stdout = sys.__stdout__
+                sys.stderr = sys.__stderr__
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def save(self) -> None:
         self.cfg["downloads_dir"] = self.folder.get().strip() or "downloads"
         self.cfg["attendee_default"] = self.attendee.get().strip()
         settings.save(self.cfg)
-        return True
 
-    def _common(self) -> list[str]:
-        args = ["--apply"]
-        if self.limit.get().strip():
-            args += ["--limit", self.limit.get().strip()]
-        return args
+    def _limit(self) -> int | None:
+        text = self.limit.get().strip()
+        return int(text) if text.isdigit() else None
 
     def step_download(self) -> None:
-        """설정을 먼저 저장한다. 단계들이 settings.json 을 읽기 때문이다."""
-        self.save()
-        args = ["src.download_slips", "--from", self.from_date.get(), "--to", self.to_date.get(),
-                "--out", self.cfg["downloads_dir"]]
-        if self.limit.get().strip():
-            args += ["--limit", self.limit.get().strip()]
-        _run(args)
+        from . import download_slips
+
+        def work() -> None:
+            download_slips.download(
+                download_slips._norm_date(self.from_date.get()),
+                download_slips._norm_date(self.to_date.get()),
+                Path(self.cfg["downloads_dir"]),
+                self._limit(),
+            )
+
+        self._start("A. 전표 다운로드", work)
 
     def step_organize(self) -> None:
-        self.save()
-        _run(["src.organize", self.cfg["downloads_dir"], "--apply"])
+        from . import organize
+
+        self._start(
+            "B. 파싱 · 작업지 생성",
+            lambda: organize.organize(Path(self.cfg["downloads_dir"]), True),
+        )
 
     def step_update(self) -> None:
         """첨부와 입력을 한 세션에서 한다. 로그인을 두 번 하지 않아도 된다."""
-        self.save()
-        _run(["src.update_concur", "--dir", self.cfg["downloads_dir"], *self._common()])
+        from . import update_concur
+
+        def work() -> None:
+            folder = Path(self.cfg["downloads_dir"])
+            update_concur.run(
+                folder,
+                True,
+                int(self.cfg["date_tolerance_days"]),
+                self._limit(),
+                update_concur.pick_sheet(folder, None),
+            )
+
+        self._start("C. Concur 반영", work)
 
     def step_list_types(self) -> None:
-        self.save()
-        _run(["src.fix_expenses", "--list-types"])
+        from . import fix_expenses
+
+        self._start("경비유형 코드 확인", lambda: fix_expenses.run(False, None, True))
 
     def step_list_lodging(self) -> None:
-        self.save()
-        _run(["src.fix_expenses", "--list-lodging"])
+        from . import fix_expenses
+
+        self._start(
+            "숙박비 목록 확인", lambda: fix_expenses.run(False, None, False, None, True)
+        )
 
 
 def main() -> int:
