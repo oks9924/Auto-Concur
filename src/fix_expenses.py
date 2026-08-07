@@ -1064,19 +1064,23 @@ def _apply_lodging(page, plan: Plan, report_url: str) -> list[str]:
 
 
 def _attendee_for(cfg: dict, entry, label: str) -> str:
-    """작업지의 참석자. 식음료 행에서만 쓴다.
+    """작업지의 '참석자' + '추가 참석자'. 식음료 행에서만 쓴다.
 
-    작업지에는 창에 적어둔 사람이 값으로 들어가 있다(모든 행에). 그런데 참석자
-    칸은 식음료 유형에만 있어서, 주차비 같은 행에 넣으려 하면 그 버튼이 없어
-    실패한다. 그래서 여기서 유형을 보고 거른다.
+    참석자 칸은 수식이라 본인이 자동으로 들어가고, 같이 드신 분은 옆의 추가
+    참석자 칸에 적는다. 둘을 합쳐서 순서대로 넣는다. 같은 이름이 양쪽에 있으면
+    한 번만 넣는다.
 
-    비어 있으면 설정에 적어둔 사람을 쓴다 - 엑셀에서 지웠더라도 식음료면
-    본인은 들어가야 한다. 다른 사람이거나 여러 명이면 엑셀에 쉼표로 적으면 되고,
-    적힌 것이 우선이다.
+    참석자 칸은 식음료 유형에만 있다. 주차비 같은 행에 넣으려 하면 그 버튼이
+    없어 실패하므로 유형을 보고 거른다.
+
+    엑셀을 한 번도 안 열고 넘기면 수식 결과가 파일에 없어서 참석자가 빈 칸으로
+    읽힌다. 그때는 설정에 적어둔 사람을 쓴다 - 엑셀이 보여주던 값과 같다.
     """
     if LABEL_MEAL not in (entry.type_name or label or ""):
         return ""
-    return entry.attendee or cfg.get("attendee_default", "") or ""
+    mine = entry.attendee or cfg.get("attendee_default", "") or ""
+    everyone = parse_attendees(mine) + parse_attendees(getattr(entry, "extra_attendee", ""))
+    return ", ".join(dict.fromkeys(everyone))  # 순서 유지, 중복 제거
 
 
 def _gaps(entry, label: str) -> list[str]:
@@ -1095,7 +1099,11 @@ def _gaps(entry, label: str) -> list[str]:
 
 
 def _gaps_with_defaults(cfg: dict, entry, label: str) -> list[str]:
-    """설정으로 채워지는 것은 빠진 값이 아니다."""
+    """설정으로 채워지는 것은 빠진 값이 아니다.
+
+    참석자는 작업지 수식이나 설정으로 자동으로 들어간다. 사람이 채워야 하는
+    것은 '추가 참석자'인데 그건 없어도 되는 값이라 여기서 묻지 않는다.
+    """
     holes = _gaps(entry, label)
     if "참석자" in holes and cfg.get("attendee_default"):
         holes.remove("참석자")

@@ -19,7 +19,13 @@ REQUIRED = ["거래일", "승인번호"]
 # 숙박비는 상세에 넣을 것이 많다. 입실·퇴실로 날짜 범위를 만들고, 숙박위치와
 # Booking Channel은 화면 드롭다운에서 고른 값이어야 한다.
 LODGING_COLUMNS = ["입실날짜", "퇴실날짜", "숙박위치", "Booking Channel"]
-EDITABLE = ["경비유형", "비즈니스목적", "코멘트", "참석자", *LODGING_COLUMNS]
+
+# 참석자는 수식으로 자동으로 채워진다(본인). 한 명 더 있을 때만 옆 칸에 적는다.
+# 수식이 든 칸을 고쳐 쓰게 하면 통째로 지우고 다시 쳐야 해서 칸을 나눴다.
+ATTENDEE_COLUMN = "참석자"
+EXTRA_ATTENDEE_COLUMN = "추가 참석자"
+EDITABLE = ["경비유형", "비즈니스목적", "코멘트",
+            ATTENDEE_COLUMN, EXTRA_ATTENDEE_COLUMN, *LODGING_COLUMNS]
 
 DATE_COLUMNS = ["입실날짜", "퇴실날짜"]
 
@@ -39,6 +45,7 @@ class SheetRow:
     purpose: str
     comment: str
     attendee: str
+    extra_attendee: str = ""
     checkin: date | None = None
     checkout: date | None = None
     location: str = ""
@@ -96,6 +103,15 @@ def _rows_from_xlsx(path: Path) -> list[dict]:
 ATTENDEE_REQUIRED_TYPE = "내부 직원간 식음료"
 LODGING_TYPE = "숙박비"
 
+# 칸에 붙일 설명. 머리글에 마우스를 올리면 뜨고, 칸을 고르면 노란 쪽지로 뜬다.
+NOTES = {
+    EXTRA_ATTENDEE_COLUMN: (
+        "같이 식사한 사람이 있으면 이름을 적어 주세요.\n"
+        "여러 명은 쉼표로 구분합니다 (hong.gildong, kim.minsu).\n"
+        "같이 식사한 사람이 없다면 빈칸으로 두세요."
+    ),
+}
+
 # 날짜는 8/2 로 보이게 한다. 값 자체는 진짜 날짜라 정렬도 계산도 된다.
 DATE_FORMAT = "m/d"
 
@@ -147,8 +163,7 @@ def _width(header: str, values: list) -> float:
 
 def write_xlsx(columns: list[str], rows: list[dict], path: Path,
                choices: dict[str, list[str]], hidden: list[str] | None = None,
-               type_defaults: dict[str, dict[str, str]] | None = None,
-               fill: dict[str, str] | None = None) -> None:
+               type_defaults: dict[str, dict[str, str]] | None = None) -> None:
     """드롭다운으로 고를 칸에 목록을 걸어서 내보낸다.
 
     choices는 {칼럼 이름: 고를 수 있는 값들}. 목록을 수식에 직접 넣으면 255자
@@ -156,6 +171,7 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path,
     """
     try:
         from openpyxl import Workbook
+        from openpyxl.comments import Comment
         from openpyxl.formatting.rule import FormulaRule
         from openpyxl.styles import Alignment, PatternFill
         from openpyxl.utils import get_column_letter
@@ -189,17 +205,6 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path,
             cell = ws.cell(row=line, column=at + 1)
             cell.value = _as_date(cell.value)
             cell.number_format = DATE_FORMAT
-
-    # 그냥 값으로 채울 칸. 참석자가 그렇다 - 수식을 넣으면 이름을 덧붙이려 할 때
-    # 수식을 통째로 지우고 다시 쳐야 한다. 값이면 뒤에 ', 이름' 만 붙이면 된다.
-    for name, value in (fill or {}).items():
-        if name not in columns or not value:
-            continue
-        at = columns.index(name) + 1
-        for line in range(2, len(rows) + 2):
-            cell = ws.cell(row=line, column=at)
-            if cell.value in (None, ""):
-                cell.value = value
 
     # 유형을 고르면 따라 채워질 값. 사람이 유형을 고르기 전에는 무엇이 맞는지
     # 알 수 없으므로 값이 아니라 수식을 넣는다. 그 유형을 고르면 나타나고 다른
@@ -244,7 +249,10 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path,
     # 그 유형에서 꼭 채워야 하는 칸을 초록으로 칠한다. 빈 칸은 눈에 안 띄어서
     # 빠뜨리기 쉽다. 식음료면 참석자, 숙박비면 입실·퇴실·숙박위치·채널이다.
     green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    needed = {ATTENDEE_REQUIRED_TYPE: ["참석자"], LODGING_TYPE: LODGING_COLUMNS}
+    needed = {
+        ATTENDEE_REQUIRED_TYPE: [ATTENDEE_COLUMN, EXTRA_ATTENDEE_COLUMN],
+        LODGING_TYPE: LODGING_COLUMNS,
+    }
     for type_name, names in needed.items():
         for name in names:
             if name not in columns or not rows:
@@ -254,6 +262,21 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path,
                 f"{letter}2:{letter}{len(rows) + 1}",
                 FormulaRule(formula=[f'${col}2="{type_name}"'], fill=green),
             )
+
+    # 칸 설명. 머리글에는 메모(마우스를 올리면 뜬다), 칸에는 노란 쪽지(고르면 뜬다).
+    for name, text in NOTES.items():
+        if name not in columns:
+            continue
+        col = get_column_letter(columns.index(name) + 1)
+        note = Comment(text, "Concur 자동화")
+        note.width, note.height = 260, 90
+        ws[f"{col}1"].comment = note
+        if rows:
+            tip = DataValidation(allow_blank=True, showInputMessage=True)
+            tip.prompt = text
+            tip.promptTitle = name
+            ws.add_data_validation(tip)
+            tip.add(f"{col}2:{col}{len(rows) + 1}")
 
     for i, name in enumerate(columns, 1):
         dim = ws.column_dimensions[get_column_letter(i)]
@@ -305,7 +328,8 @@ def load(path: Path) -> list[SheetRow]:
                 type_name=(r.get("경비유형") or "").strip(),
                 purpose=(r.get("비즈니스목적") or "").strip(),
                 comment=(r.get("코멘트") or "").strip(),
-                attendee=(r.get("참석자") or "").strip(),
+                attendee=(r.get(ATTENDEE_COLUMN) or "").strip(),
+                extra_attendee=(r.get(EXTRA_ATTENDEE_COLUMN) or "").strip(),
                 checkin=checkin,
                 checkout=checkout,
                 location=(r.get("숙박위치") or "").strip(),

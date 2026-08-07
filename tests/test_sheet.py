@@ -49,15 +49,14 @@ def test_경비유형_칸에_드롭다운이_걸린다(book):
     from openpyxl import load_workbook
 
     wb = load_workbook(book)
-    types = [d for d in wb["전표"].data_validations.dataValidation
-             if "경비유형" in d.formula1][0]
+    목록 = [d for d in wb["전표"].data_validations.dataValidation if d.type == "list"]
+    types = [d for d in 목록 if "경비유형" in (d.formula1 or "")][0]
     assert types.type == "list" and types.errorStyle == "stop"
     assert f"$A${len(TYPES)}" in types.formula1
     assert wb["목록_경비유형"].sheet_state == "hidden"  # 목록 시트는 감춘다
     # 숙박위치·Booking Channel도 목록에서만 고를 수 있어야 한다
-    validations = wb["전표"].data_validations.dataValidation
-    assert len(validations) == 3
-    assert all(d.errorStyle == "stop" for d in validations)
+    assert len(목록) == 3
+    assert all(d.errorStyle == "stop" for d in 목록)
 
 
 def test_csv와_xlsx가_같은_결과를_준다(tmp_path, book):

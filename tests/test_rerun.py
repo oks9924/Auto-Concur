@@ -131,9 +131,31 @@ def test_식음료가_아니면_설정값을_넣지_않는다(tmp_path):
     assert plans[0][0].attendee == ""
 
 
-def test_창에_적은_참석자가_엑셀에_값으로_들어간다(tmp_path):
-    """수식이 아니라 값이어야 이름을 뒤에 덧붙일 수 있다."""
+def test_참석자는_수식_추가_참석자는_빈_칸(tmp_path):
+    """참석자는 자동으로 채워지고, 사람이 손대는 칸은 '추가 참석자' 다."""
     from openpyxl import load_workbook
+
+    from src import settings, sheet
+    from src.organize import MANIFEST_COLUMNS
+
+    cfg = {**settings.DEFAULTS, "attendee_default": "kyungsik.oh"}
+    base = dict.fromkeys(MANIFEST_COLUMNS, "")
+    rows = [base | {"거래일": "2026-07-02", "금액": "13500", "승인번호": "1"}]
+    path = tmp_path / "m.xlsx"
+    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(cfg),
+                     type_defaults=settings.type_defaults(cfg))
+
+    ws = load_workbook(path)["전표"]
+    참석자 = ws.cell(row=2, column=MANIFEST_COLUMNS.index("참석자") + 1)
+    추가 = ws.cell(row=2, column=MANIFEST_COLUMNS.index("추가 참석자") + 1)
+    assert 참석자.value == '=IF($M2="내부 직원간 식음료","kyungsik.oh","")'
+    assert 추가.value in (None, "")
+
+
+def test_추가_참석자_칸에_설명이_붙는다(tmp_path):
+    """마우스를 올리면 뜨는 메모와, 칸을 고르면 뜨는 쪽지 둘 다 있어야 한다."""
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
 
     from src import settings, sheet
     from src.organize import MANIFEST_COLUMNS
@@ -141,25 +163,30 @@ def test_창에_적은_참석자가_엑셀에_값으로_들어간다(tmp_path):
     base = dict.fromkeys(MANIFEST_COLUMNS, "")
     rows = [base | {"거래일": "2026-07-02", "금액": "13500", "승인번호": "1"}]
     path = tmp_path / "m.xlsx"
-    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS),
-                     fill={"참석자": "kyungsik.oh"})
+    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS))
 
-    셀 = load_workbook(path)["전표"].cell(row=2, column=MANIFEST_COLUMNS.index("참석자") + 1)
-    assert 셀.value == "kyungsik.oh"  # =IF(...) 가 아니다
+    ws = load_workbook(path)["전표"]
+    col = get_column_letter(MANIFEST_COLUMNS.index("추가 참석자") + 1)
+    assert "빈칸으로 두세요" in ws[f"{col}1"].comment.text
+
+    쪽지 = [d for d in ws.data_validations.dataValidation
+            if d.promptTitle == "추가 참석자"]
+    assert 쪽지 and "빈칸으로 두세요" in 쪽지[0].prompt
 
 
-def test_사람이_적은_참석자를_덮지_않는다(tmp_path):
+def test_초록은_참석자와_추가_참석자_둘_다(tmp_path):
     from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
 
     from src import settings, sheet
     from src.organize import MANIFEST_COLUMNS
 
     base = dict.fromkeys(MANIFEST_COLUMNS, "")
-    rows = [base | {"거래일": "2026-07-02", "금액": "13500", "승인번호": "1",
-                    "참석자": "kyungsik.oh, hong.gildong"}]
+    rows = [base | {"거래일": "2026-07-02", "금액": "13500", "승인번호": "1"}]
     path = tmp_path / "m.xlsx"
-    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS),
-                     fill={"참석자": "kyungsik.oh"})
+    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS))
 
-    셀 = load_workbook(path)["전표"].cell(row=2, column=MANIFEST_COLUMNS.index("참석자") + 1)
-    assert 셀.value == "kyungsik.oh, hong.gildong"
+    ws = load_workbook(path)["전표"]
+    칠한칸 = {str(r.sqref) for r in ws.conditional_formatting}
+    for name in ("참석자", "추가 참석자"):
+        assert f"{get_column_letter(MANIFEST_COLUMNS.index(name) + 1)}2" in 칠한칸
