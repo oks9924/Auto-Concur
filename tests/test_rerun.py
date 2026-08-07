@@ -62,73 +62,55 @@ def test_이름이_비슷해도_다른_사람은_안_맞는다():
     assert not name_matches("kyungmin.lee", "Oh Kyungsik")
 
 
-def test_참석자가_비어_있으면_설정값을_쓴다(tmp_path):
-    """작업지에 수식을 넣으면 이름을 덧붙이기 어렵다. 빈 칸으로 두고 여기서 채운다."""
+def _한건(tmp_path, 참석자, 추가, 유형="내부 직원간 식음료"):
     import csv
 
     from src import fix_expenses as fx
     from src import settings
     from src.attach_receipts import Row
 
-    cols = ["거래일", "금액", "승인번호", "경비유형", "참석자", "비즈니스목적", "코멘트"]
+    cols = ["거래일", "금액", "승인번호", "경비유형", "참석자", "추가 참석자",
+            "비즈니스목적", "코멘트"]
     path = tmp_path / "m.csv"
     with path.open("w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=cols)
         w.writeheader()
         w.writerow({"거래일": "2026-07-02", "금액": "13500", "승인번호": "1",
-                    "경비유형": "내부 직원간 식음료", "참석자": "",
-                    "비즈니스목적": "", "코멘트": ""})
-
+                    "경비유형": 유형, "참석자": 참석자, "추가 참석자": 추가,
+                    "비즈니스목적": "", "코멘트": "점심"})
     cfg = {**settings.DEFAULTS, "attendee_default": "kyungsik.oh"}
     screen = [Row(0, date(2026, 7, 2), 13500, "", "ID1", "환급 불가", "CAFE")]
     plans, gaps, _ = fx.plans_from_sheet(cfg, screen, path, 1)
-    assert plans[0][0].attendee == "kyungsik.oh"
-    assert not gaps  # 설정으로 채워지므로 '빠진 값'이 아니다
+    return plans[0][0].attendee, gaps
 
 
-def test_작업지에_적은_참석자가_우선이다(tmp_path):
-    import csv
-
-    from src import fix_expenses as fx
-    from src import settings
-    from src.attach_receipts import Row
-
-    cols = ["거래일", "금액", "승인번호", "경비유형", "참석자", "비즈니스목적", "코멘트"]
-    path = tmp_path / "m.csv"
-    with path.open("w", newline="", encoding="utf-8-sig") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols)
-        w.writeheader()
-        w.writerow({"거래일": "2026-07-02", "금액": "13500", "승인번호": "1",
-                    "경비유형": "내부 직원간 식음료",
-                    "참석자": "kyungsik.oh, hong.gildong",
-                    "비즈니스목적": "", "코멘트": ""})
-
-    cfg = {**settings.DEFAULTS, "attendee_default": "kyungsik.oh"}
-    screen = [Row(0, date(2026, 7, 2), 13500, "", "ID1", "환급 불가", "CAFE")]
-    plans, _, _ = fx.plans_from_sheet(cfg, screen, path, 1)
-    assert fx.parse_attendees(plans[0][0].attendee) == ["kyungsik.oh", "hong.gildong"]
+def test_참석자와_추가_참석자를_합친다(tmp_path):
+    누구, _ = _한건(tmp_path, "kyungsik.oh", "hong.gildong")
+    assert 누구 == "kyungsik.oh, hong.gildong"
 
 
-def test_식음료가_아니면_설정값을_넣지_않는다(tmp_path):
-    import csv
+def test_참석자를_지우면_추가_참석자만_넣는다(tmp_path):
+    """수식을 지운 것은 본인을 빼겠다는 뜻이다."""
+    누구, _ = _한건(tmp_path, "", "hong.gildong, kim.minsu")
+    assert 누구 == "hong.gildong, kim.minsu"
 
-    from src import fix_expenses as fx
-    from src import settings
-    from src.attach_receipts import Row
 
-    cols = ["거래일", "금액", "승인번호", "경비유형", "참석자", "비즈니스목적", "코멘트"]
-    path = tmp_path / "m.csv"
-    with path.open("w", newline="", encoding="utf-8-sig") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols)
-        w.writeheader()
-        w.writerow({"거래일": "2026-07-02", "금액": "13500", "승인번호": "1",
-                    "경비유형": "주차비", "참석자": "",
-                    "비즈니스목적": "", "코멘트": "출장 주차"})
+def test_둘_다_비면_설정값을_쓴다(tmp_path):
+    """아무도 안 넣으면 식음료는 필수값이 비어서 리포트가 안 나간다."""
+    누구, gaps = _한건(tmp_path, "", "")
+    assert 누구 == "kyungsik.oh"
+    assert not gaps
 
-    cfg = {**settings.DEFAULTS, "attendee_default": "kyungsik.oh"}
-    screen = [Row(0, date(2026, 7, 2), 13500, "", "ID1", "환급 불가", "PARK")]
-    plans, _, _ = fx.plans_from_sheet(cfg, screen, path, 1)
-    assert plans[0][0].attendee == ""
+
+def test_같은_이름이_양쪽에_있으면_한_번만(tmp_path):
+    누구, _ = _한건(tmp_path, "kyungsik.oh", "kyungsik.oh, kim.minsu")
+    assert 누구 == "kyungsik.oh, kim.minsu"
+
+
+def test_식음료가_아니면_넣지_않는다(tmp_path):
+    """참석자 칸은 그 유형에만 있다. 다른 유형에 넣으려 하면 버튼이 없어 실패한다."""
+    누구, _ = _한건(tmp_path, "kyungsik.oh", "hong.gildong", "주차비")
+    assert 누구 == ""
 
 
 def test_참석자는_수식_추가_참석자는_빈_칸(tmp_path):

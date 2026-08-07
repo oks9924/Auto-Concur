@@ -1067,20 +1067,23 @@ def _attendee_for(cfg: dict, entry, label: str) -> str:
     """작업지의 '참석자' + '추가 참석자'. 식음료 행에서만 쓴다.
 
     참석자 칸은 수식이라 본인이 자동으로 들어가고, 같이 드신 분은 옆의 추가
-    참석자 칸에 적는다. 둘을 합쳐서 순서대로 넣는다. 같은 이름이 양쪽에 있으면
-    한 번만 넣는다.
+    참석자 칸에 적는다. 둘을 합쳐서 순서대로 넣고 중복은 뺀다.
+
+    참석자 칸을 지우면 본인을 빼겠다는 뜻이다. 그때는 추가 참석자만 넣는다.
+    다만 둘 다 비어 있으면 설정에 적어둔 사람을 쓴다 - 아무도 안 넣으면
+    식음료는 필수값이 비어서 Concur가 리포트를 안 받는다. 엑셀을 한 번도
+    열지 않아 수식이 계산되지 않은 경우도 여기에 걸린다.
 
     참석자 칸은 식음료 유형에만 있다. 주차비 같은 행에 넣으려 하면 그 버튼이
     없어 실패하므로 유형을 보고 거른다.
-
-    엑셀을 한 번도 안 열고 넘기면 수식 결과가 파일에 없어서 참석자가 빈 칸으로
-    읽힌다. 그때는 설정에 적어둔 사람을 쓴다 - 엑셀이 보여주던 값과 같다.
     """
     if LABEL_MEAL not in (entry.type_name or label or ""):
         return ""
-    mine = entry.attendee or cfg.get("attendee_default", "") or ""
-    everyone = parse_attendees(mine) + parse_attendees(getattr(entry, "extra_attendee", ""))
-    return ", ".join(dict.fromkeys(everyone))  # 순서 유지, 중복 제거
+    mine = parse_attendees(entry.attendee)
+    others = parse_attendees(getattr(entry, "extra_attendee", ""))
+    if not mine and not others:
+        mine = parse_attendees(cfg.get("attendee_default", ""))
+    return ", ".join(dict.fromkeys(mine + others))  # 순서 유지, 중복 제거
 
 
 def _gaps(entry, label: str) -> list[str]:
