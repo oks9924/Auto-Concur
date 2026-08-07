@@ -1,11 +1,13 @@
 @echo off
-chcp 65001 >nul
+rem CP949·Î ÀúÀåÇÑ´Ù. setup.bat °ú °°Àº ÀÌÀ¯´Ù.
 cd /d "%~dp0"
 
-if not exist venv\Scripts\python.exe (
-    echo ì•„ì§ ì„¤ì¹˜ê°€ ì•ˆ ëìŠµë‹ˆë‹¤. setup.bat ì„ ë¨¼ì € ë”ë¸”í´ë¦­í•´ ì£¼ì„¸ìš”.
-    pause
-    exit /b 1
-)
+if not exist venv\Scripts\python.exe goto notyet
+rem python.exe ·Î ¶ç¿î´Ù. pythonw ´Â Ã¢ÀÌ ¾È ¶ß´Â ´ë½Å ¿À·ùµµ ¾È º¸ÀÎ´Ù.
+venv\Scripts\python.exe -m src.gui
+exit /b 0
 
-venv\Scripts\python -m src.gui
+:notyet
+echo ¾ÆÁ÷ ¼³Ä¡°¡ ¾È µÆ½À´Ï´Ù. setup.bat À» ¸ÕÀú ´õºíÅ¬¸¯ÇØ ÁÖ¼¼¿ä.
+pause
+exit /b 1

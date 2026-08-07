@@ -1,87 +1,100 @@
 @echo off
-chcp 65001 >nul
-setlocal enabledelayedexpansion
+rem ÀÌ ÆÄÀÏÀº CP949·Î ÀúÀåÇÑ´Ù. cmd´Â ½Ã½ºÅÛ ÄÚµåÆäÀÌÁö·Î ÀÐ±â ¶§¹®¿¡
+rem UTF-8·Î ÀúÀåÇÏ¸é ÇÑ±ÛÀÌ ±úÁö°í, ±úÁø ±ÛÀÚ¸¦ ¸í·ÉÀ¸·Î ÇØ¼®ÇÏ´Ù ¹«³ÊÁø´Ù.
+rem °ýÈ£ ºí·Ï°ú Áö¿¬ È®Àåµµ ¾²Áö ¾Ê´Â´Ù. goto/call ·Î¸¸ Èå¸§À» ¸¸µç´Ù.
+setlocal
 cd /d "%~dp0"
 
 echo ================================================================
-echo   Concur ê²½ë¹„ ìžë™í™” - ì„¤ì¹˜
+echo   Concur °æºñ ÀÚµ¿È­ - ¼³Ä¡
 echo ================================================================
 echo.
 
-rem --- 1. Python ì°¾ê¸° -------------------------------------------------------
-rem py ëŸ°ì²˜ê°€ ìžˆìœ¼ë©´ ê·¸ê²ƒì´ ê°€ìž¥ í™•ì‹¤í•˜ë‹¤. ì—†ìœ¼ë©´ python ì„ ë³¸ë‹¤.
-set PY=
-py -3 --version >nul 2>&1 && set PY=py -3
-if not defined PY python --version >nul 2>&1 && set PY=python
+call :findpy
+if defined PY goto found
 
-if not defined PY (
-    echo Pythonì´ ì—†ìŠµë‹ˆë‹¤. ì„¤ì¹˜ë¥¼ ì‹œë„í•©ë‹ˆë‹¤.
-    echo.
+echo PythonÀÌ ¾ø½À´Ï´Ù. ¼³Ä¡¸¦ ½ÃµµÇÕ´Ï´Ù.
+echo.
+winget --version >nul 2>&1
+if errorlevel 1 goto download
 
-    rem winget ì€ Windows 10 ìµœì‹ íŒë¶€í„° ê¸°ë³¸ìœ¼ë¡œ ë“¤ì–´ ìžˆë‹¤. ìžˆìœ¼ë©´ ì´ê±¸ë¡œ ëë‚œë‹¤.
-    winget --version >nul 2>&1
-    if !errorlevel! equ 0 (
-        echo   wingetìœ¼ë¡œ Python 3.12ë¥¼ ì„¤ì¹˜í•©ë‹ˆë‹¤. ëª‡ ë¶„ ê±¸ë¦½ë‹ˆë‹¤...
-        winget install --id Python.Python.3.12 --scope user --silent ^
-            --accept-package-agreements --accept-source-agreements
-    ) else (
-        echo   wingetì´ ì—†ì–´ì„œ python.orgì—ì„œ ì§ì ‘ ë°›ìŠµë‹ˆë‹¤...
-        set INSTALLER=%TEMP%\python-setup.exe
-        powershell -NoProfile -Command ^
-            "Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe' -OutFile '%TEMP%\python-setup.exe'"
-        if not exist "!INSTALLER!" (
-            echo.
-            echo   ë‚´ë ¤ë°›ì§€ ëª»í–ˆìŠµë‹ˆë‹¤. íšŒì‚¬ ë„¤íŠ¸ì›Œí¬ê°€ ë§‰ê³  ìžˆì„ ìˆ˜ ìžˆìŠµë‹ˆë‹¤.
-            echo   https://www.python.org/downloads/ ì—ì„œ ì§ì ‘ ì„¤ì¹˜í•œ ë’¤ ë‹¤ì‹œ ì‹¤í–‰í•´ ì£¼ì„¸ìš”.
-            echo   ì„¤ì¹˜í•  ë•Œ 'Add python.exe to PATH' ë¥¼ ê¼­ ì²´í¬í•´ ì£¼ì„¸ìš”.
-            pause
-            exit /b 1
-        )
-        rem ì‚¬ìš©ìž ê³„ì •ì—ë§Œ ì„¤ì¹˜í•˜ë¯€ë¡œ ê´€ë¦¬ìž ê¶Œí•œì´ í•„ìš” ì—†ë‹¤.
-        "!INSTALLER!" /quiet InstallLauncherAllUsers=0 PrependPath=1 Include_test=0
-        del "!INSTALLER!" >nul 2>&1
-    )
+echo   wingetÀ¸·Î PythonÀ» ¼³Ä¡ÇÕ´Ï´Ù. ¸î ºÐ °É¸³´Ï´Ù...
+winget install --id Python.Python.3.12 --scope user --silent --accept-package-agreements --accept-source-agreements
+goto recheck
 
-    rem ë°©ê¸ˆ ì„¤ì¹˜í•œ ê²ƒì€ ì´ ì°½ì˜ PATHì— ì•„ì§ ì—†ë‹¤. ëŸ°ì²˜ë¥¼ ë‹¤ì‹œ ì°¾ëŠ”ë‹¤.
-    set PY=
-    py -3 --version >nul 2>&1 && set PY=py -3
-    if not defined PY python --version >nul 2>&1 && set PY=python
-    if not defined PY (
-        echo.
-        echo   ì„¤ì¹˜ëŠ” ëì§€ë§Œ ì´ ì°½ì—ì„œ ì°¾ì§€ ëª»í–ˆìŠµë‹ˆë‹¤.
-        echo   ì´ ì°½ì„ ë‹«ê³  setup.bat ì„ í•œ ë²ˆ ë” ì‹¤í–‰í•´ ì£¼ì„¸ìš”.
-        pause
-        exit /b 1
-    )
-)
+:download
+echo   wingetÀÌ ¾ø¾î¼­ python.org¿¡¼­ Á÷Á¢ ¹Þ½À´Ï´Ù...
+set "INSTALLER=%TEMP%\python-setup.exe"
+powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe' -OutFile ($env:TEMP + '\python-setup.exe')"
+if not exist "%INSTALLER%" goto nonet
+rem »ç¿ëÀÚ °èÁ¤¿¡¸¸ ¼³Ä¡ÇÏ¹Ç·Î °ü¸®ÀÚ ±ÇÇÑÀÌ ÇÊ¿ä ¾ø´Ù.
+"%INSTALLER%" /quiet InstallLauncherAllUsers=0 PrependPath=1 Include_test=0
+del "%INSTALLER%" >nul 2>&1
+goto recheck
 
-for /f "tokens=*" %%v in ('%PY% --version') do echo Python: %%v
+:nonet
+echo.
+echo   ³»·Á¹ÞÁö ¸øÇß½À´Ï´Ù. È¸»ç ³×Æ®¿öÅ©°¡ ¸·°í ÀÖÀ» ¼ö ÀÖ½À´Ï´Ù.
+echo   https://www.python.org/downloads/ ¿¡¼­ Á÷Á¢ ¼³Ä¡ÇÑ µÚ ´Ù½Ã ½ÇÇàÇØ ÁÖ¼¼¿ä.
+echo   ¼³Ä¡ÇÒ ¶§ 'Add python.exe to PATH' ¸¦ ²À Ã¼Å©ÇØ ÁÖ¼¼¿ä.
+goto fail
+
+:recheck
+call :findpy
+if defined PY goto found
+echo.
+echo   ¼³Ä¡´Â µÆÁö¸¸ ÀÌ Ã¢¿¡¼­ Ã£Áö ¸øÇß½À´Ï´Ù.
+echo   ÀÌ Ã¢À» ´Ý°í setup.bat À» ÇÑ ¹ø ´õ ½ÇÇàÇØ ÁÖ¼¼¿ä.
+goto fail
+
+:found
+%PY% --version
 echo.
 
-rem --- 2. ê°€ìƒí™˜ê²½ ----------------------------------------------------------
-if not exist venv (
-    echo ê°€ìƒí™˜ê²½ì„ ë§Œë“­ë‹ˆë‹¤...
-    %PY% -m venv venv || goto :fail
-)
+if exist venv goto haveenv
+echo °¡»óÈ¯°æÀ» ¸¸µì´Ï´Ù...
+%PY% -m venv venv
+if errorlevel 1 goto fail
 
-echo í•„ìš”í•œ ê²ƒë“¤ì„ ì„¤ì¹˜í•©ë‹ˆë‹¤. ëª‡ ë¶„ ê±¸ë¦½ë‹ˆë‹¤...
-venv\Scripts\python -m pip install --upgrade pip --quiet || goto :fail
-venv\Scripts\pip install -r requirements.txt --quiet || goto :fail
+:haveenv
+echo ÇÊ¿äÇÑ °ÍµéÀ» ¼³Ä¡ÇÕ´Ï´Ù. ¸î ºÐ °É¸³´Ï´Ù...
+venv\Scripts\python.exe -m pip install --upgrade pip --quiet
+if errorlevel 1 goto pipfail
+venv\Scripts\python.exe -m pip install -r requirements.txt --quiet
+if errorlevel 1 goto pipfail
 
-echo ë¸Œë¼ìš°ì €ë¥¼ ë°›ìŠµë‹ˆë‹¤...
-venv\Scripts\playwright install chromium || goto :fail
+echo ºê¶ó¿ìÀú¸¦ ¹Þ½À´Ï´Ù...
+venv\Scripts\python.exe -m playwright install chromium
+if errorlevel 1 goto fail
 
 echo.
 echo ================================================================
-echo   ì„¤ì¹˜ê°€ ëë‚¬ìŠµë‹ˆë‹¤.
-echo   ì´ì œ run.bat ì„ ë”ë¸”í´ë¦­í•˜ë©´ ì°½ì´ ëœ¹ë‹ˆë‹¤.
+echo   ¼³Ä¡°¡ ³¡³µ½À´Ï´Ù.
+echo   ÀÌÁ¦ run.bat À» ´õºíÅ¬¸¯ÇÏ¸é Ã¢ÀÌ ¶å´Ï´Ù.
 echo ================================================================
 pause
 exit /b 0
 
+:pipfail
+echo.
+echo ÆÐÅ°Áö¸¦ ¹ÞÁö ¸øÇß½À´Ï´Ù. ÈçÇÑ ÀÌÀ¯ µÎ °¡ÁöÀÔ´Ï´Ù.
+echo   1. È¸»ç ³×Æ®¿öÅ©°¡ pip ¸¦ ¸·´Â´Ù - »ç³» ÇÁ·Ï½Ã ¼³Á¤À» È®ÀÎÇØ ÁÖ¼¼¿ä.
+echo   2. Python ÀÌ ³Ê¹« ÃÖ½ÅÀÌ´Ù - 3.13 ÀÌ»óÀº ¾ÆÁ÷ ÁØºñ ¾È µÈ ÆÐÅ°Áö°¡ ÀÖ½À´Ï´Ù.
+echo      ±×¶§´Â 3.12 ¸¦ ¼³Ä¡ÇÏ°í venv Æú´õ¸¦ Áö¿î µÚ ´Ù½Ã ½ÇÇàÇØ ÁÖ¼¼¿ä.
+goto fail
+
 :fail
 echo.
-echo ì„¤ì¹˜ ì¤‘ì— ë¬¸ì œê°€ ìƒê²¼ìŠµë‹ˆë‹¤. ìœ„ì— ì°ížŒ ë©”ì‹œì§€ë¥¼ í™•ì¸í•´ ì£¼ì„¸ìš”.
-echo íšŒì‚¬ ë„¤íŠ¸ì›Œí¬ê°€ pip ë¥¼ ë§‰ëŠ” ê²½ìš°ê°€ ìžˆìŠµë‹ˆë‹¤.
 pause
 exit /b 1
+
+rem --- Python Ã£±â ---------------------------------------------------------
+rem py ·±Ã³°¡ ÀÖÀ¸¸é ±×°ÍÀÌ °¡Àå È®½ÇÇÏ´Ù. ¾øÀ¸¸é python À» º»´Ù.
+:findpy
+set "PY="
+py -3 --version >nul 2>&1
+if not errorlevel 1 set "PY=py -3"
+if defined PY goto :eof
+python --version >nul 2>&1
+if not errorlevel 1 set "PY=python"
+goto :eof
