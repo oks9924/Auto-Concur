@@ -122,6 +122,8 @@ class App(tk.Tk):
 
         self.log = scrolledtext.ScrolledText(self, width=100, height=20, state="disabled")
         self.log.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        # 다음에 뭘 해야 하는지는 굵게 찍는다. 진행 로그에 섞이면 지나친다.
+        self.log.tag_configure("강조", font=("TkDefaultFont", 10, "bold"), foreground="#0a5")
         self.rowconfigure(3, weight=1)
         self.columnconfigure(0, weight=1)
         self._say("버튼을 누르면 여기에 진행 상황이 찍힙니다.\n")
@@ -133,9 +135,9 @@ class App(tk.Tk):
         if chosen:
             self.folder.set(chosen)
 
-    def _say(self, text: str) -> None:
+    def _say(self, text: str, tag: str | None = None) -> None:
         self.log.configure(state="normal")
-        self.log.insert("end", text)
+        self.log.insert("end", text, tag or ())
         self.log.see("end")
         self.log.configure(state="disabled")
 
@@ -152,6 +154,8 @@ class App(tk.Tk):
                     message, done = payload
                     messagebox.showinfo("확인", message, parent=self)
                     done.set()
+                elif kind == "note":
+                    self._say(payload, "강조")
                 elif kind == "end":
                     self.busy = False
                     for button in self.buttons:
@@ -167,7 +171,7 @@ class App(tk.Tk):
         self.events.put(("ask", (message.strip(), done)))
         done.wait()
 
-    def _start(self, title: str, work) -> None:
+    def _start(self, title: str, work, note: str = "") -> None:
         if self.busy:
             messagebox.showinfo("잠깐만요", "앞 단계가 아직 돌고 있습니다.", parent=self)
             return
@@ -186,6 +190,8 @@ class App(tk.Tk):
             try:
                 work()
                 self.events.put(("end", f"\n{title} 을(를) 마쳤습니다.\n"))
+                if note:
+                    self.events.put(("note", f"\n{note}\n"))
             except Exception as exc:
                 writer.write("\n" + traceback.format_exc())
                 self.events.put(("end", f"\n{title} 중에 멈췄습니다: {exc}\n"))
@@ -216,7 +222,11 @@ class App(tk.Tk):
                 self._limit(),
             )
 
-        self._start("A. 전표 다운로드", work)
+        self._start(
+            "A. 전표 다운로드",
+            work,
+            "다음: [B. 파싱 · 작업지 생성] 을 눌러 주세요.",
+        )
 
     def step_organize(self) -> None:
         from . import organize
@@ -224,6 +234,9 @@ class App(tk.Tk):
         self._start(
             "B. 파싱 · 작업지 생성",
             lambda: organize.organize(Path(self.cfg["downloads_dir"]), True),
+            "다음: manifest.xlsx 를 열어 경비에 올릴 내용을 수정해 주세요.\n"
+            "      경비유형을 고르면 채워야 할 칸이 초록으로 바뀝니다.\n"
+            "      다 채우신 뒤 [C. Concur 반영] 을 눌러 주세요.",
         )
 
     def step_update(self) -> None:
@@ -240,7 +253,11 @@ class App(tk.Tk):
                 update_concur.pick_sheet(folder, None),
             )
 
-        self._start("C. Concur 반영", work)
+        self._start(
+            "C. Concur 반영",
+            work,
+            "Concur 화면에서 결과를 확인해 주세요. 실패한 건이 있으면 위 기록에 남아 있습니다.",
+        )
 
     def step_list_types(self) -> None:
         from . import fix_expenses
