@@ -172,3 +172,24 @@ def test_초록은_참석자와_추가_참석자_둘_다(tmp_path):
     칠한칸 = {str(r.sqref) for r in ws.conditional_formatting}
     for name in ("참석자", "추가 참석자"):
         assert f"{get_column_letter(MANIFEST_COLUMNS.index(name) + 1)}2" in 칠한칸
+
+
+def test_검색_결과_고르는_규칙이_파이썬과_같다():
+    """화면에서 고를 때 쓰는 JS와 지울지 판단할 때 쓰는 파이썬이 어긋나면 안 된다.
+
+    JS 쪽은 브라우저에서만 돌아서 여기서는 규칙만 견준다.
+    """
+    from src.fix_expenses import MATCH_NAME_FN, name_matches
+
+    # 같은 규칙이어야 한다: 검색어를 토막 내서 전부 들어 있으면 같은 사람
+    assert "every(p => low.includes(p))" in MATCH_NAME_FN
+    assert name_matches("kyungsik.oh", "Oh Kyungsik")
+    assert not name_matches("kyungsik.oh", "Lee Kyungmin")
+
+
+def test_검색_결과를_검색어로_고른다():
+    """첫 번째를 고르면 결과가 여럿일 때 엉뚱한 사람이 들어간다."""
+    from src.fix_expenses import SELECT_ATTENDEE_OPTION_JS
+
+    assert SELECT_ATTENDEE_OPTION_JS.startswith("(q) =>")
+    assert "findOption(q)" in SELECT_ATTENDEE_OPTION_JS

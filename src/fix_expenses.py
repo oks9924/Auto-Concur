@@ -202,22 +202,36 @@ REAL_ATTENDEE_FN = """
   };
 """
 
-HAS_ATTENDEE_OPTION_JS = (
-    "() => {"
-    + REAL_ATTENDEE_FN
+# 검색어와 맞는 결과를 고른다. 그냥 첫 번째를 고르면 두 가지가 어긋난다.
+#   - 결과가 여럿일 때 엉뚱한 사람이 들어간다.
+#   - 앞사람 검색 결과가 아직 지워지지 않았을 때 그 사람을 또 넣는다.
+# 파이썬의 name_matches 와 같은 규칙이다: 검색어를 토막 내서 전부 들어 있으면 같다.
+MATCH_NAME_FN = """
+  const looksLike = (query, text) => {
+    const parts = query.toLowerCase().split(/[^0-9a-z가-힣]+/i).filter(Boolean);
+    const low = (text || '').toLowerCase();
+    return parts.length > 0 && parts.every(p => low.includes(p));
+  };
+"""
+
+FIND_ATTENDEE_OPTION_FN = (
+    REAL_ATTENDEE_FN
+    + MATCH_NAME_FN
     + """
-  return [...document.querySelectorAll('li[role="option"]')].some(isRealAttendee);
-}"""
+  const findOption = (q) => [...document.querySelectorAll('li[role="option"]')]
+    .filter(isRealAttendee)
+    .find(o => looksLike(q, o.innerText));
+"""
+)
+
+HAS_ATTENDEE_OPTION_JS = (
+    "(q) => {" + FIND_ATTENDEE_OPTION_FN + " return !!findOption(q); }"
 )
 
 SELECT_ATTENDEE_OPTION_JS = (
-    "() => {"
-    + MARK_FN
-    + REAL_ATTENDEE_FN
-    + """
-  return mark([...document.querySelectorAll('li[role="option"]')].find(isRealAttendee));
-}"""
+    "(q) => {" + MARK_FN + FIND_ATTENDEE_OPTION_FN + " return mark(findOption(q)); }"
 )
+
 
 # 참석자 버튼은 '참석자 (0)' 처럼 개수를 달고 있다.
 ATTENDEE_COUNT_JS_BODY = """
@@ -248,6 +262,12 @@ ATTENDEE_ROWS_FN = """
 
 ATTENDEE_NAMES_JS = (
     "() => {" + ATTENDEE_ROWS_FN + " return rows().map(nameOf).filter(Boolean); }"
+)
+
+# 고른 사람이 실제로 표에 올라왔는지 본다. 눌렀다고 들어간 것은 아니다.
+HAS_ATTENDEE_ROW_JS = (
+    "(q) => {" + ATTENDEE_ROWS_FN + MATCH_NAME_FN
+    + " return rows().some(r => looksLike(q, nameOf(r))); }"
 )
 
 # 지울 사람의 체크박스를 고른다. 그 다음 툴바의 '제거'를 누른다. 행마다 있는
@@ -823,9 +843,13 @@ def _pick_attendee(page, query: str) -> None:
         arg={"sel": selector, "q": query},
         timeout=10000,
     )
-    _wait_js(page, HAS_ATTENDEE_OPTION_JS, f"'{query}' 검색 결과", timeout=25000)
-    _click_marked(page, SELECT_ATTENDEE_OPTION_JS, f"'{query}' 검색 결과")
-    page.wait_for_timeout(800)
+    _wait_js(page, HAS_ATTENDEE_OPTION_JS, f"'{query}' 검색 결과", arg=query, timeout=25000)
+    _click_marked(page, SELECT_ATTENDEE_OPTION_JS, f"'{query}' 검색 결과", arg=query)
+
+    # 표에 올라온 것을 보고 다음 사람으로 넘어간다. 확인 없이 넘어가면 앞사람이
+    # 덜 들어간 채로 다음 검색어를 치게 되고, 그 상태를 알아채지 못한다.
+    _wait_js(page, HAS_ATTENDEE_ROW_JS, f"'{query}' 가 목록에 올라오는 것",
+             arg=query, timeout=15000)
 
 
 def name_matches(query: str, name: str) -> bool:
