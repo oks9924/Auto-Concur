@@ -7,9 +7,9 @@ Tkinter를 쓴다. Windows 파이썬에 기본으로 들어 있어서 따로 설
 각 단계는 새 콘솔 창에서 돌린다. 카드 인증이나 로그인을 마치고 Enter를 눌러야
 하는 대기가 있어서, 창 안에 출력을 가두면 그 조작을 할 수 없다.
 
-창에는 기간과 전표 폴더만 둔다. Concur에 들어갈 값은 전부 작업지(엑셀)에서
-정한다. 규칙 실행에 쓰는 값들은 settings.json 에 그대로 있고, 바꿀 일이
-생기면 그 파일을 직접 고치면 된다.
+창에는 기간·전표 폴더·참석자만 둔다. 나머지는 전부 작업지(엑셀)에서 정한다.
+참석자는 늘 같은 사람이라 여기서 한 번 적어두면 작업지의 '내부 직원간 식음료'
+행마다 자동으로 들어간다. 다른 사람이면 엑셀에서 고치면 된다.
 """
 
 from __future__ import annotations
@@ -60,11 +60,21 @@ class App(tk.Tk):
         ttk.Label(span, text=" ~ ").pack(side="left")
         ttk.Entry(span, textvariable=self.to_date, width=12).pack(side="left")
 
+        # 참석자는 사람마다 고정이다. 여기 적어두면 작업지에 따라 들어간다.
+        ttk.Label(box, text="참석자").grid(row=1, column=0, sticky="w", **pad)
+        self.attendee = tk.StringVar(value=str(self.cfg.get("attendee_default", "")))
+        who = ttk.Frame(box)
+        who.grid(row=1, column=1, sticky="w", **pad)
+        ttk.Entry(who, textvariable=self.attendee, width=40).pack(side="left")
+        ttk.Label(
+            who, text="여러 명은 쉼표로 (kyungsik.oh, hong.gildong)", foreground="#666"
+        ).pack(side="left", padx=6)
+
         # 전표 폴더는 직접 고르게 한다. 경로를 손으로 치면 오타가 난다.
-        ttk.Label(box, text="전표 폴더").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(box, text="전표 폴더").grid(row=2, column=0, sticky="w", **pad)
         self.folder = tk.StringVar(value=str(self.cfg.get("downloads_dir", "downloads")))
         picker = ttk.Frame(box)
-        picker.grid(row=1, column=1, sticky="w", **pad)
+        picker.grid(row=2, column=1, sticky="w", **pad)
         ttk.Entry(picker, textvariable=self.folder, width=40).pack(side="left")
         ttk.Button(picker, text="찾아보기", command=self.pick_folder).pack(side="left", padx=6)
 
@@ -110,6 +120,7 @@ class App(tk.Tk):
 
     def save(self) -> bool:
         self.cfg["downloads_dir"] = self.folder.get().strip() or "downloads"
+        self.cfg["attendee_default"] = self.attendee.get().strip()
         settings.save(self.cfg)
         return True
 

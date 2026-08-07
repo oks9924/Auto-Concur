@@ -124,12 +124,13 @@ def test_숙박비를_고른_행에만_기본값이_나온다(tmp_path):
 
     from src import settings
     from src.organize import MANIFEST_COLUMNS
-    from src.sheet import TYPE_DEFAULTS
+    from src.settings import type_defaults
 
     base = dict.fromkeys(MANIFEST_COLUMNS, "")
     rows = [base | {"거래일": "2026-08-02", "금액": "450000", "승인번호": "1"}]
     path = tmp_path / "m.xlsx"
-    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS))
+    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS),
+                     type_defaults=settings.type_defaults(settings.DEFAULTS))
 
     ws = load_workbook(path)["전표"]
     셀 = ws.cell(row=2, column=MANIFEST_COLUMNS.index("숙박위치") + 1)
@@ -139,8 +140,9 @@ def test_숙박비를_고른_행에만_기본값이_나온다(tmp_path):
 
     # 기본값은 드롭다운 목록 안에 있어야 한다. 아니면 사람이 고칠 수도 없다.
     고를수있는값 = settings.choices(settings.DEFAULTS)
-    assert TYPE_DEFAULTS["숙박비"]["숙박위치"] in 고를수있는값["숙박위치"]
-    assert TYPE_DEFAULTS["숙박비"]["Booking Channel"] in 고를수있는값["Booking Channel"]
+    기본값 = type_defaults(settings.DEFAULTS)["숙박비"]
+    assert 기본값["숙박위치"] in 고를수있는값["숙박위치"]
+    assert 기본값["Booking Channel"] in 고를수있는값["Booking Channel"]
 
 
 def test_사람이_적은_값은_수식으로_덮이지_않는다(tmp_path):
@@ -152,7 +154,8 @@ def test_사람이_적은_값은_수식으로_덮이지_않는다(tmp_path):
     base = dict.fromkeys(MANIFEST_COLUMNS, "")
     rows = [base | {"거래일": "2026-08-02", "금액": "450000", "승인번호": "1", "숙박위치": "해외"}]
     path = tmp_path / "m.xlsx"
-    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS))
+    sheet.write_xlsx(MANIFEST_COLUMNS, rows, path, settings.choices(settings.DEFAULTS),
+                     type_defaults=settings.type_defaults(settings.DEFAULTS))
 
     ws = load_workbook(path)["전표"]
     assert ws.cell(row=2, column=MANIFEST_COLUMNS.index("숙박위치") + 1).value == "해외"

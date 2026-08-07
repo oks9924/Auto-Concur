@@ -1,20 +1,14 @@
 """Concur 경비의 경비유형·참석자·목적·코멘트를 채운다.
 
-로그인(SSO)과 리포트 열기는 사람이 한다. 그 다음 목록을 읽어 규칙대로 고친다.
+로그인(SSO)과 리포트 열기는 사람이 한다. 그 다음 목록을 읽어 작업지대로 고친다.
 
-    python -m src.fix_expenses                     # 계획만 (아무것도 안 바꿈)
-    python -m src.fix_expenses --apply --limit 1   # 한 건만 해보고 확인
-    python -m src.fix_expenses --apply             # 나머지 전부
+    python -m src.fix_expenses --sheet                     # 계획만 (아무것도 안 바꿈)
+    python -m src.fix_expenses --sheet --apply --limit 1   # 한 건만 해보고 확인
+    python -m src.fix_expenses --sheet --apply             # 나머지 전부
 
-규칙:
-  금액 >= 100,000        -> 숙박비. 참석자·목적·코멘트는 넣지 않는다.
-  개인 식사 (SISW Only)  -> 내부 직원간 식음료 + 참석자·목적·코멘트
-  내부 직원간 식음료      -> 참석자·목적·코멘트만 채운다
-  그 외(환급 불가 등)     -> 건드리지 않는다
-
-작업지가 유일한 기준이다. 다시 돌리면 유형·목적·코멘트는 적힌 값으로 다시
-맞추고(이미 같으면 건드리지 않는다), 참석자는 화면과 견줘서 빠진 사람만 넣는다.
-작업지에 없는 참석자가 올라와 있으면 멈추고 알린다 - 지우는 화면은 아직 모른다.
+작업지(엑셀)가 유일한 기준이다. 다시 돌리면 유형·목적·코멘트는 적힌 값으로 다시
+맞추고(이미 같으면 건드리지 않는다), 참석자는 화면과 견줘서 없는 사람은 지우고
+빠진 사람만 넣는다. 빈 칸은 '건드리지 마라'는 뜻이다.
 """
 
 from __future__ import annotations
@@ -44,7 +38,6 @@ from .attach_receipts import (
 PROFILE_DIR = Path("browser-profile") / "concur"
 
 LABEL_MEAL = "내부 직원간 식음료"
-LABEL_PERSONAL_MEAL = "개인 식사"
 
 PURPOSE_FIELD = "#businessPurpose"
 COMMENT_FIELD = "textarea#comment"
@@ -238,7 +231,6 @@ ATTENDEE_COUNT_JS = "() => {" + ATTENDEE_COUNT_JS_BODY + " return n; }"
 # 참석자 모달 (실측 2026-08). 표가 <table>이 아니라 div[role="table"]이다.
 # tbody tr 로 찾다가 한 줄도 못 읽었고, 그래서 이미 맞게 들어 있는 참석자를
 # '다르다'고 판단했다. 훅이 다 붙어 있으니 짐작할 필요가 없다.
-ATTENDEE_MODAL = '[data-nuiexp="attendees-dialog"]'
 ATTENDEE_SAVE = '[data-nuiexp="sat-btn-save"]'
 ATTENDEE_CANCEL = '[data-nuiexp="sat-btn-cancel"]'
 ATTENDEE_REMOVE = '[data-nuiexp="sat-btn-remove-attendee"]'
@@ -346,7 +338,6 @@ READ_OPTIONS_JS = """
 # 달력 버튼이 붙어 있지만 입력창 자체가 타이핑을 받는다. 달력을 눌러 고르는
 # 것보다 확실하다.
 DATE_RANGE_FIELD = "#hotelCheckinDate-date-input-field-input"
-DATE_RANGE_CALENDAR = "#hotelCheckinDate-date-input-field-icon"
 
 # 탭은 id가 붙어 있다. 글자로 찾을 필요가 없다.
 TAB_DETAILS = "#details-tab"
@@ -355,8 +346,6 @@ TAB_ITEMIZATION = "#itemizations-tab"
 # 항목별 명세의 객실 요금 입력. id가 '<종류>Itemization.roomRate.<행번호>' 꼴이다
 # (실측: SameRoomRateItemization.roomRate.0). '일일 금액 다름'으로 바꾸면 앞부분이
 # 달라질 수 있어서 뒤쪽 모양만 본다. 세금 칸(taxRate)은 건드리지 않는다.
-ROOM_RATE_RE = r"Itemization\.roomRate\.(\d+)$"
-
 ROOM_RATE_INPUTS_JS = """
 () => [...document.querySelectorAll('input')]
   .map(x => ({ key: x.id || x.getAttribute('name') || '', el: x }))
@@ -523,46 +512,6 @@ class Plan:
                 f"일일 {per[0]:,}원"
             )
         return ", ".join(what) or "변경 없음"
-
-
-@dataclass
-class Rules:
-    """규칙에 쓰는 값들. 규칙 자체는 코드에 둔다."""
-
-    threshold: int
-    large_code: str
-    large_label: str
-    meal_code: str
-    purpose: str
-    comment: str
-    attendee: str
-
-
-def rules_from(cfg: dict) -> Rules:
-    large = cfg["large_amount_type"]
-    return Rules(
-        threshold=int(cfg["lodging_threshold"]),
-        large_code=settings.code_for(cfg, large),
-        large_label=large,
-        meal_code=settings.code_for(cfg, LABEL_MEAL),
-        purpose=cfg["business_purpose"],
-        comment=cfg["comment"],
-        attendee=cfg["attendee_query"],
-    )
-
-
-def decide(row: Row, rules: Rules) -> Plan | None:
-    """이 경비를 어떻게 고칠지. 대상이 아니면 None."""
-    kind = row.expense_type or ""
-    if row.amount is not None and row.amount >= rules.threshold:
-        if rules.large_label in kind:
-            return None  # 이미 그 유형이다
-        return Plan(row, rules.large_code, rules.large_label)
-    if kind.startswith(LABEL_PERSONAL_MEAL):
-        return Plan(row, rules.meal_code, LABEL_MEAL, rules.purpose, rules.comment, rules.attendee)
-    if kind.startswith(LABEL_MEAL):
-        return Plan(row, None, kind, rules.purpose, rules.comment, rules.attendee)
-    return None
 
 
 def _dump(page, tag: str, script: str) -> str | None:
@@ -1168,28 +1117,22 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
 
 
 def fix_phase(page, report_url: str, cfg: dict, apply: bool,
-              limit: int | None, sheet_path: Path | None) -> int:
-    """열려 있는 리포트의 유형·목적·코멘트·참석자를 채운다."""
-    rules = rules_from(cfg)
+              limit: int | None, sheet_path: Path) -> int:
+    """작업지에 적힌 대로 유형·목적·코멘트·참석자·숙박 상세를 채운다."""
     rows = read_rows(page)
-
-    if sheet_path:
-        paired, gaps, missing = plans_from_sheet(cfg, [r for r in rows if r.expense_id],
-                                                 sheet_path, int(cfg["date_tolerance_days"]))
-        plans = [p for p, _, _ in paired]
-        source = {id(p): (entry, how) for p, how, entry in paired}
-        if gaps:
-            print(f"\n작업지에 빠진 값이 있습니다 {len(gaps)}건. 그 부분은 채우지 못합니다:")
-            for entry, holes in gaps:
-                print(f"  {entry.when} {entry.amount:>9,}원  [{entry.type_name}] "
-                      f"-> {', '.join(holes)} 가 비어 있습니다")
-        if missing:
-            print(f"\n작업지에는 있으나 Concur에서 찾지 못한 것 {len(missing)}건:")
-            for entry, why in missing:
-                print(f"  {entry.when} {entry.amount:>9,}원  {entry.merchant[:16]} - {why}")
-    else:
-        plans = [p for p in (decide(r, rules) for r in rows if r.expense_id) if p]
-        source = {}
+    paired, gaps, missing = plans_from_sheet(cfg, [r for r in rows if r.expense_id],
+                                             sheet_path, int(cfg["date_tolerance_days"]))
+    plans = [p for p, _, _ in paired]
+    source = {id(p): (entry, how) for p, how, entry in paired}
+    if gaps:
+        print(f"\n작업지에 빠진 값이 있습니다 {len(gaps)}건. 그 부분은 채우지 못합니다:")
+        for entry, holes in gaps:
+            print(f"  {entry.when} {entry.amount:>9,}원  [{entry.type_name}] "
+                  f"-> {', '.join(holes)} 가 비어 있습니다")
+    if missing:
+        print(f"\n작업지에는 있으나 Concur에서 찾지 못한 것 {len(missing)}건:")
+        for entry, why in missing:
+            print(f"  {entry.when} {entry.amount:>9,}원  {entry.merchant[:16]} - {why}")
 
     print(f"\n경비 {len(rows)}건 중 {len(plans)}건을 수정합니다")
     print("  (화면의 현재 유형  ->  작업지대로 바꿀 내용  [짝지은 전표])\n")
@@ -1291,6 +1234,15 @@ def list_lodging_phase(page, cfg: dict) -> int:
     return 0
 
 
+def _default_sheet() -> Path:
+    """전표 폴더의 작업지. xlsx를 csv보다 먼저 본다."""
+    folder = Path(settings.load()["downloads_dir"])
+    for name in ("manifest.xlsx", "manifest.csv"):
+        if (folder / name).exists():
+            return folder / name
+    return folder / "manifest.csv"
+
+
 def run(apply: bool, limit: int | None, list_types: bool = False,
         sheet_path: Path | None = None, list_lodging: bool = False) -> int:
     cfg = settings.load()
@@ -1312,7 +1264,7 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true", help="실제로 반영합니다")
     ap.add_argument("--limit", type=int, help="앞에서 N건만 처리합니다 (동작 확인용)")
     ap.add_argument("--sheet", nargs="?", const="", type=str,
-                    help="작업지(csv/xlsx)대로 넣습니다. 값 없이 주시면 전표 폴더의 manifest.csv 를 씁니다")
+                    help="작업지 경로입니다. 없으면 전표 폴더에서 찾습니다")
     ap.add_argument("--list-types", action="store_true",
                     help="화면의 경비유형과 코드를 뽑습니다 (새 유형이 생겼을 때 쓰세요)")
     ap.add_argument("--list-lodging", action="store_true",
@@ -1321,7 +1273,9 @@ def main() -> int:
     try:
         path = None
         if args.sheet is not None:
-            path = Path(args.sheet) if args.sheet else Path(settings.load()["downloads_dir"]) / "manifest.csv"
+            path = Path(args.sheet) if args.sheet else _default_sheet()
+        elif not (args.list_types or args.list_lodging):
+            path = _default_sheet()
         return run(args.apply, args.limit, args.list_types, path, args.list_lodging)
     except (AttachError, sheet.SheetError) as exc:
         print(f"\n작업을 중단했습니다: {exc}")

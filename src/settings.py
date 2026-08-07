@@ -35,9 +35,6 @@ EXPENSE_TYPE_CODES = {
     "내부 직원 용 선물": "GIFTS",
 }
 
-# 숙박비 상세의 드롭다운 값. 화면에서 뽑아 넣는다:
-#   python -m src.fix_expenses --list-lodging
-# 비어 있으면 엑셀에 드롭다운을 걸지 않는다 - 목록을 모르면 강제할 수도 없다.
 # 숙박비 상세의 두 드롭다운. 화면 덤프에서 확인한 값 그대로다 (2026-08).
 # 화면과 한 글자라도 다르면 고를 수 없으니 손으로 고치지 말 것.
 # 정책이 바뀌어 값이 늘면 다시 뽑는다: python -m src.fix_expenses --list-lodging
@@ -45,20 +42,15 @@ LODGING_LOCATIONS = ["국내", "해외"]
 BOOKING_CHANNELS = ["Concur (HRS)", "Others"]
 
 DEFAULTS = {
-    "business_purpose": "현대 중공업 식대",
-    "comment": "현대 중공업 출장 식대",
-    "attendee_query": "kyungsik.oh",
-    # 이 금액 이상이면 large_amount_type 으로 바꾸고 참석자·목적·코멘트는 넣지 않는다.
-    "lodging_threshold": 100000,
-    "large_amount_type": "숙박비",
     # 영수증 매칭에서 허용할 날짜 차이. 카드 매입 처리 때문에 하루 어긋난다.
     "date_tolerance_days": 1,
     "downloads_dir": "downloads",
     "expense_type_codes": EXPENSE_TYPE_CODES,
     "lodging_locations": LODGING_LOCATIONS,
     "booking_channels": BOOKING_CHANNELS,
-    # 작업지의 그 칸이 비어 있을 때 쓸 값. 엑셀 수식이 계산되지 않은 채로
-    # 저장되면 빈 칸으로 읽히는데, 그때도 숙박비는 이 값으로 채운다.
+    # 유형을 고르면 작업지에 따라 채워지는 값. 창에서 바꾼다.
+    # 참석자는 사람마다 다르니 비워둔 채로 시작한다.
+    "attendee_default": "",
     "lodging_location_default": "국내",
     "booking_channel_default": "Others",
 }
@@ -68,6 +60,17 @@ CHOICE_COLUMNS = {
     "경비유형": "expense_type_codes",
     "숙박위치": "lodging_locations",
     "Booking Channel": "booking_channels",
+}
+
+# 경비유형을 고르면 그 행에 따라 채워질 값. {유형: {칼럼: 설정키}}
+# 값이 아니라 엑셀 수식으로 들어간다 - 작업지를 만드는 시점에는 그 경비가
+# 무슨 유형인지 알 수 없기 때문이다(유형은 사람이 나중에 고른다).
+TYPE_DEFAULT_KEYS = {
+    "내부 직원간 식음료": {"참석자": "attendee_default"},
+    "숙박비": {
+        "숙박위치": "lodging_location_default",
+        "Booking Channel": "booking_channel_default",
+    },
 }
 
 
@@ -92,6 +95,17 @@ def save(data: dict) -> None:
 def choices(data: dict) -> dict[str, list[str]]:
     """작업지 드롭다운에 걸 목록. {칼럼 이름: 고를 수 있는 값들}."""
     return {col: list(data.get(key) or []) for col, key in CHOICE_COLUMNS.items()}
+
+
+def type_defaults(data: dict) -> dict[str, dict[str, str]]:
+    """{경비유형: {칼럼: 채울 값}}. 값이 비어 있는 칸은 뺀다."""
+    out = {}
+    for type_name, columns in TYPE_DEFAULT_KEYS.items():
+        filled = {col: data.get(key) or "" for col, key in columns.items()}
+        filled = {col: value for col, value in filled.items() if value}
+        if filled:
+            out[type_name] = filled
+    return out
 
 
 def code_for(data: dict, type_name: str) -> str:

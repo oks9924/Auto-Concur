@@ -9,3 +9,6 @@ tests/fixtures/*.pdf
 manifest.csv
 browser-profile/
 inspect-out/
+
+# 사람마다 다른 설정. 받는 사람이 자기 값으로 만든다.
+settings.json

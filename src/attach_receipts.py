@@ -35,8 +35,6 @@ START_URL = "https://travel.siemens.cloud"
 
 UPLOAD_INPUT = "#upload-file"
 AMOUNT_FIELD = "#transactionAmount"
-DATE_FIELD = "#transactionDate-date-input-field-input"
-VENDOR_FIELD = "#vendorName"
 
 # 행의 id가 곧 경비 ID다. 상세 주소가 .../reports/{리포트}/expenses/{경비} 라서
 # 주소를 직접 만들 수 있다. 클릭해서 여는 것보다 훨씬 확실하다.
