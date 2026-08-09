@@ -102,6 +102,14 @@ def _rows_from_xlsx(path: Path) -> list[dict]:
 # 이 유형을 고르면 그 칸들을 채워야 한다. 초록으로 물들여 알린다.
 ATTENDEE_REQUIRED_TYPE = "내부 직원간 식음료"
 LODGING_TYPE = "숙박비"
+TRANSIT_TYPE = "대중교통비(지하철, 버스, 기차, 택시, 통행료 등)"
+
+# {유형: 그 유형에서 채워야 하는 칸들}
+GREEN_BY_TYPE = {
+    ATTENDEE_REQUIRED_TYPE: [ATTENDEE_COLUMN, EXTRA_ATTENDEE_COLUMN, "비즈니스목적", "코멘트"],
+    LODGING_TYPE: [*LODGING_COLUMNS, "코멘트"],
+    TRANSIT_TYPE: ["코멘트"],
+}
 
 # 칸에 붙일 설명. 머리글에 마우스를 올리면 뜨고, 칸을 고르면 노란 쪽지로 뜬다.
 NOTES = {
@@ -247,13 +255,10 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path,
     col = get_column_letter(columns.index("경비유형") + 1)
 
     # 그 유형에서 꼭 채워야 하는 칸을 초록으로 칠한다. 빈 칸은 눈에 안 띄어서
-    # 빠뜨리기 쉽다. 식음료면 참석자, 숙박비면 입실·퇴실·숙박위치·채널이다.
+    # 빠뜨리기 쉽다. 한 칸이 여러 유형에서 초록일 수 있어서(코멘트) 규칙을
+    # 칸마다 겹쳐 건다 - 엑셀은 조건이 맞는 규칙을 다 적용한다.
     green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-    needed = {
-        ATTENDEE_REQUIRED_TYPE: [ATTENDEE_COLUMN, EXTRA_ATTENDEE_COLUMN],
-        LODGING_TYPE: LODGING_COLUMNS,
-    }
-    for type_name, names in needed.items():
+    for type_name, names in GREEN_BY_TYPE.items():
         for name in names:
             if name not in columns or not rows:
                 continue

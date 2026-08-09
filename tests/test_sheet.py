@@ -126,3 +126,44 @@ def test_감춘_칼럼은_엑셀에서_안_보인다(tmp_path):
         assert ws.column_dimensions[letter].hidden, name
     money = get_column_letter(MANIFEST_COLUMNS.index("금액") + 1)
     assert not ws.column_dimensions[money].hidden
+
+
+def test_유형마다_채워야_할_칸이_초록이다(tmp_path):
+    """빈 칸은 눈에 안 띈다. 그 유형에서 필요한 칸을 유형별로 물들인다."""
+    from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
+
+    from src.sheet import ATTENDEE_REQUIRED_TYPE, LODGING_TYPE, TRANSIT_TYPE
+
+    path = tmp_path / "green.xlsx"
+    sheet.write_xlsx(MANIFEST_COLUMNS, ROWS, path, CHOICES)
+    ws = load_workbook(path)["전표"]
+
+    칠한칸 = {}
+    for r in ws.conditional_formatting:
+        for rule in r.rules:
+            칠한칸.setdefault(str(r.sqref).split(":")[0], []).append(rule.formula[0])
+
+    def 규칙(name):
+        letter = get_column_letter(MANIFEST_COLUMNS.index(name) + 1)
+        return " ".join(칠한칸.get(f"{letter}2", []))
+
+    for name in ("참석자", "추가 참석자", "비즈니스목적", "코멘트"):
+        assert ATTENDEE_REQUIRED_TYPE in 규칙(name), name
+    for name in ("입실날짜", "퇴실날짜", "숙박위치", "Booking Channel", "코멘트"):
+        assert LODGING_TYPE in 규칙(name), name
+    assert TRANSIT_TYPE in 규칙("코멘트")
+
+    # 코멘트 한 칸에 세 유형이 겹쳐 걸린다
+    assert len(칠한칸[get_column_letter(MANIFEST_COLUMNS.index("코멘트") + 1) + "2"]) == 3
+    # 참석자는 식음료에서만 초록이다
+    assert LODGING_TYPE not in 규칙("참석자")
+
+
+def test_대중교통비_이름이_설정과_같다():
+    """이름이 한 글자라도 다르면 조건부 서식이 영영 안 켜진다."""
+    from src.settings import EXPENSE_TYPE_CODES
+    from src.sheet import GREEN_BY_TYPE
+
+    for type_name in GREEN_BY_TYPE:
+        assert type_name in EXPENSE_TYPE_CODES, type_name
