@@ -19,7 +19,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from . import console
+from . import browser, console
 
 PROFILE_DIR = Path("browser-profile")
 OUT_DIR = Path("inspect-out")
@@ -153,12 +153,8 @@ def dump(url: str, name: str, channel: str | None) -> None:
     with sync_playwright() as p:
         # 회사 SSO에 조건부 액세스가 걸려 있으면 번들 Chromium이 '관리되지 않는
         # 브라우저'로 막힐 수 있다. 그때는 --channel chrome 으로 설치된 Chrome을 쓴다.
-        ctx = p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR / name),
-            headless=False,
-            accept_downloads=True,
-            locale="ko-KR",
-            **({"channel": channel} if channel else {}),
+        ctx = browser.launch(
+            p, PROFILE_DIR / name, only=channel, accept_downloads=True, locale="ko-KR"
         )
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(url, wait_until="domcontentloaded")

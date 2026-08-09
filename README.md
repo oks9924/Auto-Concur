@@ -477,3 +477,36 @@ UTF-8로 맞춘다 (`src/console.py`). 한국어 Windows(cp949)는 원래 문제
 돌리면 그 파일만 `PermissionError`로 실패 목록에 남는다. 뷰어를 닫고 다시 돌리면 된다.
 
 **CSV 한글.** `manifest.csv`는 utf-8-sig로 쓴다. 엑셀에서 바로 열어도 안 깨진다.
+
+**브라우저 다운로드가 막힌다.** `setup.bat`에서 이렇게 뜨는 경우다.
+
+```
+Downloading Chrome for Testing ... from https://cdn.playwright.dev/...
+Error: connect EACCES 150.171.110.133:443
+Failed to install browsers
+```
+
+회사 방화벽이 `cdn.playwright.dev`를 막은 것이다. **그냥 넘어가도 된다.**
+이 프로그램은 PC에 이미 깔려 있는 **Edge**를 쓴다 (`src/browser.py`,
+순서는 Edge → Chrome → 내려받은 Chromium). setup.bat도 이 단계에서
+실패해도 멈추지 않는다.
+
+특정 브라우저를 쓰고 싶으면 환경변수로 고른다.
+
+```bat
+set CONCUR_BROWSER=chrome
+run.bat
+```
+
+굳이 번들 Chromium을 쓰고 싶다면 셋 중 하나다.
+
+1. **프록시를 알려준다** (사내 프록시 주소는 IT에 문의):
+   ```bat
+   set HTTPS_PROXY=http://프록시주소:포트
+   venv\Scripts\python.exe -m playwright install chromium
+   ```
+2. **다른 망에서 받아 옮긴다.** 인터넷이 되는 PC에서 위 URL의 zip을 받아,
+   회사 PC의 `%LOCALAPPDATA%\ms-playwright\chromium-<번호>\` 에 풀어 넣는다.
+   `<번호>`는 오류 메시지의 `playwright chromium v1234`에서 나오는 그 번호다.
+   압축을 풀면 `...\chromium-1234\chrome-win64\chrome.exe` 가 되어야 한다.
+3. **아무것도 안 한다.** Edge로 돌아간다. 실제로 이 방법을 쓴다.

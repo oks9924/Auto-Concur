@@ -65,16 +65,26 @@ if errorlevel 1 goto pipfail
 venv\Scripts\python.exe -m pip install -r requirements.txt --quiet
 if errorlevel 1 goto pipfail
 
-echo Downloading the browser...
+rem The bundled Chromium is a nice-to-have, not a requirement. The program uses
+rem the Edge or Chrome already on the PC. A company firewall often blocks
+rem cdn.playwright.dev (connect EACCES) and that must not stop setup.
+echo Downloading the browser (optional - Edge is used if this fails)...
 venv\Scripts\python.exe -m playwright install chromium
-if errorlevel 1 goto fail
+if errorlevel 1 goto nobrowser
 
+:done
 echo.
 echo ================================================================
 echo   Setup finished. Now double-click run.bat
 echo ================================================================
 pause
 exit /b 0
+
+:nobrowser
+echo.
+echo   Could not download the browser - your company network blocks it.
+echo   That is fine. Microsoft Edge on this PC will be used instead.
+goto done
 
 :pipfail
 echo.

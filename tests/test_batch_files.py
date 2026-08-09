@@ -29,3 +29,33 @@ def test_줄바꿈이_crlf다(path):
     # LF만 있으면 goto 라벨을 못 찾는 cmd가 있다.
     data = path.read_bytes()
     assert data.count(b"\n") == data.count(b"\r\n")
+
+
+def test_브라우저는_이미_깔린_것부터_쓴다():
+    """회사 방화벽이 cdn.playwright.dev 를 막으면 번들 Chromium을 못 받는다.
+
+    Windows에는 Edge가 늘 있으니 그것부터 쓴다. 순서를 바꾸면 브라우저
+    프로필(로그인 상태)이 다른 브라우저 것으로 열려 다시 로그인해야 한다.
+    """
+    from src import browser
+
+    assert browser.channels() == ["msedge", "chrome", None]
+
+
+def test_환경변수로_브라우저를_고를_수_있다(monkeypatch):
+    from src import browser
+
+    monkeypatch.setenv("CONCUR_BROWSER", "chrome")
+    assert browser.channels() == ["chrome"]
+    monkeypatch.setenv("CONCUR_BROWSER", "chromium")
+    assert browser.channels() == [None]
+
+
+def test_설치가_브라우저_다운로드_실패로_멈추지_않는다():
+    """Edge를 쓰므로 번들 Chromium은 없어도 된다."""
+    from pathlib import Path
+
+    text = Path("setup.bat").read_text(encoding="ascii")
+    install = text.split("playwright install chromium")[1].splitlines()[1]
+    assert "goto nobrowser" in install  # goto fail 이면 안 된다
+    assert ":nobrowser" in text

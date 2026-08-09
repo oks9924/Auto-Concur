@@ -25,7 +25,7 @@ from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 from pypdf import PdfReader, PdfWriter
 
-from . import console, settings
+from . import browser, console, settings
 
 SLIP_PAGE = "https://mycompany.hyundaicard.com/hs/cs/HSCS1002.do?_method=s&_proc=authCard"
 PROFILE_DIR = Path("browser-profile") / "hyundaicard"
@@ -150,12 +150,7 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
     raw_dir.mkdir(exist_ok=True)
 
     with sync_playwright() as p:
-        ctx = p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR),
-            headless=False,
-            accept_downloads=True,
-            locale="ko-KR",
-        )
+        ctx = browser.launch(p, PROFILE_DIR, accept_downloads=True, locale="ko-KR")
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(SLIP_PAGE, wait_until="domcontentloaded")
 

@@ -28,7 +28,7 @@ from playwright.sync_api import Error as PWError
 from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 
-from . import console, hangul, settings
+from . import browser, console, hangul, settings
 
 PROFILE_DIR = Path("browser-profile") / "concur"
 START_URL = "https://travel.siemens.cloud"
@@ -434,9 +434,7 @@ def open_report():
     C·D단계를 한 세션에서 이어 하려고 분리했다.
     """
     pw = sync_playwright().start()
-    ctx = pw.chromium.launch_persistent_context(
-        user_data_dir=str(PROFILE_DIR), headless=False, accept_downloads=True
-    )
+    ctx = browser.launch(pw, PROFILE_DIR, accept_downloads=True)
     page = ctx.pages[0] if ctx.pages else ctx.new_page()
     page.goto(START_URL, wait_until="domcontentloaded")
 
