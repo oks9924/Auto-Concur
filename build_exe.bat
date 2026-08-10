@@ -1,10 +1,10 @@
 @echo off
 rem ASCII only - same reason as setup.bat.
 rem
-rem Makes dist\Auto-Concur.exe. Run this on a PC where pip works, then copy the
-rem exe to the locked-down PC. Some tools (DuoNX) can only register an
-rem executable - no arguments, no working directory - so a .bat or a .py file
-rem cannot be registered but this exe can.
+rem Makes dist\Auto-Concur\Auto-Concur.exe. Run this on a PC where pip works,
+rem then copy that folder to the locked-down PC. Some tools (DuoNX) can only
+rem register an executable - no arguments, no working directory - so a .bat or
+rem a .py file cannot be registered but this exe can.
 cd /d "%~dp0"
 
 if not exist venv\Scripts\python.exe goto notyet
@@ -12,6 +12,12 @@ if not exist venv\Scripts\python.exe goto notyet
 echo Installing the build tool...
 venv\Scripts\python.exe -m pip install pyinstaller --quiet
 if errorlevel 1 goto pipfail
+
+rem Wipe dist first. An earlier --onefile build leaves a FILE named
+rem dist\Auto-Concur.exe, and --onedir now needs a FOLDER named
+rem dist\Auto-Concur. PyInstaller cannot make one over the other, and --clean
+rem only clears its own cache, not dist. Leaving it there breaks the build.
+if exist dist rmdir /s /q dist
 
 echo.
 echo Building. This takes a few minutes...

@@ -185,3 +185,17 @@ def test_exe는_매번_풀지_않는다():
     인수 = [x.strip().rstrip("^").strip() for x in 빌드.splitlines()
           if not x.strip().startswith("rem")]
     assert "--onedir" in 인수 and "--onefile" not in 인수
+
+
+def test_빌드는_이전_결과를_먼저_지운다():
+    """--onefile 이 남긴 파일 dist\\Auto-Concur.exe 와 --onedir 이 만들 폴더
+    dist\\Auto-Concur 는 이름이 같다. 한쪽 위에 다른 쪽을 만들 수 없다.
+    --clean 은 PyInstaller 자기 캐시만 지우고 dist 는 두고 간다.
+    """
+    from pathlib import Path
+
+    빌드 = (Path(__file__).resolve().parent.parent / "build_exe.bat").read_text(
+        encoding="ascii"
+    )
+    앞부분 = 빌드.split("PyInstaller")[0]
+    assert "rmdir /s /q dist" in 앞부분  # 빌드하기 전에 지워야 한다
