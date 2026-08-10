@@ -197,5 +197,7 @@ def test_빌드는_이전_결과를_먼저_지운다():
     빌드 = (Path(__file__).resolve().parent.parent / "build_exe.bat").read_text(
         encoding="ascii"
     )
-    앞부분 = 빌드.split("PyInstaller")[0]
-    assert "rmdir /s /q dist" in 앞부분  # 빌드하기 전에 지워야 한다
+    명령 = [x.strip() for x in 빌드.splitlines() if not x.strip().startswith("rem")]
+    지우기 = next(i for i, x in enumerate(명령) if "rmdir /s /q dist" in x)
+    묶기 = next(i for i, x in enumerate(명령) if "-m PyInstaller" in x)
+    assert 지우기 < 묶기  # 빌드하기 전에 지워야 한다
