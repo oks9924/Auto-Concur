@@ -59,3 +59,13 @@ def test_설치가_브라우저_다운로드_실패로_멈추지_않는다():
     install = text.split("playwright install chromium")[1].splitlines()[1]
     assert "goto nobrowser" in install  # goto fail 이면 안 된다
     assert ":nobrowser" in text
+
+
+def test_실행_기록을_남기고_오류면_멈춘다():
+    """창이 그냥 닫히면 무엇이 잘못됐는지 알 방법이 없다."""
+    from pathlib import Path
+
+    text = Path("run.bat").read_text(encoding="ascii")
+    assert "> run-log.txt 2>&1" in text  # 늘 파일로 남긴다
+    assert "type run-log.txt" in text  # 죽으면 화면에 보여주고
+    assert "pause" in text.split(":crashed")[1]  # 창을 붙잡는다

@@ -7,8 +7,11 @@ venv/
 downloads/
 tests/fixtures/*.pdf
 manifest.csv
+manifest.xlsx
 browser-profile/
 inspect-out/
+# run.bat이 남기는 실행 기록. 가맹점명·금액이 찍혀 있다.
+run-log.txt
 
 # 사람마다 다른 설정. 받는 사람이 자기 값으로 만든다.
 settings.json
