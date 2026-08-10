@@ -15,3 +15,8 @@ run-log.txt
 
 # 사람마다 다른 설정. 받는 사람이 자기 값으로 만든다.
 settings.json
+
+# build_exe.bat이 만드는 것. exe는 커밋하지 않는다.
+dist/
+build/
+*.spec

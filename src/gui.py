@@ -22,7 +22,7 @@ import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from . import console, retry, settings
+from . import console, paths, retry, settings
 
 
 def _module(name: str):
@@ -236,7 +236,7 @@ class App(tk.Tk):
             download_slips.download(
                 download_slips._norm_date(self.from_date.get()),
                 download_slips._norm_date(self.to_date.get()),
-                Path(self.cfg["downloads_dir"]),
+                paths.folder(self.cfg["downloads_dir"]),
                 self._limit(),
             )
 
@@ -248,7 +248,7 @@ class App(tk.Tk):
 
     def step_organize(self) -> None:
         def work() -> None:
-            _module("organize").organize(Path(self.cfg["downloads_dir"]), True)
+            _module("organize").organize(paths.folder(self.cfg["downloads_dir"]), True)
 
         self._start(
             "B. 파싱 · 작업지 생성",
@@ -262,7 +262,7 @@ class App(tk.Tk):
         """첨부와 입력을 한 세션에서 한다. 로그인을 두 번 하지 않아도 된다."""
         def work() -> None:
             update_concur = _module("update_concur")
-            folder = Path(self.cfg["downloads_dir"])
+            folder = paths.folder(self.cfg["downloads_dir"])
             update_concur.run(
                 folder,
                 True,

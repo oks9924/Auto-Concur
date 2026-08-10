@@ -25,10 +25,10 @@ from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 from pypdf import PdfReader, PdfWriter
 
-from . import browser, console, settings
+from . import browser, console, paths, settings
 
 SLIP_PAGE = "https://mycompany.hyundaicard.com/hs/cs/HSCS1002.do?_method=s&_proc=authCard"
-PROFILE_DIR = Path("browser-profile") / "hyundaicard"
+PROFILE_DIR = paths.at("browser-profile", "hyundaicard")
 
 # 합본 생성은 건수가 많으면 오래 걸린다.
 DOWNLOAD_TIMEOUT_MS = 300_000

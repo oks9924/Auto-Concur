@@ -75,3 +75,50 @@ def test_설정_저장도_같은_규칙을_쓴다(tmp_path, monkeypatch):
     settings.save({"attendee_default": "kyungsik.oh"})
     monkeypatch.setattr(type(path), "write_text", 진짜쓰기)
     assert "kyungsik.oh" in path.read_text(encoding="utf-8")
+
+
+def test_경로는_프로그램_폴더_기준이다():
+    """exe로 묶어 남이 실행하면 현재 폴더가 어디일지 알 수 없다.
+
+    DuoNX 같은 것은 실행 파일만 등록할 수 있고 시작 위치를 못 준다. 그러면
+    settings.json 이 엉뚱한 곳에 생기고, 다음 실행 때 설정이 사라진다.
+    """
+    from pathlib import Path
+
+    from src import paths, settings
+
+    저장소 = Path(__file__).resolve().parent.parent
+    assert paths.base() == 저장소
+    assert settings.SETTINGS_PATH == 저장소 / "settings.json"
+    assert paths.folder("downloads") == 저장소 / "downloads"
+
+
+def test_직접_고른_폴더는_그대로_쓴다():
+    """'찾아보기'로 고른 값은 절대경로다. 기준을 붙이면 망가진다."""
+    from pathlib import Path
+
+    from src import paths
+
+    골랐다 = Path("/tmp/전표") if Path("/").exists() else Path("C:/전표")
+    assert paths.folder(골랐다) == 골랐다
+
+
+def test_exe로_묶이면_exe_옆을_본다(monkeypatch):
+    """PyInstaller의 _MEIPASS(임시 풀림 폴더)를 쓰면 끝날 때 같이 지워진다."""
+    import sys
+    from pathlib import Path
+
+    from src import paths
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", "/opt/앱/Auto-Concur.exe", raising=False)
+    assert paths.base() == Path("/opt/앱")
+
+
+def test_exe_진입점이_인수를_요구하지_않는다():
+    """실행 파일만 등록할 수 있는 환경이 있다. `-m src.gui` 를 못 준다."""
+    from pathlib import Path
+
+    text = Path("launcher.py").read_text(encoding="utf-8")
+    assert "from src.gui import main" in text
+    assert "argv" not in text and "argparse" not in text

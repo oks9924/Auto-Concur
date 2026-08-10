@@ -14,7 +14,7 @@ BATS = sorted(Path(__file__).resolve().parent.parent.glob("*.bat"))
 
 
 def test_배치_파일이_있다():
-    assert {p.name for p in BATS} == {"setup.bat", "run.bat"}
+    assert {p.name for p in BATS} == {"setup.bat", "run.bat", "build_exe.bat"}
 
 
 @pytest.mark.parametrize("path", BATS, ids=lambda p: p.name)

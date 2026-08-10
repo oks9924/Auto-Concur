@@ -19,10 +19,10 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-from . import browser, console
+from . import browser, console, paths
 
-PROFILE_DIR = Path("browser-profile")
-OUT_DIR = Path("inspect-out")
+PROFILE_DIR = paths.at("browser-profile")
+OUT_DIR = paths.at("inspect-out")
 
 # 화면에서 눌러야 할 만한 것들만 추린다. 전체 DOM은 따로 저장한다.
 # combobox/listbox까지 봐야 한다. Concur의 경비 유형 드롭다운은 select가 아니라

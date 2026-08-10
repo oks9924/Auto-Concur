@@ -9,9 +9,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import retry
+from . import paths, retry
 
-SETTINGS_PATH = Path("settings.json")
+SETTINGS_PATH = paths.at("settings.json")
 
 # 경비 유형 코드. Concur 드롭다운 옵션 id에 박혀 있는 값이다
 # (예: ':r20r:-list-_-_-LODNG-_-_-0' -> LODNG). 앞부분은 매번 바뀌지만 코드는 고정이다.

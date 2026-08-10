@@ -28,9 +28,9 @@ from playwright.sync_api import Error as PWError
 from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 
-from . import browser, console, hangul, settings
+from . import browser, console, hangul, paths, settings
 
-PROFILE_DIR = Path("browser-profile") / "concur"
+PROFILE_DIR = paths.at("browser-profile", "concur")
 START_URL = "https://travel.siemens.cloud"
 
 UPLOAD_INPUT = "#upload-file"
@@ -469,7 +469,7 @@ def main() -> int:
     cfg = settings.load()
     tolerance = args.tolerance if args.tolerance is not None else int(cfg["date_tolerance_days"])
     try:
-        return run(args.dir or Path(cfg["downloads_dir"]), args.apply, tolerance,
+        return run(args.dir or paths.folder(cfg["downloads_dir"]), args.apply, tolerance,
                    args.limit, args.again)
     except AttachError as exc:
         print(f"\n작업을 중단했습니다: {exc}")

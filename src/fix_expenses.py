@@ -22,7 +22,7 @@ from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PWTimeout
 
-from . import console, settings, sheet
+from . import console, paths, settings, sheet
 from .sheet import nightly_split
 from .attach_receipts import match as match_rows
 from .attach_receipts import open_report
@@ -35,7 +35,7 @@ from .attach_receipts import (
     read_rows,
 )
 
-PROFILE_DIR = Path("browser-profile") / "concur"
+PROFILE_DIR = paths.at("browser-profile", "concur")
 
 LABEL_MEAL = "내부 직원간 식음료"
 
@@ -569,7 +569,7 @@ def _dump(page, tag: str, script: str) -> str | None:
         data = _eval(page, script)
     except Exception:
         return None
-    out = Path("inspect-out")
+    out = paths.at("inspect-out")
     out.mkdir(exist_ok=True)
     path = out / f"{tag}.json"
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1461,7 +1461,7 @@ def list_lodging_phase(page, cfg: dict) -> int:
 
 def _default_sheet() -> Path:
     """전표 폴더의 작업지. xlsx를 csv보다 먼저 본다."""
-    folder = Path(settings.load()["downloads_dir"])
+    folder = paths.folder(settings.load()["downloads_dir"])
     for name in ("manifest.xlsx", "manifest.csv"):
         if (folder / name).exists():
             return folder / name
