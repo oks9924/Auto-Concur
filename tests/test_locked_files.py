@@ -144,3 +144,44 @@ def test_exe에_단계_모듈이_같이_묶인다():
     빌드 = (저장소 / "build_exe.bat").read_text(encoding="ascii")
     assert "--collect-submodules src" in 빌드
     assert "--collect-all playwright" in 빌드
+
+
+def test_잠긴_파일_이름은_예외에서_가져온다():
+    """exe 안에서는 우리가 부른 이름과 실제로 못 연 파일이 다르다.
+
+    모듈 하나에 딸린 DLL 수십 개가 같이 열린다. 부른 이름만 찍었더니
+    'src/download_slips.py 가 잠겼다'고 나왔는데 exe 안에는 그런 파일이
+    있지도 않았다.
+    """
+    import pytest as _pytest
+
+    def 딜엘엘이잠김():
+        raise PermissionError(13, "Permission denied", r"C:\Temp\_MEI123\pypdf.pyd")
+
+    with _pytest.raises(PermissionError) as err:
+        retry.keep_trying("src/download_slips.py", 딜엘엘이잠김, waits=(0,))
+    assert "pypdf.pyd" in str(err.value)
+
+
+def test_이름이_없으면_부른_이름을_쓴다():
+    import pytest as _pytest
+
+    with _pytest.raises(PermissionError) as err:
+        retry.keep_trying("settings.json", _잠긴파일(99), waits=(0,))
+    assert "settings.json" in str(err.value)
+
+
+def test_exe는_매번_풀지_않는다():
+    """--onefile 은 실행할 때마다 %TEMP%에 수백 개를 푼다.
+
+    실시간 검사가 그걸 매번 붙잡아서, 소스에 있지도 않은 파일이 잠겼다고
+    나왔다. --onedir 은 빌드할 때 한 번만 쓴다.
+    """
+    from pathlib import Path
+
+    빌드 = (Path(__file__).resolve().parent.parent / "build_exe.bat").read_text(
+        encoding="ascii"
+    )
+    인수 = [x.strip().rstrip("^").strip() for x in 빌드.splitlines()
+          if not x.strip().startswith("rem")]
+    assert "--onedir" in 인수 and "--onefile" not in 인수

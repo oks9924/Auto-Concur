@@ -22,10 +22,14 @@ rem   this only src.gui gets packed and the first button says
 rem   "No module named 'src.download_slips'".
 rem --collect-all playwright: playwright ships a Node driver next to the Python
 rem   package. Without it the exe starts and then fails to launch any browser.
-rem --onefile: one file to register and copy. Nothing else to install.
+rem --onedir, not --onefile: onefile unpacks a few hundred files into %TEMP% on
+rem   EVERY launch, and a real-time scanner locks them while it checks. That
+rem   showed up as PermissionError on files that do not exist in the source at
+rem   all. onedir writes those files once, at build time, so the scanner sees
+rem   them once. The cost is that you copy a folder instead of a single file.
 rem Console stays on: it is where a crash before the window opens shows up.
 venv\Scripts\python.exe -m PyInstaller ^
-  --onefile ^
+  --onedir ^
   --name Auto-Concur ^
   --collect-submodules src ^
   --collect-all playwright ^
@@ -36,11 +40,11 @@ if errorlevel 1 goto fail
 
 echo.
 echo ================================================================
-echo   Done: dist\Auto-Concur.exe
+echo   Done: dist\Auto-Concur\Auto-Concur.exe
 echo.
-echo   Copy the exe into the folder you want to work in. It keeps
-echo   settings.json, downloads and browser-profile NEXT TO ITSELF,
-echo   so put it in its own folder.
+echo   Copy the WHOLE dist\Auto-Concur folder, not just the exe.
+echo   The exe keeps settings.json, downloads and browser-profile
+echo   next to itself, inside that folder.
 echo ================================================================
 pause
 exit /b 0

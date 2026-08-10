@@ -25,10 +25,22 @@ LOCKED_HELP = (
 )
 
 
+def _locked(exc, what: str) -> str:
+    """실제로 잠긴 파일 이름. 없으면 부르는 쪽이 준 이름을 쓴다.
+
+    exe로 묶으면 우리가 부른 이름과 실제로 못 연 파일이 다르다. 모듈 하나를
+    불러오는 데 딸린 DLL 수십 개가 열리기 때문이다. 우리가 부른 이름만
+    찍었더니 'src/download_slips.py 가 잠겼다'고 나왔는데, exe 안에는 그런
+    파일이 있지도 않았다. 엉뚱한 곳을 보게 만든다.
+    """
+    return str(getattr(exc, "filename", None) or what)
+
+
 def keep_trying(what: str, fn, waits=None):
     """fn()을 부른다. 파일이 잠겨 있으면 잠깐 뒤에 다시 해본다.
 
-    what은 사람에게 보여줄 이름이다 ('settings.json' 같은 것).
+    what은 못 열었을 때 보여줄 이름이다 ('settings.json' 같은 것). 예외가
+    진짜 파일 이름을 갖고 있으면 그쪽을 쓴다.
     """
     last = None
     for wait in (0.0, *(WAITS if waits is None else waits)):
@@ -38,5 +50,7 @@ def keep_trying(what: str, fn, waits=None):
             return fn()
         except PermissionError as exc:  # 잠겨 있다. 다시 해본다
             last = exc
-            print(f"  ({what} 이(가) 잠겨 있어 다시 시도합니다)")
-    raise PermissionError(f"{what} 을(를) 열지 못했습니다: {last}\n{LOCKED_HELP}") from last
+            print(f"  ({_locked(exc, what)} 이(가) 잠겨 있어 다시 시도합니다)")
+    raise PermissionError(
+        f"{_locked(last, what)} 을(를) 열지 못했습니다: {last}\n{LOCKED_HELP}"
+    ) from last
