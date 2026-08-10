@@ -201,3 +201,18 @@ def test_빌드는_이전_결과를_먼저_지운다():
     지우기 = next(i for i, x in enumerate(명령) if "rmdir /s /q dist" in x)
     묶기 = next(i for i, x in enumerate(명령) if "-m PyInstaller" in x)
     assert 지우기 < 묶기  # 빌드하기 전에 지워야 한다
+
+
+def test_빌드_도구를_최신으로_올린다():
+    """PyInstaller는 자기가 묶는 파이썬을 알아야 한다.
+
+    실측: 파이썬 3.14.5를 낡은 PyInstaller로 묶었더니 exe가
+    'Failed to import encodings module' 로 시작조차 못 했다.
+    """
+    from pathlib import Path
+
+    빌드 = (Path(__file__).resolve().parent.parent / "build_exe.bat").read_text(
+        encoding="ascii"
+    )
+    assert "pip install --upgrade pyinstaller" in 빌드
+    assert "-m PyInstaller --version" in 빌드  # 안 될 때 제일 먼저 볼 것

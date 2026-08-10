@@ -10,8 +10,18 @@ cd /d "%~dp0"
 if not exist venv\Scripts\python.exe goto notyet
 
 echo Installing the build tool...
-venv\Scripts\python.exe -m pip install pyinstaller --quiet
+rem --upgrade matters: PyInstaller has to know the Python it is packing. An
+rem older one packs a newer Python into an exe that dies at startup with
+rem "Failed to import encodings module" (seen with Python 3.14.5).
+venv\Scripts\python.exe -m pip install --upgrade pyinstaller --quiet
 if errorlevel 1 goto pipfail
+
+rem Print both versions. When the exe will not start, these two lines are the
+rem first thing worth looking at.
+echo.
+echo Building with:
+venv\Scripts\python.exe --version
+venv\Scripts\python.exe -m PyInstaller --version
 
 rem Wipe dist first. An earlier --onefile build leaves a FILE named
 rem dist\Auto-Concur.exe, and --onedir now needs a FOLDER named
