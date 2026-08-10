@@ -199,7 +199,7 @@ def test_빌드는_이전_결과를_먼저_지운다():
     )
     명령 = [x.strip() for x in 빌드.splitlines() if not x.strip().startswith("rem")]
     지우기 = next(i for i, x in enumerate(명령) if "rmdir /s /q dist" in x)
-    묶기 = next(i for i, x in enumerate(명령) if "-m PyInstaller" in x)
+    묶기 = next(i for i, x in enumerate(명령) if x.endswith("-m PyInstaller ^"))
     assert 지우기 < 묶기  # 빌드하기 전에 지워야 한다
 
 
