@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from . import retry
+
 SETTINGS_PATH = Path("settings.json")
 
 # 경비 유형 코드. Concur 드롭다운 옵션 id에 박혀 있는 값이다
@@ -83,7 +85,11 @@ def load() -> dict:
     data = dict(DEFAULTS)
     if SETTINGS_PATH.exists():
         try:
-            saved = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            saved = json.loads(
+                retry.keep_trying(
+                    str(SETTINGS_PATH), lambda: SETTINGS_PATH.read_text(encoding="utf-8")
+                )
+            )
         except json.JSONDecodeError as exc:
             raise SystemExit(f"{SETTINGS_PATH} 를 읽지 못했습니다: {exc}")
         data.update({k: v for k, v in saved.items() if v is not None})
@@ -91,8 +97,9 @@ def load() -> dict:
 
 
 def save(data: dict) -> None:
-    SETTINGS_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    text = json.dumps(data, ensure_ascii=False, indent=2)
+    retry.keep_trying(
+        str(SETTINGS_PATH), lambda: SETTINGS_PATH.write_text(text, encoding="utf-8")
     )
 
 

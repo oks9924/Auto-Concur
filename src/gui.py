@@ -14,6 +14,7 @@ Tkinter를 쓴다. Windows 파이썬에 기본으로 들어 있어서 따로 설
 
 from __future__ import annotations
 
+import importlib
 import queue
 import threading
 import tkinter as tk
@@ -21,7 +22,18 @@ import traceback
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from . import console, settings
+from . import console, retry, settings
+
+
+def _module(name: str):
+    """단계 모듈을 불러온다. 파일이 잠겨 있으면 잠깐 뒤에 다시 해본다.
+
+    단계를 누르는 그 순간에 이 파일을 처음 읽으므로 잠김이 여기서 드러난다.
+    작업 스레드에서 부른다 - 기다리는 동안 창이 멈추면 안 된다.
+    """
+    return retry.keep_trying(
+        f"src/{name}.py", lambda: importlib.import_module(f".{name}", __package__)
+    )
 
 
 class _Writer:
@@ -175,7 +187,14 @@ class App(tk.Tk):
         if self.busy:
             messagebox.showinfo("잠깐만요", "앞 단계가 아직 돌고 있습니다.", parent=self)
             return
-        self.save()
+        # 설정을 못 저장해도 단계는 돌아야 한다. 창에 적은 값은 이미 메모리에
+        # 있고, settings.json은 다음 실행 때 편하려고 남기는 것뿐이다.
+        # (실측: 회사 PC에서 settings.json 이 잠겨 PermissionError로 단계가
+        #  시작도 못 했다.)
+        try:
+            self.save()
+        except OSError as exc:
+            self._say(f"\n(설정을 저장하지 못했습니다: {exc}\n 이번 실행에는 창의 값을 씁니다.)\n")
         self.busy = True
         for button in self.buttons:
             button.state(["disabled"])
@@ -212,9 +231,8 @@ class App(tk.Tk):
         return int(text) if text.isdigit() else None
 
     def step_download(self) -> None:
-        from . import download_slips
-
         def work() -> None:
+            download_slips = _module("download_slips")
             download_slips.download(
                 download_slips._norm_date(self.from_date.get()),
                 download_slips._norm_date(self.to_date.get()),
@@ -229,11 +247,12 @@ class App(tk.Tk):
         )
 
     def step_organize(self) -> None:
-        from . import organize
+        def work() -> None:
+            _module("organize").organize(Path(self.cfg["downloads_dir"]), True)
 
         self._start(
             "B. 파싱 · 작업지 생성",
-            lambda: organize.organize(Path(self.cfg["downloads_dir"]), True),
+            work,
             "다음: manifest.xlsx 를 열어 경비에 올릴 내용을 수정해 주세요.\n"
             "      경비유형을 고르면 채워야 할 칸이 초록으로 바뀝니다.\n"
             "      다 채우신 뒤 [C. Concur 반영] 을 눌러 주세요.",
@@ -241,9 +260,8 @@ class App(tk.Tk):
 
     def step_update(self) -> None:
         """첨부와 입력을 한 세션에서 한다. 로그인을 두 번 하지 않아도 된다."""
-        from . import update_concur
-
         def work() -> None:
+            update_concur = _module("update_concur")
             folder = Path(self.cfg["downloads_dir"])
             update_concur.run(
                 folder,
@@ -260,15 +278,14 @@ class App(tk.Tk):
         )
 
     def step_list_types(self) -> None:
-        from . import fix_expenses
-
-        self._start("경비유형 코드 확인", lambda: fix_expenses.run(False, None, True))
+        self._start(
+            "경비유형 코드 확인", lambda: _module("fix_expenses").run(False, None, True)
+        )
 
     def step_list_lodging(self) -> None:
-        from . import fix_expenses
-
         self._start(
-            "숙박비 목록 확인", lambda: fix_expenses.run(False, None, False, None, True)
+            "숙박비 목록 확인",
+            lambda: _module("fix_expenses").run(False, None, False, None, True),
         )
 
 

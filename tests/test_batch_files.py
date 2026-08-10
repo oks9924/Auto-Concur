@@ -69,3 +69,4 @@ def test_실행_기록을_남기고_오류면_멈춘다():
     assert "> run-log.txt 2>&1" in text  # 늘 파일로 남긴다
     assert "type run-log.txt" in text  # 죽으면 화면에 보여주고
     assert "pause" in text.split(":crashed")[1]  # 창을 붙잡는다
+
