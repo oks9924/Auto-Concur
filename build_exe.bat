@@ -15,6 +15,11 @@ if errorlevel 1 goto pipfail
 
 echo.
 echo Building. This takes a few minutes...
+rem --collect-submodules src: the window loads each step with importlib at the
+rem   moment its button is pressed. PyInstaller reads the source to decide what
+rem   to pack and cannot see a name that is only built at runtime, so without
+rem   this only src.gui gets packed and the first button says
+rem   "No module named 'src.download_slips'".
 rem --collect-all playwright: playwright ships a Node driver next to the Python
 rem   package. Without it the exe starts and then fails to launch any browser.
 rem --onefile: one file to register and copy. Nothing else to install.
@@ -22,6 +27,7 @@ rem Console stays on: it is where a crash before the window opens shows up.
 venv\Scripts\python.exe -m PyInstaller ^
   --onefile ^
   --name Auto-Concur ^
+  --collect-submodules src ^
   --collect-all playwright ^
   --clean ^
   --noconfirm ^

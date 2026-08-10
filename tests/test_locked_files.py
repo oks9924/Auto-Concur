@@ -122,3 +122,25 @@ def test_exe_진입점이_인수를_요구하지_않는다():
     text = Path("launcher.py").read_text(encoding="utf-8")
     assert "from src.gui import main" in text
     assert "argv" not in text and "argparse" not in text
+
+
+def test_exe에_단계_모듈이_같이_묶인다():
+    """창은 버튼을 누르는 순간 importlib으로 단계를 불러온다.
+
+    PyInstaller는 소스를 읽어서 무엇을 묶을지 정하므로 실행할 때 만들어지는
+    이름은 보지 못한다. 그래서 src.gui 하나만 묶였고 첫 버튼이
+    "No module named 'src.download_slips'" 로 죽었다.
+    """
+    import re
+    from pathlib import Path
+
+    저장소 = Path(__file__).resolve().parent.parent
+    부르는것 = set(re.findall(r'_module\("([a-z_]+)"\)',
+                             (저장소 / "src" / "gui.py").read_text(encoding="utf-8")))
+    assert 부르는것, "창이 단계를 어떻게 부르는지 못 찾았다"
+    for name in 부르는것:
+        assert (저장소 / "src" / f"{name}.py").exists(), name
+
+    빌드 = (저장소 / "build_exe.bat").read_text(encoding="ascii")
+    assert "--collect-submodules src" in 빌드
+    assert "--collect-all playwright" in 빌드
