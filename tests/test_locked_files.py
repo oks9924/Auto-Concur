@@ -216,3 +216,24 @@ def test_빌드_도구를_최신으로_올린다():
     )
     assert "pip install --upgrade pyinstaller" in 빌드
     assert "-m PyInstaller --version" in 빌드  # 안 될 때 제일 먼저 볼 것
+
+
+def test_껍데기_exe는_venv를_인수와_함께_부른다():
+    """PyInstaller 없이 실행 파일을 만드는 길.
+
+    실행 파일만 등록할 수 있는 환경에서 필요한 것은 '인수를 대신 넣어주는
+    것' 하나다. 파이썬을 통째로 묶을 이유가 없었고, 묶었더니 인터프리터가
+    시작조차 못 했다('No module named encodings').
+    """
+    from pathlib import Path
+
+    저장소 = Path(__file__).resolve().parent.parent
+    소스 = (저장소 / "launcher.cs").read_text(encoding="utf-8")
+    assert '"venv", "Scripts", "python.exe"' in 소스
+    assert '"-m src.gui"' in 소스
+    # 시작 위치를 못 박아야 settings.json 이 엉뚱한 데 생기지 않는다
+    assert "WorkingDirectory = here" in 소스
+
+    빌드 = (저장소 / "make_exe.bat").read_text(encoding="ascii")
+    assert "csc.exe" in 빌드  # Windows에 원래 있는 컴파일러
+    assert "pip install" not in 빌드  # 막힌 PC에서도 돌아야 한다
