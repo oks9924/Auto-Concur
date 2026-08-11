@@ -272,3 +272,28 @@ def test_못_읽으면_행_마크업을_남긴다():
     for func in (ar.attach_phase, fx.fix_phase):
         source = inspect.getsource(func)
         assert "읽지 못해" in source and "dump_rows(page)" in source
+
+
+def test_못_읽은_칸의_글자를_보여준다(capsys):
+    """'읽지 못했습니다'만 있으면 비었는지 형식이 다른지 알 수 없다.
+
+    화면 말이 영어면 날짜가 '08/09/2026' 으로 나오는데 우리는 '2026-08-09'
+    만 읽는다. 그 차이는 이 줄이 있어야 드러난다.
+    """
+    from src.attach_receipts import Row, print_unreadable
+
+    화면 = [
+        Row(0, None, None, "", "ID1", "", "", None, "08/09/2026", "KRW 17,000.00"),
+        Row(1, date(2026, 8, 9), 19000, "", "ID2", "", "", None, "2026-08-09", "19,000"),
+    ]
+    print_unreadable(화면)
+    말 = capsys.readouterr().out
+    assert "08/09/2026" in 말 and "KRW 17,000.00" in 말
+    assert "2026-08-09" not in 말  # 읽힌 행은 굳이 늘어놓지 않는다
+
+
+def test_다_읽혔으면_아무_말도_하지_않는다(capsys):
+    from src.attach_receipts import Row, print_unreadable
+
+    print_unreadable([Row(0, date(2026, 8, 9), 17000, "", "ID1", "", "")])
+    assert capsys.readouterr().out == ""

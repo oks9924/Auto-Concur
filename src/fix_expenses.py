@@ -24,7 +24,7 @@ from playwright.sync_api import TimeoutError as PWTimeout
 
 from . import console, paths, settings, sheet
 from .sheet import nightly_split
-from .attach_receipts import dump_rows
+from .attach_receipts import dump_rows, print_unreadable
 from .attach_receipts import match as match_rows
 from .attach_receipts import open_report
 from .attach_receipts import (
@@ -1375,6 +1375,7 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
     if len(usable) != len(rows):
         print(f"  알림: 경비 {len(rows)}건 중 {len(rows) - len(usable)}건은 날짜·금액을 "
               "읽지 못해 짝짓기에서 제외했습니다")
+        print_unreadable(rows)
         dump = dump_rows(page)
         if dump:
             print(f"  (행 마크업을 {dump} 에 남겼습니다)")

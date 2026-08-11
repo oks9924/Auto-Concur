@@ -161,6 +161,11 @@ class Row:
     expense_type: str = ""
     vendor: str = ""
     has_receipt: bool | None = None  # None이면 화면에서 알 수 없었다는 뜻
+    # 화면에 실제로 적혀 있던 글자. 날짜·금액을 못 읽었을 때 이걸 보여줘야
+    # '비어 있었는지' 와 '형식이 달랐는지' 를 가릴 수 있다. 화면 말이 영어면
+    # 날짜가 08/09/2026 로 나오는데, 우리는 2026-08-09 만 읽는다.
+    raw_date: str = ""
+    raw_amount: str = ""
 
 
 def done_path(folder: Path) -> Path:
@@ -230,6 +235,21 @@ def _parse_amount(text: str) -> int | None:
         return None
 
 
+def print_unreadable(rows: list[Row]) -> None:
+    """못 읽은 행에 실제로 적혀 있던 글자를 보여준다.
+
+    '읽지 못했습니다'만 있으면 비어 있었는지 형식이 달랐는지 알 수 없다.
+    화면 말이 영어면 날짜가 '08/09/2026' 으로 나오는데 우리는 '2026-08-09'
+    만 읽는다 - 그런 것은 이 줄을 봐야 드러난다.
+    """
+    bad = [r for r in rows if not (r.when and r.amount)]
+    if not bad:
+        return
+    print("  화면에 적혀 있던 글자:")
+    for r in bad[:5]:
+        print(f"    [{r.index + 1}] 날짜 {r.raw_date!r}  금액 {r.raw_amount!r}")
+
+
 def dump_rows(page) -> str | None:
     """행 마크업을 파일로 남긴다. 값을 못 읽었을 때 근거가 된다.
 
@@ -263,6 +283,8 @@ def read_rows(page) -> list[Row]:
                 expense_type=raw["expenseType"],
                 vendor=raw["vendor"],
                 has_receipt=raw.get("receipt"),
+                raw_date=raw["date"],
+                raw_amount=raw["amount"],
             )
         )
     return rows
@@ -391,6 +413,7 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
     print(f"\n경비 {len(rows)}건 중 {len(dated)}건을 읽었습니다. 붙일 전표는 {len(slips)}건입니다.")
     if len(dated) != len(rows):
         print(f"  알림: {len(rows) - len(dated)}건은 값을 읽지 못해 대상에서 제외했습니다")
+        print_unreadable(rows)
         dump = dump_rows(page)
         if dump:
             print(f"  (행 마크업을 {dump} 에 남겼습니다)")
