@@ -35,23 +35,77 @@ def channels() -> list[str | None]:
     return [None] if want == "chromium" else [want]
 
 
+MISSING = "Executable doesn't exist"
+
+
+def install_chromium() -> str | None:
+    """Chromium을 지금 내려받는다. 받았으면 None, 못 받았으면 이유를 준다.
+
+    exe로 묶을 때 브라우저는 안 들어간다 - 넣으면 파일이 200MB를 넘고, 실행할
+    때마다 그만큼을 임시 폴더에 푼다. 대신 처음 한 번 받는다. 받은 것은
+    사용자 폴더에 남으므로 그 다음부터는 그냥 열린다.
+
+    setup.bat 을 거친 PC에는 이미 있어서 이 함수까지 오지 않는다. exe만 받은
+    사람의 첫 실행에서만 도는 길이다.
+    """
+    import subprocess
+
+    try:
+        from playwright._impl._driver import compute_driver_executable, get_driver_env
+    except Exception as exc:  # playwright 구조가 바뀌면 여기서 걸린다
+        return f"설치 도구를 찾지 못했습니다: {exc}"
+
+    print("  브라우저를 내려받습니다. 처음 한 번만 하고 몇 분 걸립니다...")
+    try:
+        done = subprocess.run(
+            [*compute_driver_executable(), "install", "chromium"],
+            env=get_driver_env(),
+            capture_output=True,
+            text=True,
+        )
+    except Exception as exc:
+        return str(exc)
+    if done.returncode != 0:
+        lines = (done.stderr or done.stdout or "").strip().splitlines()
+        return lines[-1] if lines else "내려받지 못했습니다"
+    print("  브라우저를 받았습니다.")
+    return None
+
+
 def launch(pw, profile_dir, only: str | None = None, **kwargs):
     """launch_persistent_context 를 브라우저를 바꿔가며 시도한다.
 
     only를 주면 그것만 쓴다 (inspect_page의 --channel).
     """
     order = channels() if not only else [None if only == "chromium" else only]
-    tried = []
+    tried, installed = [], False
+
+    def start(channel):
+        return pw.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir),
+            headless=False,
+            **({"channel": channel} if channel else {}),
+            **kwargs,
+        )
+
     for channel in order:
         try:
-            return pw.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir),
-                headless=False,
-                **({"channel": channel} if channel else {}),
-                **kwargs,
-            )
+            return start(channel)
         except Exception as exc:  # 없는 브라우저면 다음 것으로 넘어간다
-            tried.append(f"{channel or 'chromium'}: {str(exc).splitlines()[0]}")
+            first = str(exc).splitlines()[0]
+            # Chromium이 아직 없으면 지금 받고 한 번 더 해본다. exe만 받은
+            # 사람의 첫 실행이 여기다.
+            if channel is None and MISSING in str(exc) and not installed:
+                installed = True
+                why = install_chromium()
+                if why is None:
+                    try:
+                        return start(channel)
+                    except Exception as retry:
+                        first = str(retry).splitlines()[0]
+                else:
+                    first = f"{first} (내려받기도 실패: {why})"
+            tried.append(f"{channel or 'chromium'}: {first}")
     raise RuntimeError(_why(tried))
 
 

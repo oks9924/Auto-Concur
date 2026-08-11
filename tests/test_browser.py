@@ -198,3 +198,64 @@ def test_남은_창을_로그에_적는다(monkeypatch, capsys):
     browser.open_first(ctx, "https://example.com")
     말 = capsys.readouterr().out
     assert "브라우저 창" in 말 and "https://other.example" in 말
+
+
+class 가짜플레이라이트:
+    """Chromium이 아직 없는 PC. 받고 나면 열린다."""
+
+    def __init__(self, 받으면열림=True):
+        self.있음 = False
+        self.받으면열림 = 받으면열림
+        self.시도 = []
+
+    @property
+    def chromium(self):
+        return self
+
+    def launch_persistent_context(self, **kw):
+        channel = kw.get("channel")
+        self.시도.append(channel)
+        if channel is None and not self.있음:
+            raise RuntimeError(
+                "BrowserType.launchPersistentContext: Executable doesn't exist at "
+                r"C:\Users\x\AppData\Local\ms-playwright\chromium-1234\chrome.exe"
+            )
+        if channel is not None:
+            raise RuntimeError("BrowserType.launch: Executable doesn't exist")
+        return "열림"
+
+
+def test_Chromium이_없으면_받아서_연다(monkeypatch):
+    """exe에는 브라우저가 안 들어간다. 처음 한 번 받으면 그 뒤로는 그냥 열린다."""
+    pw = 가짜플레이라이트()
+
+    def 받기():
+        pw.있음 = True
+        return None
+
+    monkeypatch.setattr(browser, "install_chromium", 받기)
+    assert browser.launch(pw, "/tmp/p") == "열림"
+    assert pw.시도 == [None, None]  # 받기 전 한 번, 받고 나서 한 번
+
+
+def test_한_번만_받아본다(monkeypatch):
+    """못 받는 PC에서 채널마다 다시 받으려 들면 몇 분씩 붙잡힌다."""
+    pw = 가짜플레이라이트()
+    부른횟수 = []
+
+    monkeypatch.setattr(browser, "install_chromium",
+                        lambda: 부른횟수.append(1) or "회사망이 막았습니다")
+    try:
+        browser.launch(pw, "/tmp/p")
+    except RuntimeError as exc:
+        assert "회사망이 막았습니다" in str(exc)
+    assert len(부른횟수) == 1
+
+
+def test_이미_있으면_받지_않는다(monkeypatch):
+    """setup.bat 을 거친 PC는 이 길로 오지 않는다."""
+    pw = 가짜플레이라이트()
+    pw.있음 = True
+    monkeypatch.setattr(browser, "install_chromium",
+                        lambda: (_ for _ in ()).throw(AssertionError("받으면 안 된다")))
+    assert browser.launch(pw, "/tmp/p") == "열림"
