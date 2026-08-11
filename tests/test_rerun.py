@@ -248,3 +248,27 @@ def test_값이_없는_행은_짝짓기에서_빠진다():
 
     pairs, missing = match([slip(19000, "1")], 쓸수있는것, 1)
     assert not pairs and missing[0][1] == "후보 없음"
+
+
+def test_숨겨진_칸도_글자를_읽는다():
+    """innerText 는 화면에 그려진 글자다. 칸이 숨겨져 있으면 빈 문자열이 나온다.
+
+    실측 2026-08-11: 같은 리포트를 다시 열었더니 3건 다 날짜·금액이 비었고,
+    10초를 기다려도 그대로였다. 그리는 중이 아니라 안 보이는 상태였다.
+    """
+    from src.attach_receipts import READ_ROWS_JS
+
+    assert "el.innerText || el.textContent" in READ_ROWS_JS
+
+
+def test_못_읽으면_행_마크업을_남긴다():
+    """추측으로 셀렉터를 고치지 않는다. 실물을 보고 고친다."""
+    import inspect
+
+    from src import attach_receipts as ar
+    from src import fix_expenses as fx
+
+    assert "concur-rows.html" in inspect.getsource(ar.dump_rows)
+    for func in (ar.attach_phase, fx.fix_phase):
+        source = inspect.getsource(func)
+        assert "읽지 못해" in source and "dump_rows(page)" in source

@@ -50,9 +50,14 @@ READ_ROWS_JS = (
     "() => {"
     + ROWS_FN
     + """
+  // innerText 는 화면에 그려진 글자다. 칸이 숨겨져 있으면(좁아서 접힌 칼럼,
+  // 영수증 뷰어를 연 상태 등) 빈 문자열이 나온다. 그때는 textContent 로
+  // 떨어뜨린다 - 그쪽은 화면에 안 보여도 글자를 준다.
   const pick = (r, hook) => {
     const el = r.querySelector('[data-nuiexp="' + hook + '"]');
-    return el ? (el.innerText || '').trim().replace(/\\s+/g, ' ') : '';
+    if (!el) return '';
+    const text = el.innerText || el.textContent || '';
+    return text.trim().replace(/\\s+/g, ' ');
   };
   // 영수증이 이미 붙어 있는지. 영수증 칸을 찾고, 그 안에 아이콘/버튼이 있으면
   // 붙은 것으로 본다. 칸 자체를 못 찾으면 null - '없다'가 아니라 '모른다'다.
@@ -75,6 +80,17 @@ READ_ROWS_JS = (
   }));
 }"""
 )
+
+# 행을 읽지 못했을 때 남길 근거. 훅 이름이 바뀌었는지, 칸이 숨겨졌는지는
+# 이 마크업을 봐야 안다. 추측으로 셀렉터를 고치지 않는다.
+DUMP_ROWS_JS = (
+    "() => {"
+    + ROWS_FN
+    + """
+  return gridRows().slice(0, 3).map(r => r.outerHTML.slice(0, 4000)).join('\\n\\n');
+}"""
+)
+
 
 DUMP_ROW_JS = (
     "(i) => {"
@@ -212,6 +228,23 @@ def _parse_amount(text: str) -> int | None:
         return int(round(float(cleaned.replace(",", ""))))
     except ValueError:
         return None
+
+
+def dump_rows(page) -> str | None:
+    """행 마크업을 파일로 남긴다. 값을 못 읽었을 때 근거가 된다.
+
+    훅 이름이 바뀐 것인지, 칸이 숨겨져 글자가 안 나오는 것인지는 이것을 봐야
+    안다. 이 저장소의 규칙이다 - 셀렉터는 추측하지 않고 실물을 보고 고친다.
+    """
+    try:
+        html = _eval(page, DUMP_ROWS_JS)
+    except Exception:
+        return None
+    out = paths.at("inspect-out")
+    out.mkdir(exist_ok=True)
+    path = out / "concur-rows.html"
+    path.write_text(html or "", encoding="utf-8")
+    return str(path)
 
 
 def read_rows(page) -> list[Row]:
@@ -358,6 +391,9 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
     print(f"\n경비 {len(rows)}건 중 {len(dated)}건을 읽었습니다. 붙일 전표는 {len(slips)}건입니다.")
     if len(dated) != len(rows):
         print(f"  알림: {len(rows) - len(dated)}건은 값을 읽지 못해 대상에서 제외했습니다")
+        dump = dump_rows(page)
+        if dump:
+            print(f"  (행 마크업을 {dump} 에 남겼습니다)")
 
     pairs, skipped = match(slips, dated, tolerance)
 
