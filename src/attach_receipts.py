@@ -329,9 +329,17 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
     done = load_done(folder)
     if done:
         slips = [s for s in slips if s.approval not in done]
-        print(f"이미 붙인 {len(done)}건은 건너뜁니다. 남은 전표는 {len(slips)}건입니다.")
+        # 이 판단은 Concur를 본 것이 아니라 우리가 남긴 기록이다. 화면에
+        # 영수증이 없어도 여기 적혀 있으면 건너뛴다. Concur에서 경비를 지웠다
+        # 다시 만들었으면 그렇게 된다 - 그 말을 안 해줬더니 '왜 하나만
+        # 붙었냐'가 됐다.
+        print(f"{done_path(folder).name} 에 적힌 {len(done)}건은 이미 붙인 것으로 보고 "
+              f"건너뜁니다. 남은 전표는 {len(slips)}건입니다.")
     if not slips:
         print("붙일 영수증이 없습니다.")
+        if done:
+            print(f"  (화면에는 영수증이 없는데 여기서 멈췄다면 {done_path(folder)} 때문입니다."
+                  "\n   그 파일을 지우거나 --again 으로 돌리면 처음부터 다시 붙입니다.)")
         return 0
 
     rows = read_rows(page)

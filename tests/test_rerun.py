@@ -193,3 +193,29 @@ def test_검색_결과를_검색어로_고른다():
 
     assert SELECT_ATTENDEE_OPTION_JS.startswith("(q) =>")
     assert "findOption(q)" in SELECT_ATTENDEE_OPTION_JS
+
+
+def test_건너뛴_근거가_어디에_있는지_말한다(tmp_path, capsys):
+    """'이미 붙인 2건' 은 Concur를 본 것이 아니라 우리가 남긴 기록이다.
+
+    화면에 영수증이 없어도 그 파일에 적혀 있으면 건너뛴다. 어디를 봐야
+    하는지 말해주지 않으면 '왜 하나만 붙었냐'가 된다.
+    """
+    import csv
+
+    from src import attach_receipts as ar
+    from src.organize import MANIFEST_COLUMNS
+
+    (tmp_path / "a.pdf").write_bytes(b"%PDF-1.4\n")
+    with (tmp_path / "manifest.csv").open("w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.DictWriter(fh, fieldnames=MANIFEST_COLUMNS)
+        w.writeheader()
+        w.writerow({**dict.fromkeys(MANIFEST_COLUMNS, ""), "파일명": "a.pdf",
+                    "거래일": "2026-08-09", "금액": "17000", "승인번호": "111",
+                    "가맹점명": "가게"})
+    ar.done_path(tmp_path).write_text("111\n", encoding="utf-8")
+
+    assert ar.attach_phase(None, "http://x", tmp_path, True, 1, None) == 0
+    말 = capsys.readouterr().out
+    assert ar.done_path(tmp_path).name in 말  # 어디에 적혀 있는지
+    assert "--again" in 말  # 어떻게 다시 붙이는지

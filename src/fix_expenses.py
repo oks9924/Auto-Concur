@@ -1359,6 +1359,13 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
         print(f"\n작업지에는 있으나 Concur에서 찾지 못한 것 {len(missing)}건:")
         for entry, why in missing:
             print(f"  {entry.when} {entry.amount:>9,}원  {entry.merchant[:16]} - {why}")
+        # 무엇과 견주다 못 찾았는지 같이 보여준다. '후보 없음'만 있으면
+        # 작업지가 틀렸는지 화면이 다른지 알 길이 없다. 짝은 날짜(±허용일)와
+        # 금액이 둘 다 맞아야 지어진다 - 여기 늘어놓으면 어디가 어긋났는지
+        # 눈으로 바로 보인다.
+        print(f"  견준 화면의 경비 {len(rows)}건:")
+        for r in rows:
+            print(f"    {r.when} {(r.amount or 0):>9,}원  {(r.vendor or '')[:16]}")
 
     print(f"\n경비 {len(rows)}건 중 {len(plans)}건을 수정합니다")
     print("  (화면의 현재 유형  ->  작업지대로 바꿀 내용  [짝지은 전표])\n")
