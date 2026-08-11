@@ -308,3 +308,18 @@ def test_창은_고른_폴더에서_시작한다():
     assert "paths.base()" in 고르기
     assert "is_dir()" in 고르기  # 적힌 폴더가 없으면 프로그램 폴더로 떨어진다
     assert "initialdir=str(here)" in 고르기
+
+
+def test_지금_도는_코드가_언제_것인지_보여준다():
+    """'pull 했는데 왜 그대로냐', '빌드를 다시 해야 하냐' 를 눈으로 가린다."""
+    import re
+    from pathlib import Path
+
+    from src import paths
+
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", paths.stamp())
+
+    소스 = (Path(__file__).resolve().parent.parent / "src" / "gui.py").read_text(
+        encoding="utf-8"
+    )
+    assert "paths.stamp()" in 소스  # 창을 열면 바로 보여야 한다

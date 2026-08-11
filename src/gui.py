@@ -171,6 +171,9 @@ class App(tk.Tk):
         self.rowconfigure(3, weight=1)
         self.columnconfigure(0, weight=1)
         self._say("버튼을 누르면 여기에 진행 상황이 찍힙니다.\n")
+        # 지금 도는 코드가 언제 것인지 적는다. 'pull 했는데 왜 그대로냐' 를
+        # 눈으로 가릴 수 있어야 한다.
+        self._say(f"(코드 기준: {paths.stamp()})\n")
 
     def pick_folder(self) -> None:
         # 프로그램이 있는 폴더에서 시작한다. 적혀 있는 폴더가 실제로 있으면

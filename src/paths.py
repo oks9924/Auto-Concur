@@ -37,3 +37,20 @@ def folder(value) -> Path:
     """
     path = Path(value)
     return path if path.is_absolute() else base() / path
+
+
+def stamp() -> str:
+    """지금 돌고 있는 코드가 언제 것인지.
+
+    'pull 했는데 왜 그대로냐', '빌드를 다시 해야 하냐' 를 눈으로 가리려고 둔다.
+    exe면 exe 파일의 시각, 소스면 src 안에서 가장 최근에 고친 파일의 시각이다.
+    """
+    import sys
+    from datetime import datetime
+
+    if getattr(sys, "frozen", False):
+        newest = Path(sys.executable).stat().st_mtime
+    else:
+        files = list((Path(__file__).resolve().parent).glob("*.py"))
+        newest = max(f.stat().st_mtime for f in files)
+    return datetime.fromtimestamp(newest).strftime("%Y-%m-%d %H:%M")
