@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import time
 
-# 다시 해보기까지 기다릴 시간(초). 검사는 보통 1초 안에 끝난다.
-WAITS = (0.5, 1.5, 3.0)
+# 다시 해보기까지 기다릴 시간(초). 합쳐서 15초쯤 기다린다.
+# 처음에는 5초까지만 기다렸는데 그걸로 모자란 파일이 있었다 - 검사가 처음
+# 보는 파일은 오래 붙잡는다. 사람이 기다릴 만한 선까지 늘렸다.
+WAITS = (0.5, 1.0, 2.0, 4.0, 8.0)
 
 LOCKED_HELP = (
     "  회사 백신이 이 폴더를 검사하며 파일을 잠그고 있을 수 있습니다.\n"
@@ -43,14 +45,18 @@ def keep_trying(what: str, fn, waits=None):
     진짜 파일 이름을 갖고 있으면 그쪽을 쓴다.
     """
     last = None
-    for wait in (0.0, *(WAITS if waits is None else waits)):
+    schedule = (0.0, *(WAITS if waits is None else waits))
+    waited = 0.0
+    for wait in schedule:
         if wait:
             time.sleep(wait)
+            waited += wait
         try:
             return fn()
         except PermissionError as exc:  # 잠겨 있다. 다시 해본다
             last = exc
             print(f"  ({_locked(exc, what)} 이(가) 잠겨 있어 다시 시도합니다)")
     raise PermissionError(
-        f"{_locked(last, what)} 을(를) 열지 못했습니다: {last}\n{LOCKED_HELP}"
+        f"{_locked(last, what)} 을(를) {len(schedule)}번, {waited:.0f}초에 걸쳐 "
+        f"열어 봤지만 계속 잠겨 있습니다: {last}\n{LOCKED_HELP}"
     ) from last

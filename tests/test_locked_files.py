@@ -237,3 +237,17 @@ def test_껍데기_exe는_venv를_인수와_함께_부른다():
     빌드 = (저장소 / "make_exe.bat").read_text(encoding="ascii")
     assert "csc.exe" in 빌드  # Windows에 원래 있는 컴파일러
     assert "pip install" not in 빌드  # 막힌 PC에서도 돌아야 한다
+
+
+def test_얼마나_기다렸는지_알려준다():
+    """'다시 시도합니다'만 네 줄 찍히고 끝나면 얼마나 버틴 건지 알 수 없다."""
+    import pytest as _pytest
+
+    with _pytest.raises(PermissionError) as err:
+        retry.keep_trying("x.py", _잠긴파일(99), waits=(0.01, 0.01))
+    assert "3번" in str(err.value)
+
+
+def test_15초쯤_버틴다():
+    """5초로는 모자란 파일이 있었다. 검사가 처음 보는 파일은 오래 붙잡는다."""
+    assert 12 <= sum(retry.WAITS) <= 20
