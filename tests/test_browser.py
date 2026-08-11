@@ -168,3 +168,33 @@ def test_내용이_생긴_창은_뒤늦게도_닫지_않는다(monkeypatch):
 
     browser.open_first(ctx, "https://example.com")
     assert not ctx.늦게연것.closed
+
+
+def test_한_번만_치우지_않는다(monkeypatch):
+    """시작 탭이 이동보다 한참 늦게 뜨는 경우가 있다. 잠시 지켜봐야 잡힌다."""
+    쓸것 = 가짜페이지("about:blank")
+    ctx = 늦게여는컨텍스트(쓸것)
+    쓸것.goto = lambda url, wait_until=None: setattr(쓸것, "url", url)
+
+    잔여 = [3]
+
+    def 늦게(초):
+        잔여[0] -= 1
+        if 잔여[0] == 0:  # 몇 번째 확인에서야 뜬다
+            ctx.늦게열기()
+
+    monkeypatch.setattr(browser.time, "sleep", 늦게)
+    browser.open_first(ctx, "https://example.com")
+    assert ctx.늦게연것.closed
+
+
+def test_남은_창을_로그에_적는다(monkeypatch, capsys):
+    """빈 창이 남는다면 우리가 못 보는 창이라는 뜻이다. 그 판단에 필요한 근거다."""
+    쓸것 = 가짜페이지("about:blank")
+    ctx = 가짜컨텍스트(처음부터=[쓸것, 가짜페이지("https://other.example")])
+    쓸것.goto = lambda url, wait_until=None: setattr(쓸것, "url", url)
+    monkeypatch.setattr(browser.time, "sleep", lambda s: None)
+
+    browser.open_first(ctx, "https://example.com")
+    말 = capsys.readouterr().out
+    assert "브라우저 창" in 말 and "https://other.example" in 말

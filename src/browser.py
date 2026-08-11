@@ -109,9 +109,23 @@ def open_first(ctx, url: str, wait_until: str = "domcontentloaded"):
     page = first_page(ctx)
     page.goto(url, wait_until=wait_until)
 
-    time.sleep(1.5)
-    for other in list(ctx.pages):
-        if other is not page and other.url in BLANK:
-            other.close()
+    # 한 번만 치우면 놓친다. 시작 탭이 이동보다 늦게 뜨는 경우가 있어서
+    # 잠시 동안 지켜본다. 사람이 로그인하는 데는 이보다 훨씬 오래 걸리므로
+    # 이 시간 안에 열리는 빈 창은 우리가 쓸 창이 아니다.
+    closed = 0
+    for _ in range(12):
+        time.sleep(0.5)
+        for other in list(ctx.pages):
+            if other is not page and other.url in BLANK:
+                other.close()
+                closed += 1
+
+    # 그래도 빈 창이 남는다고 하면 우리가 못 보는 창이라는 뜻이다. 몇 개가
+    # 보이고 무엇을 닫았는지 남겨야 그 다음을 판단할 수 있다.
+    others = [p.url for p in ctx.pages if p is not page]
+    print(f"  (브라우저 창 {len(ctx.pages)}개"
+          + (f", 빈 창 {closed}개를 닫았습니다" if closed else "")
+          + (f", 남은 창: {others}" if others else "")
+          + ")")
     page.bring_to_front()
     return page
