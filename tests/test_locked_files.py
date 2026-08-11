@@ -171,11 +171,11 @@ def test_이름이_없으면_부른_이름을_쓴다():
     assert "settings.json" in str(err.value)
 
 
-def test_exe는_매번_풀지_않는다():
-    """--onefile 은 실행할 때마다 %TEMP%에 수백 개를 푼다.
+def test_나눠줄_때는_파일_하나로_묶는다():
+    """동료에게 주는 것은 파일 하나여야 한다. 폴더째 주면 안에서 exe를 찾아야 한다.
 
-    실시간 검사가 그걸 매번 붙잡아서, 소스에 있지도 않은 파일이 잠겼다고
-    나왔다. --onedir 은 빌드할 때 한 번만 쓴다.
+    검사가 깐깐한 PC에서는 --onedir 이 낫다(매 실행마다 %TEMP%에 푸는 것을
+    검사가 붙잡는다). 그건 그 PC에서 따로 묶는다 - 기본은 나눠주기다.
     """
     from pathlib import Path
 
@@ -184,7 +184,8 @@ def test_exe는_매번_풀지_않는다():
     )
     인수 = [x.strip().rstrip("^").strip() for x in 빌드.splitlines()
           if not x.strip().startswith("rem")]
-    assert "--onedir" in 인수 and "--onefile" not in 인수
+    assert "--onefile" in 인수 and "--onedir" not in 인수
+    assert "--noupx" in 인수  # UPX로 줄이면 백신이 더 자주 잡는다
 
 
 def test_빌드는_이전_결과를_먼저_지운다():
