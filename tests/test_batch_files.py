@@ -31,15 +31,15 @@ def test_줄바꿈이_crlf다(path):
     assert data.count(b"\n") == data.count(b"\r\n")
 
 
-def test_브라우저는_이미_깔린_것부터_쓴다():
-    """회사 방화벽이 cdn.playwright.dev 를 막으면 번들 Chromium을 못 받는다.
+def test_내려받은_Chromium을_먼저_쓴다():
+    """Edge를 앞에 뒀더니 자기 시작 탭을 띄워 우리 창을 덮었다(실측 2026-08).
 
-    Windows에는 Edge가 늘 있으니 그것부터 쓴다. 순서를 바꾸면 브라우저
-    프로필(로그인 상태)이 다른 브라우저 것으로 열려 다시 로그인해야 한다.
+    Chromium은 Playwright가 자기 버전에 맞춰 받은 것이라 가장 얌전하다.
+    Edge는 뒤에 남긴다 - 회사망에서 Chromium을 아예 못 받는 PC가 있다.
     """
     from src import browser
 
-    assert browser.channels() == ["msedge", "chrome", None]
+    assert browser.channels() == [None, "msedge", "chrome"]
 
 
 def test_환경변수로_브라우저를_고를_수_있다(monkeypatch):

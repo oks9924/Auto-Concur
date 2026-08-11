@@ -1,13 +1,21 @@
-"""브라우저를 연다. PC에 이미 깔려 있는 것을 먼저 쓴다.
+"""브라우저를 연다. 내려받은 Chromium을 먼저 쓰고, 없으면 PC의 브라우저를 쓴다.
 
-Playwright는 기본으로 전용 Chromium을 따로 내려받는다. 회사 방화벽이
-cdn.playwright.dev 를 막으면 그 설치가 안 된다(실측: connect EACCES ...:443).
-Windows에는 Edge가 늘 깔려 있으니 그것을 쓰면 내려받을 것이 없다.
+순서는 내려받은 Chromium -> Edge -> Chrome 이다.
 
-순서는 Edge -> Chrome -> 내려받은 Chromium 이다. 순서를 바꾸면 브라우저
-프로필(로그인 상태)이 다른 브라우저 것으로 열려서 다시 로그인해야 한다.
-특정 브라우저를 쓰고 싶으면 CONCUR_BROWSER 환경변수에 msedge / chrome /
-chromium 중 하나를 적는다.
+Chromium이 앞인 이유: Playwright가 자기 버전에 맞춰 내려받은 것이라 가장
+얌전하다. 한동안 Edge를 앞에 뒀는데, Edge는 자기 시작 탭을 따로 띄워서 빈
+창이 우리 창을 덮었다(실측 2026-08). 그 문제가 없던 쪽으로 되돌린다.
+
+Edge가 뒤에 남아 있는 이유: 회사 방화벽이 cdn.playwright.dev 를 막으면
+Chromium을 아예 못 받는다(실측: connect EACCES ...:443). 그런 PC에서는
+Windows에 늘 있는 Edge로 넘어간다.
+
+특정 브라우저를 쓰고 싶으면 CONCUR_BROWSER 환경변수에 chromium / msedge /
+chrome 중 하나를 적는다.
+
+브라우저를 바꾸면 프로필(로그인 상태)이 그 브라우저 것으로 새로 시작한다.
+바꾼 뒤 브라우저가 뜨자마자 닫히면 browser-profile 폴더를 지우고 다시
+해본다 - 새 브라우저가 만든 프로필을 옛 브라우저가 못 여는 경우가 있다.
 """
 
 from __future__ import annotations
@@ -16,7 +24,7 @@ import os
 import time
 
 # None은 Playwright가 내려받은 Chromium이다.
-CHANNELS = ["msedge", "chrome", None]
+CHANNELS = [None, "msedge", "chrome"]
 
 
 def channels() -> list[str | None]:
