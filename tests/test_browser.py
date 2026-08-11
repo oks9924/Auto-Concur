@@ -259,3 +259,34 @@ def test_이미_있으면_받지_않는다(monkeypatch):
     monkeypatch.setattr(browser, "install_chromium",
                         lambda: (_ for _ in ()).throw(AssertionError("받으면 안 된다")))
     assert browser.launch(pw, "/tmp/p") == "열림"
+
+
+def test_어느_브라우저로_열었는지_알린다(monkeypatch, capsys):
+    """실측: setup.bat 을 돌린 PC인데 exe가 Edge로 열렸다.
+
+    첫 번째(Chromium)가 왜 실패했는지는 아무 데도 안 남아서 알 길이 없었다.
+    """
+    class 엣지만열림:
+        chromium = property(lambda self: self)
+
+        def launch_persistent_context(self, **kw):
+            if kw.get("channel") != "msedge":
+                raise RuntimeError("BrowserType.launchPersistentContext: 무언가 잘못됨")
+            return "열림"
+
+    pw = 엣지만열림()
+    monkeypatch.setattr(browser, "install_chromium", lambda: "받기 안 함")
+    assert browser.launch(pw, "/tmp/p") == "열림"
+
+    말 = capsys.readouterr().out
+    assert "브라우저: msedge" in 말
+    assert "앞서 실패" in 말 and "무언가 잘못됨" in 말
+
+
+def test_첫_번째로_열리면_실패_줄이_없다(monkeypatch, capsys):
+    pw = 가짜플레이라이트()
+    pw.있음 = True
+    assert browser.launch(pw, "/tmp/p") == "열림"
+    말 = capsys.readouterr().out
+    assert "브라우저: chromium" in 말
+    assert "앞서 실패" not in 말

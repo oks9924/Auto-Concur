@@ -90,7 +90,7 @@ def launch(pw, profile_dir, only: str | None = None, **kwargs):
 
     for channel in order:
         try:
-            return start(channel)
+            ctx = start(channel)
         except Exception as exc:  # 없는 브라우저면 다음 것으로 넘어간다
             first = str(exc).splitlines()[0]
             # Chromium이 아직 없으면 지금 받고 한 번 더 해본다. exe만 받은
@@ -100,13 +100,29 @@ def launch(pw, profile_dir, only: str | None = None, **kwargs):
                 why = install_chromium()
                 if why is None:
                     try:
-                        return start(channel)
+                        ctx = start(channel)
                     except Exception as retry:
-                        first = str(retry).splitlines()[0]
-                else:
-                    first = f"{first} (내려받기도 실패: {why})"
+                        tried.append(f"{channel or 'chromium'}: {str(retry).splitlines()[0]}")
+                        continue
+                    return _opened(channel, tried, ctx)
+                first = f"{first} (내려받기도 실패: {why})"
             tried.append(f"{channel or 'chromium'}: {first}")
+            continue
+        return _opened(channel, tried, ctx)
     raise RuntimeError(_why(tried))
+
+
+def _opened(channel, tried: list[str], ctx):
+    """어느 브라우저로 열었는지 알린다. 앞의 것이 왜 안 됐는지도 같이 적는다.
+
+    실측: setup.bat 을 돌린 PC인데 exe가 Edge로 열렸다. 첫 번째(Chromium)가
+    왜 실패했는지는 아무 데도 안 남아서 알 길이 없었다. 뒤로 넘어간 이유는
+    반드시 보여야 한다 - 조용히 다른 브라우저를 쓰면 원인을 못 찾는다.
+    """
+    print(f"  (브라우저: {channel or 'chromium'})")
+    for line in tried:
+        print(f"    앞서 실패: {line}")
+    return ctx
 
 
 # 브라우저가 '없는' 것과 '떴다가 바로 닫힌' 것은 다른 문제다. 둘을 같은 말로
