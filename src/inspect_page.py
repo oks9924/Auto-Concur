@@ -156,8 +156,7 @@ def dump(url: str, name: str, channel: str | None) -> None:
         ctx = browser.launch(
             p, PROFILE_DIR / name, only=channel, accept_downloads=True, locale="ko-KR"
         )
-        page = browser.first_page(ctx)
-        page.goto(url, wait_until="domcontentloaded")
+        page = browser.open_first(ctx, url)
 
         print("\n브라우저가 열렸습니다. 로그인하시고 원하는 화면까지 이동해 주세요.")
         print("화면마다 Enter를 누르시면 그 시점이 저장됩니다. 끝내시려면 q + Enter.\n")

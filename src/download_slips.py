@@ -151,8 +151,7 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
 
     with sync_playwright() as p:
         ctx = browser.launch(p, PROFILE_DIR, accept_downloads=True, locale="ko-KR")
-        page = browser.first_page(ctx)
-        page.goto(SLIP_PAGE, wait_until="domcontentloaded")
+        page = browser.open_first(ctx, SLIP_PAGE)
 
         print("\n" + "=" * 64)
         print("  브라우저에서 카드 인증을 직접 해 주세요 (가상키패드라 자동 입력이 안 됩니다).")

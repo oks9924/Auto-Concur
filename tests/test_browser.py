@@ -121,3 +121,50 @@ def test_끝내_없으면_하나_만든다(monkeypatch):
     ctx = 가짜컨텍스트()
     page = browser.first_page(ctx, wait_ms=200)
     assert page in ctx.만든것
+
+
+class 늦게여는컨텍스트(가짜컨텍스트):
+    """이동한 뒤에 브라우저가 자기 시작 탭을 여는 경우."""
+
+    def __init__(self, 쓸것):
+        super().__init__(처음부터=[쓸것])
+        self.늦게연것 = None
+
+    def 늦게열기(self):
+        self.늦게연것 = 가짜페이지("about:blank")
+        object.__getattribute__(self, "pages").append(self.늦게연것)
+
+
+def test_이동한_뒤에_뜨는_빈_창도_치운다(monkeypatch):
+    """실측: 빈 창을 닫아야 진짜 창이 뜬다. 창을 고른 뒤에 열려서 덮은 것이다."""
+    쓸것 = 가짜페이지("about:blank")
+    ctx = 늦게여는컨텍스트(쓸것)
+
+    def goto(url, wait_until=None):
+        쓸것.url = url
+        ctx.늦게열기()  # 이동하는 사이에 시작 탭이 뜬다
+
+    쓸것.goto = goto
+    monkeypatch.setattr(browser.time, "sleep", lambda s: None)
+
+    page = browser.open_first(ctx, "https://example.com")
+    assert page is 쓸것
+    assert ctx.늦게연것.closed
+    assert 쓸것.front
+
+
+def test_내용이_생긴_창은_뒤늦게도_닫지_않는다(monkeypatch):
+    """전표 인쇄 팝업은 빈 창으로 열렸다가 내용이 찬다. 그건 우리가 쓸 창이다."""
+    쓸것 = 가짜페이지("about:blank")
+    ctx = 늦게여는컨텍스트(쓸것)
+
+    def goto(url, wait_until=None):
+        쓸것.url = url
+        ctx.늦게열기()
+        ctx.늦게연것.url = "https://popup.example.com/print"
+
+    쓸것.goto = goto
+    monkeypatch.setattr(browser.time, "sleep", lambda s: None)
+
+    browser.open_first(ctx, "https://example.com")
+    assert not ctx.늦게연것.closed

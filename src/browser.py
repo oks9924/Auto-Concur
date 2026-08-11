@@ -94,3 +94,24 @@ def first_page(ctx, wait_ms: int = 5000):
             extra.close()
     page.bring_to_front()
     return page
+
+
+def open_first(ctx, url: str, wait_until: str = "domcontentloaded"):
+    """쓸 창을 고르고 주소로 이동한다. 뒤늦게 뜨는 빈 창까지 치운다.
+
+    브라우저가 자기 시작 탭을 우리가 창을 고른 뒤에 여는 경우가 있다. 그러면
+    first_page 로 하나를 골라 이동시켜 놓아도, 그 빈 탭이 나중에 우리 창 위를
+    덮는다. 사람 눈에는 '빈 창을 닫아야 진짜 창이 뜨는' 것으로 보인다.
+
+    치우는 것은 첫 이동 직후 한 번뿐이다. 그 뒤에 열리는 빈 창은 전표 인쇄
+    팝업일 수 있고, 그건 우리가 쓰는 창이다 - 닫으면 안 된다.
+    """
+    page = first_page(ctx)
+    page.goto(url, wait_until=wait_until)
+
+    time.sleep(1.5)
+    for other in list(ctx.pages):
+        if other is not page and other.url in BLANK:
+            other.close()
+    page.bring_to_front()
+    return page

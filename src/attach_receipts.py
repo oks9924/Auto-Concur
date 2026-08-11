@@ -443,8 +443,7 @@ def open_report():
     """
     pw = sync_playwright().start()
     ctx = browser.launch(pw, PROFILE_DIR, accept_downloads=True)
-    page = browser.first_page(ctx)
-    page.goto(START_URL, wait_until="domcontentloaded")
+    page = browser.open_first(ctx, START_URL)
 
     print("\n" + "=" * 64)
     print("  Concur에 로그인하시고 처리할 경비 리포트를 열어 주세요.")
