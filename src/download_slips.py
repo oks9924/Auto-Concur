@@ -151,7 +151,7 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
 
     with sync_playwright() as p:
         ctx = browser.launch(p, PROFILE_DIR, accept_downloads=True, locale="ko-KR")
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page = browser.first_page(ctx)
         page.goto(SLIP_PAGE, wait_until="domcontentloaded")
 
         print("\n" + "=" * 64)

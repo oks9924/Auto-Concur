@@ -156,7 +156,7 @@ def dump(url: str, name: str, channel: str | None) -> None:
         ctx = browser.launch(
             p, PROFILE_DIR / name, only=channel, accept_downloads=True, locale="ko-KR"
         )
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        page = browser.first_page(ctx)
         page.goto(url, wait_until="domcontentloaded")
 
         print("\n브라우저가 열렸습니다. 로그인하시고 원하는 화면까지 이동해 주세요.")

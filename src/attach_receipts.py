@@ -435,7 +435,7 @@ def open_report():
     """
     pw = sync_playwright().start()
     ctx = browser.launch(pw, PROFILE_DIR, accept_downloads=True)
-    page = ctx.pages[0] if ctx.pages else ctx.new_page()
+    page = browser.first_page(ctx)
     page.goto(START_URL, wait_until="domcontentloaded")
 
     print("\n" + "=" * 64)

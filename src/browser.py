@@ -13,6 +13,7 @@ chromium 중 하나를 적는다.
 from __future__ import annotations
 
 import os
+import time
 
 # None은 Playwright가 내려받은 Chromium이다.
 CHANNELS = ["msedge", "chrome", None]
@@ -65,3 +66,31 @@ MISSING_HELP = "브라우저를 찾지 못했습니다. Edge나 Chrome이 깔려
 def _why(tried: list[str]) -> str:
     head = CLOSED_HELP if all(CLOSED in x for x in tried) else MISSING_HELP
     return head + "\n  " + "\n  ".join(tried)
+
+
+BLANK = ("", "about:blank", "chrome://newtab/", "edge://newtab/")
+
+
+def first_page(ctx, wait_ms: int = 5000):
+    """쓸 창 하나를 고른다. 남는 빈 창은 닫는다.
+
+    브라우저가 자기 시작 페이지를 그리는 데 잠깐 걸린다. 그 전에 물으면
+    창이 없어 보여서 우리가 하나를 더 만들고, 그러면 빈 창이 우리 창 위를
+    덮는다. 사람 눈에는 '빈 화면이 떴다가, 닫으니까 그제서야 현대카드가
+    뜨는' 것으로 보인다 (실측 2026-08).
+
+    그래서 먼저 기다려 보고, 그래도 없을 때만 만든다. 이미 열려 있는 빈 창은
+    닫는다 - 내용이 있는 창은 사람이 보던 것일 수 있으니 두고 간다.
+    """
+    for _ in range(max(1, wait_ms // 100)):
+        if ctx.pages:
+            break
+        time.sleep(0.1)
+
+    pages = list(ctx.pages) or [ctx.new_page()]
+    page = pages[0]
+    for extra in pages[1:]:
+        if extra.url in BLANK:
+            extra.close()
+    page.bring_to_front()
+    return page
