@@ -219,3 +219,32 @@ def test_건너뛴_근거가_어디에_있는지_말한다(tmp_path, capsys):
     말 = capsys.readouterr().out
     assert ar.done_path(tmp_path).name in 말  # 어디에 적혀 있는지
     assert "--again" in 말  # 어떻게 다시 붙이는지
+
+
+def test_값이_안_채워진_목록은_다_읽힌_것이_아니다():
+    """행 껍데기는 먼저 그려지고 날짜·금액은 조금 뒤에 채워진다.
+
+    그 사이에 읽으면 행 수는 맞는데 값이 비어서, 작업지의 모든 줄이
+    '후보 없음'이 된다 - 짝은 날짜와 금액으로만 짓기 때문이다.
+    """
+    from src.fix_expenses import rows_ready
+
+    빈행 = [Row(0, None, None, "", "ID1", "", ""), Row(1, None, None, "", "ID2", "", "")]
+    assert not rows_ready(빈행)
+    assert not rows_ready([])
+
+    반쯤 = [*빈행, Row(2, date(2026, 8, 9), 17000, "", "ID3", "", "")]
+    assert rows_ready(반쯤)  # 하나라도 채워졌으면 그리는 중이 아니다
+
+
+def test_값이_없는_행은_짝짓기에서_빠진다():
+    """빠진 것을 말없이 빼면 '왜 못 찾았는지' 를 알 수 없다."""
+    from src.attach_receipts import match
+
+    화면 = [Row(0, None, None, "", "ID1", "", ""),
+           Row(1, date(2026, 8, 9), 17000, "", "ID2", "", "")]
+    쓸수있는것 = [r for r in 화면 if r.expense_id and r.when and r.amount]
+    assert len(쓸수있는것) == 1
+
+    pairs, missing = match([slip(19000, "1")], 쓸수있는것, 1)
+    assert not pairs and missing[0][1] == "후보 없음"

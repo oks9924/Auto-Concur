@@ -1342,10 +1342,38 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
     return plans, gaps, missing
 
 
+def rows_ready(rows: list[Row]) -> bool:
+    """짝을 지을 만큼 읽혔는가.
+
+    행 껍데기는 먼저 그려지고 날짜·금액은 조금 뒤에 채워진다. 그 사이에 읽으면
+    행 수는 맞는데 값이 비어서, 작업지의 모든 줄이 '후보 없음'이 된다 - 짝은
+    날짜와 금액으로만 짓기 때문이다. 실측(2026-08-11): 같은 리포트를 두 번째
+    돌렸을 때 3건을 읽고도 2건 다 못 찾았다.
+    """
+    return bool(rows) and any(r.when and r.amount for r in rows)
+
+
+def _rows_when_ready(page, tries: int = 10, wait_ms: int = 1000) -> list[Row]:
+    """값이 채워질 때까지 다시 읽는다. 끝내 안 채워지면 읽힌 것을 그대로 준다."""
+    rows: list[Row] = []
+    for attempt in range(tries):
+        rows = read_rows(page)
+        if rows_ready(rows):
+            return rows
+        if attempt == 0:
+            print("  (경비 목록이 아직 그려지는 중입니다. 기다립니다)")
+        page.wait_for_timeout(wait_ms)
+    return rows
+
+
 def fix_phase(page, report_url: str, cfg: dict, apply: bool,
               limit: int | None, sheet_path: Path) -> int:
     """작업지에 적힌 대로 유형·목적·코멘트·참석자·숙박 상세를 채운다."""
-    rows = read_rows(page)
+    rows = _rows_when_ready(page)
+    usable = [r for r in rows if r.expense_id and r.when and r.amount]
+    if len(usable) != len(rows):
+        print(f"  알림: 경비 {len(rows)}건 중 {len(rows) - len(usable)}건은 날짜·금액을 "
+              "읽지 못해 짝짓기에서 제외했습니다")
     paired, gaps, missing = plans_from_sheet(cfg, [r for r in rows if r.expense_id],
                                              sheet_path, int(cfg["date_tolerance_days"]))
     plans = [p for p, _, _ in paired]
