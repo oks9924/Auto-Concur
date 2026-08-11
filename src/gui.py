@@ -25,15 +25,45 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 from . import console, paths, retry, settings
 
 
-def _module(name: str):
+# 버튼이 부르는 단계들. 창이 뜨자마자 미리 불러둔다.
+STEP_MODULES = ("download_slips", "organize", "update_concur", "fix_expenses")
+
+
+def _module(name: str, quiet: bool = False):
     """단계 모듈을 불러온다. 파일이 잠겨 있으면 잠깐 뒤에 다시 해본다.
 
-    단계를 누르는 그 순간에 이 파일을 처음 읽으므로 잠김이 여기서 드러난다.
     작업 스레드에서 부른다 - 기다리는 동안 창이 멈추면 안 된다.
     """
     return retry.keep_trying(
-        f"src/{name}.py", lambda: importlib.import_module(f".{name}", __package__)
+        f"src/{name}.py",
+        lambda: importlib.import_module(f".{name}", __package__),
+        quiet=quiet,
     )
+
+
+def _preload() -> None:
+    """창이 뜨자마자 단계 모듈을 뒤에서 미리 불러둔다.
+
+    실측(회사 PC): 창을 띄우고 곧바로 버튼을 누르면 download_slips.py 가
+    잠겨서 실패했다. 그런데 같은 임포트를 cmd에서 하면 그냥 됐고, 파일을
+    직접 읽어도 됐다. 프로그램이 막 떴을 때 보안 프로그램이 그 프로세스의
+    파일 접근을 훑는 시간과 겹친 것이다.
+
+    미리 읽어두면 그 시간이 사람이 창을 보는 시간과 겹친다. 한 번 올라오면
+    메모리에 남으므로 버튼을 누를 때는 파일을 보지 않는다.
+
+    실패해도 조용히 넘어간다. 사람이 시킨 일이 아니고, 버튼을 누를 때 제대로
+    다시 해본다 - 그때는 이유도 화면에 적힌다.
+    """
+
+    def work() -> None:
+        for name in STEP_MODULES:
+            try:
+                _module(name, quiet=True)
+            except Exception:
+                pass  # 버튼을 누를 때 다시 해본다
+
+    threading.Thread(target=work, daemon=True).start()
 
 
 class _Writer:
@@ -60,6 +90,7 @@ class App(tk.Tk):
         self.busy = False
         self._build()
         self.after(100, self._drain)
+        _preload()
 
     # --- 화면 ---------------------------------------------------------------
 

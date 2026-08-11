@@ -251,3 +251,37 @@ def test_얼마나_기다렸는지_알려준다():
 def test_15초쯤_버틴다():
     """5초로는 모자란 파일이 있었다. 검사가 처음 보는 파일은 오래 붙잡는다."""
     assert 12 <= sum(retry.WAITS) <= 20
+
+
+def test_미리_읽어두는_단계가_실제_단계와_같다():
+    """미리 읽는 목록이 버튼이 부르는 것과 어긋나면 미리 읽는 의미가 없다."""
+    import re
+    from pathlib import Path
+
+    저장소 = Path(__file__).resolve().parent.parent
+    소스 = (저장소 / "src" / "gui.py").read_text(encoding="utf-8")
+
+    부르는것 = set(re.findall(r'_module\("([a-z_]+)"', 소스))
+    미리 = set(re.findall(r'"([a-z_]+)",', 소스.split("STEP_MODULES = (")[1].split(")")[0]))
+    미리 |= set(re.findall(r'"([a-z_]+)"', 소스.split("STEP_MODULES = (")[1].split(")")[0]))
+    assert 부르는것 <= 미리, f"미리 안 읽는 단계: {부르는것 - 미리}"
+
+
+def test_미리_읽기는_조용히_실패한다():
+    """사람이 시키지 않은 일이 안 된다고 떠들면 진짜 메시지가 묻힌다."""
+    import io
+    import contextlib
+
+    import pytest as _pytest
+
+    말한것 = io.StringIO()
+    with contextlib.redirect_stdout(말한것):
+        with _pytest.raises(PermissionError):
+            retry.keep_trying("x.py", _잠긴파일(99), waits=(0, 0), quiet=True)
+    assert 말한것.getvalue() == ""
+
+    말한것 = io.StringIO()
+    with contextlib.redirect_stdout(말한것):
+        with _pytest.raises(PermissionError):
+            retry.keep_trying("x.py", _잠긴파일(99), waits=(0, 0))
+    assert "다시 시도합니다" in 말한것.getvalue()

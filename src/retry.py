@@ -38,11 +38,14 @@ def _locked(exc, what: str) -> str:
     return str(getattr(exc, "filename", None) or what)
 
 
-def keep_trying(what: str, fn, waits=None):
+def keep_trying(what: str, fn, waits=None, quiet: bool = False):
     """fn()을 부른다. 파일이 잠겨 있으면 잠깐 뒤에 다시 해본다.
 
     what은 못 열었을 때 보여줄 이름이다 ('settings.json' 같은 것). 예외가
     진짜 파일 이름을 갖고 있으면 그쪽을 쓴다.
+
+    quiet은 미리 읽어두는 용도다. 사람이 시키지 않은 일이 잘 안 된다고
+    화면에 찍으면, 정작 버튼을 눌렀을 때의 진짜 메시지가 묻힌다.
     """
     last = None
     schedule = (0.0, *(WAITS if waits is None else waits))
@@ -55,7 +58,8 @@ def keep_trying(what: str, fn, waits=None):
             return fn()
         except PermissionError as exc:  # 잠겨 있다. 다시 해본다
             last = exc
-            print(f"  ({_locked(exc, what)} 이(가) 잠겨 있어 다시 시도합니다)")
+            if not quiet:
+                print(f"  ({_locked(exc, what)} 이(가) 잠겨 있어 다시 시도합니다)")
     raise PermissionError(
         f"{_locked(last, what)} 을(를) {len(schedule)}번, {waited:.0f}초에 걸쳐 "
         f"열어 봤지만 계속 잠겨 있습니다: {last}\n{LOCKED_HELP}"
