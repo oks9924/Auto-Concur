@@ -286,3 +286,25 @@ def test_미리_읽기는_조용히_실패한다():
         with _pytest.raises(PermissionError):
             retry.keep_trying("x.py", _잠긴파일(99), waits=(0, 0))
     assert "다시 시도합니다" in 말한것.getvalue()
+
+
+def test_전표_폴더_기본값은_프로그램_폴더다():
+    """exe를 받은 사람은 그 폴더에 넣고 쓴다. 전표도 거기 있는 것이 자연스럽다."""
+    from src import paths, settings
+
+    assert settings.DEFAULTS["downloads_dir"] == ""
+    assert paths.folder(settings.DEFAULTS["downloads_dir"]) == paths.base()
+
+
+def test_창은_고른_폴더에서_시작한다():
+    """없는 경로를 주면 파일 창이 엉뚱한 데서 열린다."""
+    from pathlib import Path
+
+    # tkinter 없는 곳에서도 돌아야 해서 소스를 읽는다
+    소스 = (Path(__file__).resolve().parent.parent / "src" / "gui.py").read_text(
+        encoding="utf-8"
+    )
+    고르기 = 소스.split("def pick_folder")[1].split("def ")[0]
+    assert "paths.base()" in 고르기
+    assert "is_dir()" in 고르기  # 적힌 폴더가 없으면 프로그램 폴더로 떨어진다
+    assert "initialdir=str(here)" in 고르기

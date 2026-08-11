@@ -121,7 +121,8 @@ class App(tk.Tk):
 
         # 전표 폴더는 직접 고르게 한다. 경로를 손으로 치면 오타가 난다.
         ttk.Label(box, text="전표 폴더").grid(row=2, column=0, sticky="w", **pad)
-        self.folder = tk.StringVar(value=str(self.cfg.get("downloads_dir", "downloads")))
+        # 상대경로로 보여주면 어디에 받아지는지 알 수 없다. 푼 경로를 보여준다.
+        self.folder = tk.StringVar(value=str(paths.folder(self.cfg.get("downloads_dir") or "")))
         picker = ttk.Frame(box)
         picker.grid(row=2, column=1, sticky="w", **pad)
         ttk.Entry(picker, textvariable=self.folder, width=40).pack(side="left")
@@ -172,9 +173,12 @@ class App(tk.Tk):
         self._say("버튼을 누르면 여기에 진행 상황이 찍힙니다.\n")
 
     def pick_folder(self) -> None:
-        chosen = filedialog.askdirectory(
-            title="전표 폴더 선택", initialdir=self.folder.get() or "."
-        )
+        # 프로그램이 있는 폴더에서 시작한다. 적혀 있는 폴더가 실제로 있으면
+        # 거기서 시작한다 - 없는 경로를 주면 창이 엉뚱한 데서 열린다.
+        here = Path(self.folder.get().strip() or paths.base())
+        if not here.is_dir():
+            here = paths.base()
+        chosen = filedialog.askdirectory(title="전표 폴더 선택", initialdir=str(here))
         if chosen:
             self.folder.set(chosen)
 
@@ -253,7 +257,7 @@ class App(tk.Tk):
         threading.Thread(target=run, daemon=True).start()
 
     def save(self) -> None:
-        self.cfg["downloads_dir"] = self.folder.get().strip() or "downloads"
+        self.cfg["downloads_dir"] = self.folder.get().strip()  # 빈 값은 프로그램 폴더
         self.cfg["attendee_default"] = self.attendee.get().strip()
         settings.save(self.cfg)
 

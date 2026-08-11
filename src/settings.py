@@ -46,7 +46,9 @@ BOOKING_CHANNELS = ["Concur (HRS)", "Others"]
 DEFAULTS = {
     # 영수증 매칭에서 허용할 날짜 차이. 카드 매입 처리 때문에 하루 어긋난다.
     "date_tolerance_days": 1,
-    "downloads_dir": "downloads",
+    # 빈 값은 '프로그램이 있는 폴더'다. exe를 받은 사람은 그 폴더에 넣고 쓰므로
+    # 전표도 거기 있는 것이 자연스럽다. 다른 데 두고 싶으면 창에서 고른다.
+    "downloads_dir": "",
     "expense_type_codes": EXPENSE_TYPE_CODES,
     "lodging_locations": LODGING_LOCATIONS,
     "booking_channels": BOOKING_CHANNELS,
