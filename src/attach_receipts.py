@@ -69,6 +69,13 @@ READ_ROWS_JS = (
     if (!cell) return null;
     return !!cell.querySelector('img, svg, button, a');
   };
+  // 행마다 화면낭독기용 요약이 하나 붙어 있다(실측):
+  //   '경비, 내부 직원간 식음료 (...), KRW 17,000, 날짜, 2026-08-09 선택'
+  // 금액 칸을 못 읽을 때 여기서 꺼낸다. 칸 이름이 바뀌어도 이건 남는다.
+  const label = (r) => {
+    const el = r.querySelector('[class*="screen-reader-only"]');
+    return el ? (el.textContent || '').trim().replace(/\\s+/g, ' ') : '';
+  };
   return gridRows().map((r, i) => ({
     index: i,
     id: r.id || r.getAttribute('data-row-key') || null,
@@ -77,6 +84,7 @@ READ_ROWS_JS = (
     vendor: pick(r, 'vendor-name'),
     expenseType: pick(r, 'expense-type-cell'),
     receipt: receipt(r),
+    label: label(r),
   }));
 }"""
 )
@@ -87,7 +95,17 @@ DUMP_ROWS_JS = (
     "() => {"
     + ROWS_FN
     + """
-  return gridRows().slice(0, 3).map(r => r.outerHTML.slice(0, 4000)).join('\\n\\n');
+  // 마크업을 통째로 남기면 잘려서 정작 필요한 칸이 안 보인다. 칸 목록만
+  // 추린다 - 어떤 훅이 있고 거기에 뭐가 적혀 있는지가 우리가 볼 전부다.
+  return gridRows().slice(0, 3).map((r, i) => ({
+    row: i,
+    id: r.id || null,
+    cells: [...r.querySelectorAll('[role="cell"]')].map(c => ({
+      col: c.getAttribute('aria-colindex'),
+      hook: c.getAttribute('data-nuiexp') || c.getAttribute('data-testid') || null,
+      text: (c.innerText || c.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 60),
+    })),
+  }));
 }"""
 )
 
@@ -225,6 +243,17 @@ def _eval(page, script: str, arg=None, tries: int = 4):
     raise AttachError(f"화면이 계속 바뀌어서 읽지 못했습니다. 화면이 멈춘 뒤 다시 시도해 주세요: {last}")
 
 
+# 화면낭독기용 요약에서 금액을 꺼낸다. 'KRW 17,000' 처럼 통화 코드 뒤에 붙는다.
+# KRW 사이의 공백은 &nbsp;(\xa0)라서 \s로 잡는다.
+LABEL_AMOUNT_RE = re.compile(r"(?:[A-Z]{3}|₩|\$)\s*([\d,]+(?:\.\d+)?)")
+
+
+def amount_from_label(label: str) -> int | None:
+    """행 요약에서 금액을 읽는다. 금액 칸을 못 읽을 때 쓴다."""
+    m = LABEL_AMOUNT_RE.search(label or "")
+    return _parse_amount(m.group(1)) if m else None
+
+
 def _parse_amount(text: str) -> int | None:
     cleaned = text.replace("원", "").replace("KRW", "").strip()
     if not AMOUNT_RE.match(cleaned):
@@ -257,13 +286,13 @@ def dump_rows(page) -> str | None:
     안다. 이 저장소의 규칙이다 - 셀렉터는 추측하지 않고 실물을 보고 고친다.
     """
     try:
-        html = _eval(page, DUMP_ROWS_JS)
+        cells = _eval(page, DUMP_ROWS_JS)
     except Exception:
         return None
     out = paths.at("inspect-out")
     out.mkdir(exist_ok=True)
-    path = out / "concur-rows.html"
-    path.write_text(html or "", encoding="utf-8")
+    path = out / "concur-rows.json"
+    path.write_text(json.dumps(cells, ensure_ascii=False, indent=2), encoding="utf-8")
     return str(path)
 
 
@@ -277,14 +306,16 @@ def read_rows(page) -> list[Row]:
             Row(
                 index=raw["index"],
                 when=when,
-                amount=_parse_amount(raw["amount"]),
+                # 금액 칸을 못 읽으면 행 요약에서 꺼낸다. 실측 2026-08-11:
+                # amount-cell 훅이 안 잡혀 3건 다 0원으로 읽혔다.
+                amount=_parse_amount(raw["amount"]) or amount_from_label(raw.get("label", "")),
                 text=label[:80],
                 expense_id=raw["id"],
                 expense_type=raw["expenseType"],
                 vendor=raw["vendor"],
                 has_receipt=raw.get("receipt"),
                 raw_date=raw["date"],
-                raw_amount=raw["amount"],
+                raw_amount=raw["amount"] or raw.get("label", ""),
             )
         )
     return rows

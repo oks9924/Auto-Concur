@@ -268,7 +268,7 @@ def test_못_읽으면_행_마크업을_남긴다():
     from src import attach_receipts as ar
     from src import fix_expenses as fx
 
-    assert "concur-rows.html" in inspect.getsource(ar.dump_rows)
+    assert "concur-rows.json" in inspect.getsource(ar.dump_rows)
     for func in (ar.attach_phase, fx.fix_phase):
         source = inspect.getsource(func)
         assert "읽지 못해" in source and "dump_rows(page)" in source
@@ -297,3 +297,27 @@ def test_다_읽혔으면_아무_말도_하지_않는다(capsys):
 
     print_unreadable([Row(0, date(2026, 8, 9), 17000, "", "ID1", "", "")])
     assert capsys.readouterr().out == ""
+
+
+def test_행_요약에서_금액을_읽는다():
+    """실측 2026-08-11: 금액 칸(amount-cell) 훅이 안 잡혀 3건 다 0원이었다.
+
+    행마다 화면낭독기용 요약이 하나 붙어 있고 거기에 금액이 들어 있다.
+    칸 이름이 바뀌어도 이건 남는다. 실물(concur-rows) 그대로 가져왔다.
+    """
+    from src.attach_receipts import amount_from_label
+
+    # KRW 뒤는 &nbsp;(\xa0) 다. 보통 공백이 아니다.
+    요약 = "경비, 내부 직원간 식음료 (점심, 야근식대, 부서회식, 음료 등), KRW\xa017,000, 날짜, 2026-08-09 선택"
+    assert amount_from_label(요약) == 17000
+    assert amount_from_label("경비, 숙박비, KRW 764,707, 날짜, 2026-07-16 선택") == 764707
+    assert amount_from_label("경비, 주차비, 날짜, 2026-07-16 선택") is None
+    assert amount_from_label("") is None
+
+
+def test_금액_칸이_읽히면_그걸_쓴다():
+    """요약은 대비책이다. 칸이 읽히는 동안은 칸이 우선이다."""
+    from src.attach_receipts import READ_ROWS_JS
+
+    assert "pick(r, 'amount-cell')" in READ_ROWS_JS
+    assert "screen-reader-only" in READ_ROWS_JS
