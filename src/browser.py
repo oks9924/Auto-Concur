@@ -43,7 +43,25 @@ def launch(pw, profile_dir, only: str | None = None, **kwargs):
             )
         except Exception as exc:  # 없는 브라우저면 다음 것으로 넘어간다
             tried.append(f"{channel or 'chromium'}: {str(exc).splitlines()[0]}")
-    raise RuntimeError(
-        "브라우저를 열지 못했습니다. Edge나 Chrome이 깔려 있어야 합니다.\n  "
-        + "\n  ".join(tried)
-    )
+    raise RuntimeError(_why(tried))
+
+
+# 브라우저가 '없는' 것과 '떴다가 바로 닫힌' 것은 다른 문제다. 둘을 같은 말로
+# 안내했더니(“Edge나 Chrome이 깔려 있어야 합니다”) 있는 브라우저를 찾으러
+# 다니게 만들었다. 실측: 셋 다 'has been closed' 였고, 원인은 브라우저 부재가
+# 아니라 브라우저 실행을 가로채는 프로그램이었다.
+CLOSED = "has been closed"
+
+CLOSED_HELP = (
+    "브라우저가 떴다가 곧바로 닫혔습니다. 브라우저는 깔려 있습니다.\n"
+    "  브라우저 실행을 가로채는 프로그램(격리 브라우저·보안 솔루션)이 있으면\n"
+    "  이렇게 됩니다. 그런 PC에서는 자동화가 붙을 수 없습니다.\n"
+    "  Edge 주소창에 edge://policy 를 치고 RemoteDebuggingAllowed 도 확인해 주세요."
+)
+
+MISSING_HELP = "브라우저를 찾지 못했습니다. Edge나 Chrome이 깔려 있어야 합니다."
+
+
+def _why(tried: list[str]) -> str:
+    head = CLOSED_HELP if all(CLOSED in x for x in tried) else MISSING_HELP
+    return head + "\n  " + "\n  ".join(tried)
