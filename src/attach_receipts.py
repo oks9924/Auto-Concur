@@ -59,15 +59,27 @@ READ_ROWS_JS = (
     const text = el.innerText || el.textContent || '';
     return text.trim().replace(/\\s+/g, ' ');
   };
-  // 영수증이 이미 붙어 있는지. 영수증 칸을 찾고, 그 안에 아이콘/버튼이 있으면
-  // 붙은 것으로 본다. 칸 자체를 못 찾으면 null - '없다'가 아니라 '모른다'다.
-  // 모를 때 붙은 것으로 치면 조용히 빠뜨리게 되므로 그때는 평소대로 진행한다.
+  // 영수증이 이미 붙어 있는지.
+  //
+  // 붙어 있으면 파일 이름이 박힌 미리보기 버튼이 생긴다(실측 2026-08):
+  //   data-nuiexp="receipt-thumbnail-button-20260809_17000_00817287.pdf"
+  // 예전에는 '칸 안에 img/svg/button/a 가 있으면 붙은 것'으로 봤는데, 안 붙은
+  // 행에도 자리표시자 아이콘과 올리기 버튼이 있어서 전부 '붙음'으로 나왔다.
+  // 파일 이름이 박힌 버튼만 근거로 삼는다.
+  //
+  // 칸 자체를 못 찾으면 null - '없다'가 아니라 '모른다'다. 모를 때 붙은 것으로
+  // 치면 조용히 빠뜨리게 되므로 그때는 평소대로 진행한다.
+  const RECEIPT_HOOK = '[data-nuiexp^="receipt-thumbnail-button"]';
+  const receiptCell = (r) =>
+    r.querySelector('[data-nuiexp="receipts-cell"], [class*="receipt-cell"]');
   const receipt = (r) => {
-    const cell = r.querySelector(
-      '[data-nuiexp*="receipt" i], [data-testid*="receipt" i], [class*="receipt" i]'
-    );
-    if (!cell) return null;
-    return !!cell.querySelector('img, svg, button, a');
+    const cell = receiptCell(r);
+    return cell ? !!cell.querySelector(RECEIPT_HOOK) : null;
+  };
+  const receiptFile = (r) => {
+    const cell = receiptCell(r);
+    const hit = cell && cell.querySelector(RECEIPT_HOOK);
+    return hit ? (hit.getAttribute('data-nuiexp') || '').replace('receipt-thumbnail-button-', '') : '';
   };
   // 행마다 화면낭독기용 요약이 하나 붙어 있다(실측):
   //   '경비, 내부 직원간 식음료 (...), KRW 17,000, 날짜, 2026-08-09 선택'
@@ -84,6 +96,7 @@ READ_ROWS_JS = (
     vendor: pick(r, 'vendor-name'),
     expenseType: pick(r, 'expense-type-cell'),
     receipt: receipt(r),
+    receiptFile: receiptFile(r),
     label: label(r),
   }));
 }"""
@@ -126,12 +139,12 @@ DUMP_RECEIPTS_JS = (
     + ROWS_FN
     + """
   return gridRows().slice(0, 4).map((r, i) => {
-    const cell = r.querySelector(
-      '[data-nuiexp*="receipt" i], [data-testid*="receipt" i], [class*="receipt" i]'
-    );
+    const cell = r.querySelector('[data-nuiexp="receipts-cell"], [class*="receipt-cell"]');
+    const hit = cell && cell.querySelector('[data-nuiexp^="receipt-thumbnail-button"]');
     return {
       row: i,
-      found: !!cell,
+      cellFound: !!cell,
+      thumbnail: hit ? hit.getAttribute('data-nuiexp') : null,
       inner: cell ? cell.outerHTML.slice(0, 1500) : null,
     };
   });
@@ -184,6 +197,7 @@ class Row:
     # 날짜가 08/09/2026 로 나오는데, 우리는 2026-08-09 만 읽는다.
     raw_date: str = ""
     raw_amount: str = ""
+    receipt_file: str = ""  # 붙어 있는 영수증 파일 이름 (화면이 알려준다)
 
 
 def done_path(folder: Path) -> Path:
@@ -316,6 +330,7 @@ def read_rows(page) -> list[Row]:
                 has_receipt=raw.get("receipt"),
                 raw_date=raw["date"],
                 raw_amount=raw["amount"] or raw.get("label", ""),
+                receipt_file=raw.get("receiptFile", ""),
             )
         )
     return rows
@@ -461,6 +476,11 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
         no = sum(1 for r in dated if r.has_receipt is False)
         unknown = len(dated) - yes - no
         print(f"\n이미 영수증이 붙어 있는 {len(already)}건은 건너뜁니다.")
+        # 무엇이 붙어 있어서 건너뛰는지 적는다. 파일 이름이 다르면 엉뚱한
+        # 영수증이 붙어 있다는 뜻이라 사람이 봐야 한다.
+        for slip, row in already:
+            print(f"    {row.when} {(row.amount or 0):>9,}원  화면: "
+                  f"{row.receipt_file or '(파일 이름 없음)'}  작업지: {slip.path.name}")
         print(f"  화면 판정: 붙음 {yes} / 안 붙음 {no} / 알 수 없음 {unknown}")
         if no == 0:
             # 전부 '붙음'이면 정말 다 붙은 것일 수도, 영수증 칸을 보고 잘못 읽은

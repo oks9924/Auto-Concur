@@ -321,3 +321,30 @@ def test_금액_칸이_읽히면_그걸_쓴다():
 
     assert "pick(r, 'amount-cell')" in READ_ROWS_JS
     assert "screen-reader-only" in READ_ROWS_JS
+
+
+def test_영수증_판정은_미리보기_버튼만_본다():
+    """실측 2026-08-11 concur-receipts.json. 세 행의 영수증 칸이 이랬다:
+
+      row0  data-nuiexp="receipt-thumbnail-button-20260809_17000_00817287.pdf"  -> 붙음
+      row1  data-nuiexp="rcpt-btn-attach-receipt" (올리기 아이콘)                -> 안 붙음
+      row2  data-nuiexp="receipt-thumbnail-button-20260716_764707_00815079.pdf" -> 붙음
+
+    예전 규칙은 '칸 안에 img/svg/button/a 가 있으면 붙음'이었다. row1의 올리기
+    버튼도 button이라 붙음으로 셌고, 그래서 19,000원 영수증이 영영 안 붙었다.
+    """
+    from src.attach_receipts import READ_ROWS_JS
+
+    assert '[data-nuiexp^="receipt-thumbnail-button"]' in READ_ROWS_JS
+    # 헐거운 옛 규칙이 남아 있으면 안 된다
+    assert "querySelector('img, svg, button, a')" not in READ_ROWS_JS
+
+
+def test_건너뛴_이유에_영수증_파일_이름을_적는다():
+    """붙어 있는 파일 이름이 작업지와 다르면 엉뚱한 영수증이 붙어 있는 것이다."""
+    import inspect
+
+    from src import attach_receipts as ar
+
+    소스 = inspect.getsource(ar.attach_phase)
+    assert "row.receipt_file" in 소스
