@@ -290,3 +290,38 @@ def test_첫_번째로_열리면_실패_줄이_없다(monkeypatch, capsys):
     말 = capsys.readouterr().out
     assert "브라우저: chromium" in 말
     assert "앞서 실패" not in 말
+
+
+def test_브라우저_위치를_못박는다(monkeypatch):
+    """exe로 묶으면 Playwright가 임시 풀림 폴더 안을 본다(실측 2026-08-11):
+
+      Temp/_MEI273402/playwright/driver/package/.local-browsers/chromium-1234/
+
+    그 폴더는 실행할 때마다 새로 만들어진다. setup.bat 이 받아둔 브라우저를
+    못 찾고, 매번 다시 받고, 받아도 다음 실행에 또 없다. 결국 Edge로 떨어졌다.
+    """
+    import os
+
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    monkeypatch.setattr(browser.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\oks\AppData\Local")
+    # 경로 구분자는 돌리는 OS를 따른다. 여기서는 어디에 두는지만 본다.
+    집 = browser.browsers_home()
+    assert 집.startswith(r"C:\Users\oks\AppData\Local") and 집.endswith("ms-playwright")
+
+    # 사람이 정한 값이 있으면 건드리지 않는다
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", r"D:\브라우저")
+    assert browser.browsers_home() == r"D:\브라우저"
+
+    # 모듈을 불러올 때 이미 걸려 있어야 한다 - 드라이버가 뜨기 전에 정해진다
+    assert os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+
+
+def test_위치는_드라이버보다_먼저_정해진다():
+    """함수 안에서 걸면 늦다. Node 드라이버는 그 전에 뜬다."""
+    from pathlib import Path
+
+    소스 = (Path(browser.__file__)).read_text(encoding="utf-8")
+    설정 = 소스.index('os.environ["PLAYWRIGHT_BROWSERS_PATH"]')
+    첫함수 = 소스.index("def channels()")
+    assert 설정 < 첫함수  # 모듈을 읽는 순간 걸린다

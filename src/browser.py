@@ -21,7 +21,37 @@ chrome 중 하나를 적는다.
 from __future__ import annotations
 
 import os
+import sys
 import time
+from pathlib import Path
+
+
+def browsers_home() -> str:
+    """Playwright가 브라우저를 찾을 폴더.
+
+    exe로 묶으면 Playwright가 임시 풀림 폴더 안을 본다(실측 2026-08-11):
+      Temp/_MEI273402/playwright/driver/package/.local-browsers/chromium-1234/
+    그 폴더는 실행할 때마다 새로 만들어진다. 그래서 setup.bat 이 받아둔
+    브라우저를 못 찾고, 매번 다시 받고, 받아도 다음 실행에는 또 없다.
+    결국 Edge로 떨어졌다.
+
+    평소 자리를 명시해서 그걸 막는다. 소스로 돌릴 때의 기본값과 같은 곳이라
+    run.bat 쪽 동작은 달라지지 않는다.
+    """
+    already = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
+    if already:
+        return already  # 사람이 정한 것이 있으면 그대로 둔다
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        return str(Path(base) / "ms-playwright")
+    if sys.platform == "darwin":
+        return str(Path.home() / "Library" / "Caches" / "ms-playwright")
+    return str(Path.home() / ".cache" / "ms-playwright")
+
+
+# 드라이버(Node)가 뜨기 전에 정해져야 한다. 그래서 함수가 아니라 여기서 건다 -
+# 이 모듈은 playwright를 시작하는 쪽보다 먼저 불러온다.
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_home()
 
 # None은 Playwright가 내려받은 Chromium이다.
 CHANNELS = [None, "msedge", "chrome"]
