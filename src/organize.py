@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from . import console
+from . import photo_slip
 from . import settings, sheet
 from .slip_parser import Slip, SlipParseError, parse_slip
 
@@ -89,16 +90,48 @@ def _row(slip: Slip, filename: str) -> dict[str, str]:
     }
 
 
+def _photo_row(path: Path) -> dict[str, str]:
+    """사진 한 장을 manifest 한 줄로. 이름에서 읽은 것만 채운다.
+
+    가맹점명·승인번호 같은 것은 사진에 없다. 비워 둔다 - 지어내면 그게
+    근거인 줄 알게 된다. 짝짓기는 날짜와 금액으로 하므로 그 둘이면 된다.
+    """
+    when, amount, key = photo_slip.parse(path)
+    row = dict.fromkeys(MANIFEST_COLUMNS, "")
+    row.update({
+        "파일명": path.name,
+        "거래일": when.isoformat(),
+        "거래시각": "",
+        "금액": str(amount),
+        "승인번호": key,  # 사진에는 승인번호가 없다. 파일 이름이 그 자리를 대신한다
+        "원본파일명": path.name,
+    })
+    return row
+
+
 def organize(folder: Path, apply: bool) -> int:
     cfg = settings.load()
     kept = _kept_edits(folder / "manifest.csv")
     pdfs = sorted(folder.glob("*.pdf"))
-    if not pdfs:
-        print(f"PDF가 없습니다: {folder}", file=sys.stderr)
+    photos = sorted(p for p in folder.iterdir() if p.is_file() and photo_slip.is_photo(p))
+    if not pdfs and not photos:
+        print(f"전표 PDF도 영수증 사진도 없습니다: {folder}", file=sys.stderr)
         return 1
 
     rows: list[dict[str, str]] = []
     failures: list[tuple[Path, str]] = []
+
+    # 사진은 이름을 바꾸지 않는다. 그 이름이 곧 승인번호 자리이고, 바꾸면 다시
+    # 돌릴 때 사람이 적어둔 값과 '이미 붙였다'는 기록을 둘 다 잃는다.
+    for photo in photos:
+        try:
+            row = _photo_row(photo)
+        except photo_slip.PhotoNameError as exc:
+            failures.append((photo, str(exc)))
+            continue
+        row.update(kept.get(row["승인번호"]) or dict.fromkeys(EDITABLE, ""))
+        rows.append(row)
+        print(f"  · {photo.name}  (사진: {row['거래일']} {int(row['금액']):,}원)")
 
     for pdf in pdfs:
         try:
@@ -128,7 +161,7 @@ def organize(folder: Path, apply: bool) -> int:
         row.update(kept.get(slip.approval_no) or dict.fromkeys(EDITABLE, ""))
         rows.append(row)
 
-    rows.sort(key=lambda r: (r["거래일"], r["거래시각"]))
+    rows.sort(key=lambda r: (r["거래일"], r["거래시각"], r["승인번호"]))
 
     manifest = folder / "manifest.csv"
     # utf-8-sig: 엑셀에서 한글이 깨지지 않게.
@@ -138,7 +171,11 @@ def organize(folder: Path, apply: bool) -> int:
         writer.writerows(rows)
 
     total = sum(int(r["금액"]) for r in rows)
-    print(f"\n전표 {len(rows)}건, 합계 {total:,}원을 정리했습니다  ->  {manifest}")
+    photo_count = sum(1 for r in rows if not r["가맹점명"])
+    what = f"전표 {len(rows)}건"
+    if photo_count:
+        what += f" (그중 사진 {photo_count}장)"
+    print(f"\n{what}, 합계 {total:,}원을 정리했습니다  ->  {manifest}")
     # 엑셀본은 경비유형 칸에 드롭다운이 걸려 있어 오타로 못 쓰는 값을 막는다.
     book = folder / "manifest.xlsx"
     try:
