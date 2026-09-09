@@ -167,3 +167,43 @@ def test_대중교통비_이름이_설정과_같다():
 
     for type_name in GREEN_BY_TYPE:
         assert type_name in EXPENSE_TYPE_CODES, type_name
+
+
+def test_내용만_지운_줄은_건너뛴다(tmp_path, capsys):
+    """실측 2026-09-09: 올릴 것만 남기고 나머지 내용을 지웠더니 6행에서 멈췄다.
+
+    승인번호는 숨은 칸이라 사람 눈에 안 보이고, 보이는 칸만 지우면 거기 남는다.
+    그러면 '빈 줄인데 빈 줄로 보이지 않는' 상태가 된다.
+    """
+    import csv
+
+    path = tmp_path / "m.csv"
+    with path.open("w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=MANIFEST_COLUMNS)
+        w.writeheader()
+        w.writerows([
+            ROWS[0],
+            {**dict.fromkeys(MANIFEST_COLUMNS, ""), "승인번호": "00999999"},  # 내용만 지운 줄
+        ])
+
+    rows = sheet.load(path)
+    assert [r.approval for r in rows] == ["00550817"]
+    assert "1줄은 건너뜁니다" in capsys.readouterr().out  # 조용히 넘기지 않는다
+
+
+def test_한쪽만_비면_멈추고_무엇이_비었는지_말한다(tmp_path):
+    """날짜만 지운 것은 실수일 수 있다. 그건 짐작하지 않고 사람에게 묻는다."""
+    import csv
+
+    path = tmp_path / "m.csv"
+    with path.open("w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=MANIFEST_COLUMNS)
+        w.writeheader()
+        w.writerow({**dict.fromkeys(MANIFEST_COLUMNS, ""),
+                    "승인번호": "00999999", "금액": "17000"})
+
+    with pytest.raises(sheet.SheetError) as err:
+        sheet.load(path)
+    말 = str(err.value)
+    assert "거래일 ''" in 말 and "'17000'" in 말
+    assert "행을 통째로 지워" in 말  # 어떻게 고치는지

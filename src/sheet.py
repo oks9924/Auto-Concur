@@ -309,14 +309,28 @@ def load(path: Path) -> list[SheetRow]:
         raise SheetError(f"작업지에 다음 칸이 없습니다: {', '.join(missing)} ({path})")
 
     out = []
+    blank = 0
     for i, r in enumerate(raw, 2):  # 2행부터 (1행은 머리글)
         if not (r.get("승인번호") or "").strip():
             continue
+        when_text = str(r.get("거래일") or "").strip()
+        money_text = str(r.get(money) or "").strip()
+        if not when_text and not money_text:
+            # 엑셀에서 올릴 것만 남기고 나머지는 내용을 지운 줄이다. 승인번호는
+            # 숨은 칸이라 지워지지 않고 남아서, 빈 줄인데 빈 줄로 보이지 않는다.
+            # 조용히 넘기지는 않는다 - 몇 줄을 뺐는지 아래에서 알린다.
+            blank += 1
+            continue
         try:
-            when = datetime.strptime(str(r["거래일"]).strip()[:10], "%Y-%m-%d").date()
-            amount = int(float(str(r[money]).replace(",", "").strip()))
+            when = datetime.strptime(when_text[:10], "%Y-%m-%d").date()
+            amount = int(float(money_text.replace(",", "")))
         except ValueError as exc:
-            raise SheetError(f"{path} {i}행의 거래일/{money}을 읽지 못했습니다: {exc}") from None
+            raise SheetError(
+                f"{path} {i}행의 거래일/{money}을 읽지 못했습니다: {exc}\n"
+                f"  거래일 '{when_text}' / {money} '{money_text}'\n"
+                "  그 줄을 안 올리실 거면 엑셀에서 행을 통째로 지워 주세요"
+                "(내용만 지우면 숨은 칸이 남습니다)."
+            ) from None
         checkin, checkout = _as_date(r.get("입실날짜")), _as_date(r.get("퇴실날짜"))
         if bool(checkin) != bool(checkout):
             raise SheetError(f"{path} {i}행: 입실날짜와 퇴실날짜는 둘 다 적어 주세요.")
@@ -341,4 +355,6 @@ def load(path: Path) -> list[SheetRow]:
                 channel=(r.get("Booking Channel") or "").strip(),
             )
         )
+    if blank:
+        print(f"  (내용이 지워진 {blank}줄은 건너뜁니다)")
     return out
