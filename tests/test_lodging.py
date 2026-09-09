@@ -539,3 +539,40 @@ def test_숙박비인데_못_읽으면_칸의_원본을_보여준다(tmp_path, c
     말 = capsys.readouterr().out
     assert "'8월 17일'" in 말 and "날짜로 읽지 못했습니다" in 말
     assert "작업지 칸:" in 말 and "입실날짜" in 말  # 어떤 칸이 있는지도
+
+
+def test_엑셀_날짜_일련번호를_읽는다():
+    """실측 2026-09-09: 입실 '46251' / 퇴실 '46255'.
+
+    엑셀은 날짜를 '1899-12-30부터 며칠'인 숫자로 저장한다. 셀 서식이 날짜가
+    아니면 그 숫자가 그대로 읽힌다. 사람 눈에는 8/17로 보이는데 우리는 못
+    읽어서, 날짜 없이 저장하다가 Concur가 거부했다.
+    """
+    from src.sheet import _as_date
+
+    assert _as_date("46251") == date(2026, 8, 17)
+    assert _as_date("46255") == date(2026, 8, 21)
+    assert _as_date("46269") == date(2026, 9, 4)
+    assert _as_date(46251) == date(2026, 8, 17)
+    assert _as_date("46251.0") == date(2026, 8, 17)
+
+
+def test_아무_숫자나_날짜로_보지_않는다():
+    """금액이 잘못 들어와도 날짜로 읽어버리면 안 된다. 2000~2099년만 받는다."""
+    from src.sheet import _as_date
+
+    assert _as_date("12345") is None  # 1933년 - 이 프로그램이 다룰 날짜가 아니다
+    assert _as_date("999999") is None
+    assert _as_date("396000") is None  # 금액이 잘못 들어온 경우
+
+
+def test_일련번호로_들어온_숙박_날짜가_박수까지_맞는다(tmp_path):
+    path = tmp_path / "m.csv"
+    path.write_text(
+        "거래일,금액,승인번호,경비유형,입실날짜,퇴실날짜\n"
+        "2026-08-12,396000,A1,숙박비,46251,46255\n",
+        encoding="utf-8-sig",
+    )
+    row = sheet.load(path)[0]
+    assert (row.checkin, row.checkout) == (date(2026, 8, 17), date(2026, 8, 21))
+    assert row.nights == 4

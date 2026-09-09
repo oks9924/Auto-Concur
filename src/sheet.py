@@ -10,8 +10,9 @@ organize가 전표에서 사실(거래일·금액·승인번호·가맹점)을 �
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 REQUIRED = ["거래일", "승인번호"]
@@ -125,6 +126,13 @@ DATE_FORMAT = "m/d"
 
 DATE_PATTERNS = ["%Y-%m-%d", "%Y/%m/%d", "%m/%d", "%Y.%m.%d"]
 
+# 엑셀 날짜 일련번호. 1899-12-30을 0일로 센다(엑셀의 1900년 윤년 버그까지 포함한
+# 관례값이다). 아무 숫자나 날짜로 보면 안 되므로 2000~2099년만 받는다.
+EXCEL_EPOCH = date(1899, 12, 30)
+EXCEL_SERIAL_RE = re.compile(r"\d{5}(?:\.0+)?")
+EXCEL_EPOCH_MIN = (date(2000, 1, 1) - EXCEL_EPOCH).days
+EXCEL_EPOCH_MAX = (date(2099, 12, 31) - EXCEL_EPOCH).days
+
 
 def _as_date(value, year: int | None = None) -> date | None:
     """엑셀 셀이나 문자열에서 날짜를 뽑는다. 못 읽으면 None.
@@ -140,6 +148,16 @@ def _as_date(value, year: int | None = None) -> date | None:
     if isinstance(value, date):
         return value
     text = str(value).strip()[:19]
+
+    # 엑셀은 날짜를 '1899-12-30부터 며칠'인 숫자로 저장한다. 셀 서식이 날짜가
+    # 아니면 그 숫자가 그대로 읽힌다 (실측 2026-09-09: 입실 '46251' = 8/17).
+    # 사람 눈에는 8/17로 보이는데 우리는 못 읽어서, 날짜 없이 저장하다가
+    # Concur가 거부했다.
+    if EXCEL_SERIAL_RE.fullmatch(text):
+        days = int(float(text))
+        if EXCEL_EPOCH_MIN <= days <= EXCEL_EPOCH_MAX:
+            return EXCEL_EPOCH + timedelta(days=days)
+
     for pattern in DATE_PATTERNS:
         try:
             when = datetime.strptime(text[:10] if len(pattern) > 5 else text, pattern)
