@@ -497,3 +497,45 @@ def test_실패해도_어디까지_했는지_알린다():
     소스 = inspect.getsource(fx._apply_lodging)
     assert "여기까지 했습니다" in 소스
     assert "숙박 날짜 '" in 소스  # 넣는 순간에도 찍는다
+
+
+def test_연도_없는_날짜는_그_경비의_해로_읽는다():
+    """작업지가 날짜를 8/17 로 보여준다. 사람이 그대로 치는 일이 있다.
+
+    연도를 안 주면 1900년이 되고, 그걸 그대로 Concur에 넣으면 아무도
+    못 알아챈다.
+    """
+    from src.sheet import _as_date
+
+    assert _as_date("8/17", 2026) == date(2026, 8, 17)
+    assert _as_date("08/17", 2026) == date(2026, 8, 17)
+    assert _as_date("2026-08-17", 2026) == date(2026, 8, 17)  # 연도가 있으면 그대로
+    assert _as_date("2025-08-17", 2026) == date(2025, 8, 17)  # 힌트가 덮지 않는다
+    assert _as_date("", 2026) is None
+
+
+def test_텍스트로_친_숙박_날짜도_읽는다(tmp_path):
+    path = tmp_path / "m.csv"
+    path.write_text(
+        "거래일,금액,승인번호,경비유형,입실날짜,퇴실날짜\n"
+        "2026-08-12,396000,A1,숙박비,8/17,8/21\n",
+        encoding="utf-8-sig",
+    )
+    row = sheet.load(path)[0]
+    assert row.checkin == date(2026, 8, 17) and row.checkout == date(2026, 8, 21)
+    assert row.nights == 4
+
+
+def test_숙박비인데_못_읽으면_칸의_원본을_보여준다(tmp_path, capsys):
+    """비어 있으면 그 파일에 값이 없는 것이고, 뭔가 있는데 못 읽었으면
+    우리가 못 읽는 형식이다. 이 구분이 안 돼서 여러 번 돌았다."""
+    path = tmp_path / "m.csv"
+    path.write_text(
+        "거래일,금액,승인번호,경비유형,입실날짜,퇴실날짜\n"
+        "2026-08-12,396000,A1,숙박비,8월 17일,\n",
+        encoding="utf-8-sig",
+    )
+    sheet.load(path)
+    말 = capsys.readouterr().out
+    assert "'8월 17일'" in 말 and "날짜로 읽지 못했습니다" in 말
+    assert "작업지 칸:" in 말 and "입실날짜" in 말  # 어떤 칸이 있는지도

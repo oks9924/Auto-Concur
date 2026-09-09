@@ -126,8 +126,13 @@ DATE_FORMAT = "m/d"
 DATE_PATTERNS = ["%Y-%m-%d", "%Y/%m/%d", "%m/%d", "%Y.%m.%d"]
 
 
-def _as_date(value) -> date | None:
-    """엑셀 셀이나 문자열에서 날짜를 뽑는다. 못 읽으면 None."""
+def _as_date(value, year: int | None = None) -> date | None:
+    """엑셀 셀이나 문자열에서 날짜를 뽑는다. 못 읽으면 None.
+
+    year는 연도가 없는 형식('8/17')을 읽을 때 쓸 해다. 작업지가 날짜를 m/d 로
+    보여주기 때문에 사람이 그대로 '8/17' 이라고 치는 일이 있는데, 연도를 안
+    주면 1900년이 된다. 그걸 그대로 Concur에 넣으면 아무도 못 알아챈다.
+    """
     if value in (None, ""):
         return None
     if isinstance(value, datetime):
@@ -140,6 +145,8 @@ def _as_date(value) -> date | None:
             when = datetime.strptime(text[:10] if len(pattern) > 5 else text, pattern)
         except ValueError:
             continue
+        if when.year == 1900 and year:  # '%m/%d' 처럼 연도가 없는 형식
+            when = when.replace(year=year)
         return when.date()
     try:  # '2026-08-02 00:00:00' 처럼 시각이 붙어 오는 경우
         return datetime.fromisoformat(text).date()
@@ -310,6 +317,7 @@ def load(path: Path) -> list[SheetRow]:
 
     # 숙박비 칸은 나중에 생겼다. 옛 작업지에는 아예 없어서, 사람이 어딘가에
     # 날짜를 적어놔도 우리는 못 읽는다. 그러면 '적었는데 왜 안 넣냐'가 된다.
+    print(f"  (작업지 칸: {', '.join(k for k in raw[0] if k)})")
     없는칸 = [c for c in LODGING_COLUMNS if c not in raw[0]]
     if 없는칸:
         print(f"  (작업지에 {', '.join(없는칸)} 칸이 없습니다: {path.name}\n"
@@ -339,7 +347,16 @@ def load(path: Path) -> list[SheetRow]:
                 "  그 줄을 안 올리실 거면 엑셀에서 행을 통째로 지워 주세요"
                 "(내용만 지우면 숨은 칸이 남습니다)."
             ) from None
-        checkin, checkout = _as_date(r.get("입실날짜")), _as_date(r.get("퇴실날짜"))
+        # 연도가 없는 '8/17' 은 그 경비의 해로 읽는다. 해를 넘기는 숙박이면
+        # 아래 '퇴실이 입실보다 뒤여야' 에서 걸리므로 조용히 틀리지는 않는다.
+        checkin = _as_date(r.get("입실날짜"), when.year)
+        checkout = _as_date(r.get("퇴실날짜"), when.year)
+        if LODGING_TYPE in (r.get("경비유형") or "") and not (checkin and checkout):
+            # 칸에 실제로 무엇이 들어 있었는지 그대로 보여준다. 비어 있으면
+            # 그 파일에 값이 없는 것이고, 뭔가 찍히는데 못 읽었으면 우리가
+            # 못 읽는 형식이다. 이 구분이 안 돼서 여러 번 돌았다 (2026-09-09).
+            print(f"  ({i}행 숙박비: 입실 {r.get('입실날짜')!r} / "
+                  f"퇴실 {r.get('퇴실날짜')!r} -> 날짜로 읽지 못했습니다)")
         if bool(checkin) != bool(checkout):
             raise SheetError(f"{path} {i}행: 입실날짜와 퇴실날짜는 둘 다 적어 주세요.")
         if checkin and checkout <= checkin:
