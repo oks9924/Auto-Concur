@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import re
 import zipfile
 from pathlib import Path
@@ -142,10 +143,16 @@ def _kind(path: Path) -> str:
 
 
 def _from_zip(bundle: Path, out_dir: Path, expected: int) -> int:
-    """ZIP으로 받은 전표를 꺼낸다. 안에 PDF 한 장이면 그것을 쪼갠다.
+    """ZIP으로 받은 전표를 꺼낸다. 여러 PDF에 나눠 담겨 와도 합쳐서 센다.
+
+    실측 2026-09-09: 62건을 받았더니 PDF 2개짜리 압축이 왔고, 첫 장에 50페이지가
+    붙어 있었다. 50장씩 끊어서 담는다는 뜻이다. 그래서 파일 개수가 아니라
+    페이지 총합이 건수와 맞아야 한다.
 
     압축 안의 이름은 파일 경로로 쓰지 않는다. 우리가 정한 이름으로만 쓴다 -
     압축 파일에 '../' 같은 이름이 들어 있으면 엉뚱한 데 쓰게 된다.
+    순서는 이름순이지만 결과에는 영향이 없다. 전표 이름은 PDF 내용에서
+    만들기 때문에 어느 순서로 꺼내도 같은 파일이 나온다.
     """
     with zipfile.ZipFile(bundle) as zf:
         members = sorted(
@@ -157,19 +164,31 @@ def _from_zip(bundle: Path, out_dir: Path, expected: int) -> int:
                 f"받은 압축 안에 PDF가 없습니다: {bundle}\n"
                 f"  들어 있던 것: {zf.namelist()[:5]}"
             )
-        if len(members) == 1:
-            # 합본 한 장을 압축해서 준 경우다. 풀어서 평소대로 쪼갠다.
-            inner = bundle.with_name(bundle.stem + "_inner.pdf")
-            inner.write_bytes(zf.read(members[0]))
-            return _split(inner, out_dir, expected)
-        if len(members) != expected:
-            raise DownloadError(
-                f"{expected}건을 선택했는데 받은 압축에는 PDF가 {len(members)}개입니다. "
-                f"전표와 거래가 1:1이 아니면 이후 매칭을 믿을 수 없어서 여기서 멈춥니다: {bundle}"
-            )
-        for i, name in enumerate(members, 1):
-            (out_dir / f"slip_{i:03d}.pdf").write_bytes(zf.read(name))
-    return len(members)
+        pages = []
+        breakdown = []
+        for name in members:
+            reader = PdfReader(io.BytesIO(zf.read(name)))
+            pages.extend(reader.pages)
+            breakdown.append(f"{name} {len(reader.pages)}장")
+
+    if len(pages) != expected:
+        raise DownloadError(
+            f"{expected}건을 선택했는데 받은 압축의 전표는 모두 {len(pages)}장입니다. "
+            f"전표와 거래가 1:1이 아니면 이후 매칭을 믿을 수 없어서 여기서 멈춥니다.\n"
+            f"  압축 안: {', '.join(breakdown)}\n"
+            f"  {bundle}"
+        )
+    return _write_pages(pages, out_dir)
+
+
+def _write_pages(pages, out_dir: Path) -> int:
+    """페이지를 한 장씩 slip_NNN.pdf 로 쓴다."""
+    for i, page in enumerate(pages, 1):
+        writer = PdfWriter()
+        writer.add_page(page)
+        with (out_dir / f"slip_{i:03d}.pdf").open("wb") as f:
+            writer.write(f)
+    return len(pages)
 
 
 def _split(bundle: Path, out_dir: Path, expected: int) -> int:
@@ -192,12 +211,7 @@ def _split(bundle: Path, out_dir: Path, expected: int) -> int:
             f"페이지와 거래가 1:1이 아니면 이후 매칭을 믿을 수 없어서 여기서 멈춥니다. "
             f"'페이지 당 1매씩'이 아니라 4매씩으로 받았는지 확인해 주세요: {bundle}"
         )
-    for i, page in enumerate(reader.pages, 1):
-        writer = PdfWriter()
-        writer.add_page(page)
-        with (out_dir / f"slip_{i:03d}.pdf").open("wb") as f:
-            writer.write(f)
-    return len(reader.pages)
+    return _write_pages(reader.pages, out_dir)
 
 
 def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> int:

@@ -60,17 +60,38 @@ def test_압축_안에_합본_한_장이면_쪼갠다(tmp_path):
     assert len(list(out.glob("slip_*.pdf"))) == 3
 
 
-def test_개수가_다르면_멈춘다(tmp_path):
+def test_여러_PDF에_나눠_담겨_와도_합쳐서_센다(tmp_path):
+    """실측 2026-09-09: 62건에 PDF 2개, 첫 장이 50페이지였다.
+
+    50장씩 끊어서 담는다는 뜻이다. 파일 개수를 세면 '2개'라 멈춰버린다.
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    bundle = tmp_path / "매출전표_20260909.zip"
+    with zipfile.ZipFile(bundle, "w") as zf:
+        zf.writestr("매출전표_1.pdf", 한장짜리(tmp_path / "a.pdf", pages=50).read_bytes())
+        zf.writestr("매출전표_2.pdf", 한장짜리(tmp_path / "b.pdf", pages=12).read_bytes())
+
+    assert _split(bundle, out, expected=62) == 62
+    이름 = sorted(p.name for p in out.glob("slip_*.pdf"))
+    assert 이름[0] == "slip_001.pdf" and 이름[-1] == "slip_062.pdf"
+    assert len(이름) == 62
+
+
+def test_페이지_총합이_다르면_멈춘다(tmp_path):
     """전표와 거래가 1:1이 아니면 이후 매칭을 믿을 수 없다."""
     out = tmp_path / "out"
     out.mkdir()
     bundle = tmp_path / "b.zip"
     with zipfile.ZipFile(bundle, "w") as zf:
-        zf.writestr("a.pdf", 한장짜리(tmp_path / "a.pdf").read_bytes())
-        zf.writestr("b.pdf", 한장짜리(tmp_path / "b2.pdf").read_bytes())
+        zf.writestr("a.pdf", 한장짜리(tmp_path / "a.pdf", pages=3).read_bytes())
+        zf.writestr("b.pdf", 한장짜리(tmp_path / "b2.pdf", pages=1).read_bytes())
 
-    with pytest.raises(DownloadError, match="1:1"):
+    with pytest.raises(DownloadError) as err:
         _split(bundle, out, expected=5)
+    말 = str(err.value)
+    assert "모두 4장" in 말  # 총합을 말한다
+    assert "a.pdf 3장" in 말 and "b.pdf 1장" in 말  # 어디에 몇 장인지도
     assert not list(out.glob("*.pdf"))  # 하나도 쓰지 않는다
 
 
