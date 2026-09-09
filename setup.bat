@@ -18,14 +18,31 @@ if defined PY goto found
 echo Python not found. Trying to install it.
 echo.
 winget --version >nul 2>&1
-if errorlevel 1 goto download
+if errorlevel 1 goto nowinget
 
 echo   Installing Python 3.12 with winget. This takes a few minutes...
-winget install --id Python.Python.3.12 --scope user --silent --accept-package-agreements --accept-source-agreements
+rem --source winget matters. Without it winget also searches the Microsoft
+rem Store source, which wants a region handshake first and dies with
+rem "0x8a15000f : Data required by the source is missing" - taking the whole
+rem install down with it even though the package we want is not in the Store.
+winget install --id Python.Python.3.12 --source winget --scope user --silent --accept-package-agreements --accept-source-agreements
+rem And check whether it worked. This used to fall through to :recheck no
+rem matter what, so a failed winget printed "Python was installed but this
+rem window cannot see it yet" - sending people to close and reopen a window
+rem that was never going to help.
+if errorlevel 1 goto wingetfailed
 goto recheck
 
+:nowinget
+echo   winget is not on this PC. Downloading from python.org...
+goto download
+
+:wingetfailed
+echo.
+echo   winget could not install it. Falling back to python.org...
+goto download
+
 :download
-echo   winget not available. Downloading from python.org...
 set "INSTALLER=%TEMP%\python-setup.exe"
 powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe' -OutFile ($env:TEMP + '\python-setup.exe')"
 if not exist "%INSTALLER%" goto nonet

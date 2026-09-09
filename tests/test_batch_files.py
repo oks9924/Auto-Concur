@@ -70,3 +70,34 @@ def test_실행_기록을_남기고_오류면_멈춘다():
     assert "type run-log.txt" in text  # 죽으면 화면에 보여주고
     assert "pause" in text.split(":crashed")[1]  # 창을 붙잡는다
 
+
+
+def test_winget는_스토어를_뒤지지_않는다():
+    """실측 2026-09-09: winget이 msstore 까지 뒤지다 죽었다.
+
+      Failed when searching source: winget
+      0x8a15000f : Data required by the source is missing
+
+    msstore 는 지역 정보 동의를 먼저 요구한다. 우리가 받을 패키지는 거기
+    있지도 않은데 그것 때문에 설치 전체가 죽는다.
+    """
+    text = (BATS[0].parent / "setup.bat").read_text(encoding="ascii")
+    winget = [x for x in text.splitlines() if x.startswith("winget install")]
+    assert len(winget) == 1
+    assert "--source winget" in winget[0]
+
+
+def test_winget가_실패하면_python_org로_간다():
+    """실측: 실패했는데도 '설치됐으니 창을 다시 여세요' 라고 안내했다.
+
+    창을 다시 열어도 없는 파이썬은 안 생긴다. 실패는 실패로 보고 다음
+    방법으로 넘어가야 한다.
+    """
+    text = (BATS[0].parent / "setup.bat").read_text(encoding="ascii")
+    줄 = [x.strip() for x in text.splitlines()]
+    설치 = next(i for i, x in enumerate(줄) if x.startswith("winget install"))
+    확인 = next(i for i, x in enumerate(줄[설치:], 설치) if x.startswith("if errorlevel"))
+    되감기 = next(i for i, x in enumerate(줄[설치:], 설치) if x == "goto recheck")
+    assert 확인 < 되감기  # 성공했는지 보고 나서 다음으로 간다
+    assert "goto wingetfailed" in 줄[확인]
+    assert ":wingetfailed" in 줄
