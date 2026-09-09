@@ -878,6 +878,32 @@ ADD_ITEMIZATION_JS = (
 
 # 어느 얼굴인지 알 수 있을 때까지 기다린다. '추가' 버튼은 2)와 3) 양쪽에 있어서
 # 탭이 그려졌다는 신호로 쓰기 좋다.
+# 못 알아본 화면을 남길 때 쓴다. 버튼만 남겼더니 무엇이 떠 있는지 알 수 없어서
+# 한 번 더 물어봐야 했다. 보이는 글자와 콤보박스·입력칸을 같이 남긴다.
+DUMP_ITEMIZATION_PANEL_JS = """
+() => {
+  const vis = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  };
+  const panel = document.querySelector('[class*="side-panel__side"]') || document.body;
+  return {
+    text: (panel.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 600),
+    buttons: [...document.querySelectorAll('button')].filter(vis).map(b => ({
+      text: (b.innerText || '').trim().slice(0, 30),
+      hook: b.getAttribute('data-nuiexp') || null,
+      disabled: b.disabled,
+    })),
+    combos: [...document.querySelectorAll('[role="combobox"]')].filter(vis).map(c => ({
+      name: c.getAttribute('name') || c.id || null,
+      text: (c.innerText || '').trim().slice(0, 30),
+    })),
+    inputs: [...document.querySelectorAll('input')].filter(vis)
+      .map(x => x.id || x.getAttribute('name')).filter(Boolean).slice(0, 30),
+  };
+}
+"""
+
 ITEMIZATION_SETTLED_JS = (
     "() => { const s = (" + ITEMIZATION_STATE_JS.strip() + ")(); return s.form || s.add || s.empty; }"
 )
@@ -918,12 +944,14 @@ def _itemization_ready(page) -> str | None:
     없고, 요금 칸도 수정 불가다.
     """
     try:
-        _wait_js(page, ITEMIZATION_SETTLED_JS, "항목별 명세 화면", timeout=15000)
+        # 날짜를 바꾸면 Concur가 명세를 다시 계산한다. 15초로는 모자란 화면이
+        # 있었다 (실측 2026-09-09).
+        _wait_js(page, ITEMIZATION_SETTLED_JS, "항목별 명세 화면", timeout=25000)
     except AttachError:
-        dump = _dump(page, "itemization-panel", DUMP_BUTTONS_JS)
+        dump = _dump(page, "itemization-panel", DUMP_ITEMIZATION_PANEL_JS)
         raise AttachError(
             "항목별 명세 화면이 그려지지 않았습니다"
-            + (f" (화면의 버튼 목록: {dump})" if dump else "")
+            + (f" (화면 정보: {dump})" if dump else "")
         ) from None
 
     step = itemization_step(_eval(page, ITEMIZATION_STATE_JS))
@@ -940,7 +968,7 @@ def _itemization_ready(page) -> str | None:
                 timeout=20000,
             )
         except AttachError:
-            dump = _dump(page, "itemization-panel", DUMP_BUTTONS_JS)
+            dump = _dump(page, "itemization-panel", DUMP_ITEMIZATION_PANEL_JS)
             raise AttachError(
                 f"'{ADD_ITEMIZATION_TEXT}'를 눌렀는데 입력 화면이 나오지 않았습니다"
                 + (f" (화면의 버튼 목록: {dump})" if dump else "")
