@@ -429,3 +429,45 @@ def test_날짜_없는_숙박비는_계획_줄에서_보인다():
     소스 = inspect.getsource(fx.fix_phase)
     assert "입실·퇴실 날짜가 작업지에 없습니다" in 소스
     assert "not plan.lodging" in 소스
+
+
+def test_옛_작업지에_숙박_칸이_없으면_알린다(tmp_path, capsys):
+    """숙박비 칸은 나중에 생겼다. 옛 작업지에는 아예 없다.
+
+    그러면 사람이 어딘가에 날짜를 적어놔도 우리는 못 읽고, '적었는데 왜 안
+    넣냐'가 된다. 칸이 없다는 것부터 말해야 한다.
+    """
+    path = tmp_path / "old.csv"
+    path.write_text(
+        "거래일,금액,승인번호,경비유형,코멘트\n2026-08-12,396000,A1,숙박비,출장 숙박\n",
+        encoding="utf-8-sig",
+    )
+    rows = sheet.load(path)
+    assert rows[0].comment == "출장 숙박"  # 있는 칸은 그대로 읽는다
+    assert rows[0].checkin is None
+
+    말 = capsys.readouterr().out
+    assert "입실날짜" in 말 and "퇴실날짜" in 말
+    assert "B단계로 작업지를 새로 만들어" in 말
+
+
+def test_빈_칸은_건드리지_않는다(tmp_path):
+    """거래일·금액만 있고 사람이 아무것도 안 적은 줄은 대상이 아니다."""
+    import csv
+
+    from src import fix_expenses as fx
+    from src import settings
+    from src.attach_receipts import Row
+
+    cols = ["거래일", "금액", "승인번호", "경비유형", "비즈니스목적", "코멘트"]
+    path = tmp_path / "m.csv"
+    with path.open("w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        w.writerow({"거래일": "2026-08-12", "금액": "396000", "승인번호": "A1",
+                    "경비유형": "", "비즈니스목적": "", "코멘트": ""})
+
+    screen = [Row(0, date(2026, 8, 12), 396000, "", "ID1", "숙박비", "호텔")]
+    plans, gaps, missing = fx.plans_from_sheet(settings.DEFAULTS, screen, path, 1)
+    assert plans == []  # 계획에 오르지 않는다 = '그대로 둡니다'
+    assert not missing  # 짝은 지어졌다. 할 일이 없을 뿐이다

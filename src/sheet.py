@@ -308,6 +308,14 @@ def load(path: Path) -> list[SheetRow]:
     if missing:
         raise SheetError(f"작업지에 다음 칸이 없습니다: {', '.join(missing)} ({path})")
 
+    # 숙박비 칸은 나중에 생겼다. 옛 작업지에는 아예 없어서, 사람이 어딘가에
+    # 날짜를 적어놔도 우리는 못 읽는다. 그러면 '적었는데 왜 안 넣냐'가 된다.
+    없는칸 = [c for c in LODGING_COLUMNS if c not in raw[0]]
+    if 없는칸:
+        print(f"  (작업지에 {', '.join(없는칸)} 칸이 없습니다: {path.name}\n"
+              "   옛 작업지입니다. 숙박비 상세는 채우지 못합니다 - "
+              "B단계로 작업지를 새로 만들어 주세요.)")
+
     out = []
     blank = 0
     for i, r in enumerate(raw, 2):  # 2행부터 (1행은 머리글)
