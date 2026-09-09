@@ -714,7 +714,13 @@ def _set_date_range(page, checkin: date, checkout: date) -> bool:
     page.keyboard.press("Control+A")
     page.keyboard.press("Delete")
     page.keyboard.type(want, delay=50)
-    page.keyboard.press("Escape")  # 달력이 떠 있으면 닫는다. 다음 클릭을 가린다
+    # Enter로 확정하고 Tab으로 칸을 떠난다. 예전에는 Escape로 달력을 닫았는데,
+    # 날짜 위젯에서 Escape는 '취소'라 화면 글자만 남고 값은 안 들어갈 수 있다.
+    # 입력칸을 읽는 우리 확인은 통과하는데 저장하면 Concur가 '날짜 범위' 가
+    # 없다고 거부했다 (실측 2026-09-09).
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(300)
+    page.keyboard.press("Tab")  # 떠나면서 확정된다. 달력도 닫힌다
     page.wait_for_timeout(500)
 
     # 넣은 대로 남았는지 본다. 달력이 값을 다시 쓰는 경우가 있다.
@@ -1216,9 +1222,15 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
     done = []
 
     _open_tab(page, TAB_DETAILS, "상세 정보")
+    want = f"{lodging.checkin:%Y-%m-%d} - {lodging.checkout:%Y-%m-%d}"
+    # 실시간으로 찍는다. 실패했을 때 날짜를 넣고 실패한 건지 넣지도 못한 건지
+    # 알 수 없어서 몇 번을 헤맸다 (실측 2026-09-09).
     if _set_date_range(page, lodging.checkin, lodging.checkout):
         changed = True
+        print(f"     (숙박 날짜 '{want}' 를 넣었습니다)")
         done.append(f"숙박 {_md(lodging.checkin)}~{_md(lodging.checkout)} ({lodging.nights}박)")
+    else:
+        print(f"     (숙박 날짜가 이미 '{want}' 입니다)")
 
     if lodging.location and _pick_from_combo(page, HINT_LOCATION, lodging.location, "숙박 위치"):
         done.append("숙박 위치")
@@ -1246,7 +1258,12 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
             # 저장'뿐인 화면이 있다(실측 2026-07-05 711,620원). 그 버튼을 누르면
             # 열려 있는 명세 입력 폼이 저장돼서, 우리가 넣지 않은 명세가 생긴다.
             _open_tab(page, TAB_DETAILS, "상세 정보")
-            _save_expense(page, plan.row, report_url, reopen=later)
+            try:
+                _save_expense(page, plan.row, report_url, reopen=later)
+            except AttachError as exc:
+                raise AttachError(
+                    f"{exc}\n     여기까지 했습니다: {', '.join(done) or '없음'}"
+                ) from None
         return done
 
     if needs_recurrence(len(amounts), lambda: bool(_eval(page, COMBO_READY_JS, HINT_RECURRENCE))):
@@ -1260,7 +1277,10 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
     # 이 탭의 저장 버튼은 '경비 저장'이 아니라 '항목별 명세 저장'이다(실측:
     # data-nuiexp="itm-save-itemization"). 방금 채운 명세를 저장하는 것이므로
     # 이 버튼이 맞다. 저장하면 상세로 돌아온다.
-    _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION, reopen=later)
+    try:
+        _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION, reopen=later)
+    except AttachError as exc:
+        raise AttachError(f"{exc}\n     여기까지 했습니다: {', '.join(done) or '없음'}") from None
     return done
 
 

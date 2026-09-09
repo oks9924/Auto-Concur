@@ -471,3 +471,29 @@ def test_빈_칸은_건드리지_않는다(tmp_path):
     plans, gaps, missing = fx.plans_from_sheet(settings.DEFAULTS, screen, path, 1)
     assert plans == []  # 계획에 오르지 않는다 = '그대로 둡니다'
     assert not missing  # 짝은 지어졌다. 할 일이 없을 뿐이다
+
+
+def test_날짜는_Enter로_확정하고_칸을_떠난다():
+    """날짜 위젯에서 Escape 는 '취소'다.
+
+    화면 글자는 남아서 우리 확인은 통과하는데, 값은 안 들어가서 저장하면
+    Concur가 '날짜 범위' 가 없다고 거부했다 (실측 2026-09-09).
+    """
+    import inspect
+
+    from src import fix_expenses as fx
+
+    소스 = inspect.getsource(fx._set_date_range)
+    assert 'press("Enter")' in 소스 and 'press("Tab")' in 소스
+    assert 'press("Escape")' not in 소스
+
+
+def test_실패해도_어디까지_했는지_알린다():
+    """날짜를 넣고 실패한 건지 넣지도 못한 건지 몰라 몇 번을 헤맸다."""
+    import inspect
+
+    from src import fix_expenses as fx
+
+    소스 = inspect.getsource(fx._apply_lodging)
+    assert "여기까지 했습니다" in 소스
+    assert "숙박 날짜 '" in 소스  # 넣는 순간에도 찍는다
