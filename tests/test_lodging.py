@@ -308,3 +308,33 @@ def test_칸이_비어_있으면_설정_기본값을_쓴다(tmp_path):
     plans, _, _ = fx.plans_from_sheet(settings.DEFAULTS, screen, path, 1)
     stay = plans[0][0].lodging
     assert stay.location == "국내" and stay.channel == "Others"
+
+
+def test_Concur가_거부하면_성공으로_세지_않는다():
+    """실측 2026-09-09: 숙박비 3건이 날짜 범위 없이 저장됐는데 로그는 성공이었다.
+
+      (저장 후 안내창을 닫았습니다: 오류 계속하려면 다음에 관한 유효한 정보를
+       제공해야 합니다. 날짜 범위 닫기)
+      [1/4] 2026-08-12 396,000원 - 코멘트
+
+    화면에는 빨간 오류가 남았는데 '처리했습니다' 로 찍혔다. 저장이 안 된 것을
+    성공으로 세면 사람이 그 건을 다시 안 본다.
+    """
+    from src.fix_expenses import REJECTED_RE
+
+    거부 = "오류 계속하려면 다음에 관한 유효한 정보를 제공해야 합니다. 날짜 범위 닫기"
+    assert REJECTED_RE.search(거부)
+    # 그냥 안내는 막지 않는다 - 그건 저장이 된 것이다
+    assert not REJECTED_RE.search("이 경비가 저장되었습니다")
+    assert not REJECTED_RE.search("참석자 목록을 저장하시겠습니까?")
+
+
+def test_빠진_날짜는_읽은_값까지_보여준다():
+    """'적었는데 왜 안 넣냐'가 되면, 잘못 읽은 건지 정말 빈 건지 갈려야 한다."""
+    import inspect
+
+    from src import fix_expenses as fx
+
+    소스 = inspect.getsource(fx.fix_phase)
+    assert "작업지에서 읽은 값" in 소스
+    assert "entry.checkin!r" in 소스

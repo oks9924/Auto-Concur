@@ -485,6 +485,11 @@ DUMP_BUTTONS_JS = """
   })
 """
 
+# 저장 뒤 뜨는 창이 안내인지 거부인지 가른다. 실측 문구:
+#   "오류 계속하려면 다음에 관한 유효한 정보를 제공해야 합니다. 날짜 범위"
+# 이건 저장이 안 됐다는 뜻이라 성공으로 세면 안 된다.
+REJECTED_RE = re.compile(r"오류|유효한 정보|valid information", re.I)
+
 SAVE_DETAIL = "경비 저장,저장"
 SAVE_ITEMIZATION = "저장,항목별 명세 저장,경비 저장"
 
@@ -784,6 +789,11 @@ def _save_expense(page, row: Row, report_url: str, labels: str = SAVE_DETAIL,
     # 넣을 것을 다 넣고 저장하므로 확인창은 안 뜨는 것이 정상이다. 뜰 때만
     # 짧게 잡는다 - 매번 오래 기다리면 건마다 그만큼 늦어진다.
     told = _dismiss_dialog(page, wait_ms=1500)
+    if told and REJECTED_RE.search(told):
+        # Concur가 저장을 받아주지 않았다. 이걸 안내문으로 넘기면 화면에는
+        # 빨간 오류가 남았는데 로그에는 '처리했습니다' 로 찍힌다 (실측
+        # 2026-09-09: 숙박비 3건이 날짜 범위 없이 저장됐는데 성공으로 셌다).
+        raise AttachError(f"Concur가 저장을 거부했습니다: {told}")
     if told:
         print(f"     (저장 후 안내창을 닫았습니다: {told})")
 
@@ -1388,6 +1398,13 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
         for entry, holes in gaps:
             print(f"  {entry.when} {entry.amount:>9,}원  [{entry.type_name}] "
                   f"-> {', '.join(holes)} 가 비어 있습니다")
+        # 무엇을 읽었는지 같이 보여준다. '적었는데 왜 안 넣냐'가 되면 작업지를
+        # 잘못 읽은 건지 정말 비어 있는 건지 이 줄로 갈린다 (실측 2026-09-09).
+        if any("날짜" in h for _, holes in gaps for h in holes):
+            print("  작업지에서 읽은 값:")
+            for entry, holes in gaps:
+                if any("날짜" in h for h in holes):
+                    print(f"    {entry.when} 입실 {entry.checkin!r} / 퇴실 {entry.checkout!r}")
     if missing:
         print(f"\n작업지에는 있으나 Concur에서 찾지 못한 것 {len(missing)}건:")
         for entry, why in missing:
