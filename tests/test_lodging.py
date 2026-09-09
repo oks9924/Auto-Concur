@@ -415,3 +415,17 @@ def test_수식은_수식으로_남는다(tmp_path):
                      type_defaults=settings.type_defaults(settings.DEFAULTS))
 
     assert _edits_from_xlsx(tmp_path / "manifest.xlsx")["A1"]["숙박위치"].startswith("=IF(")
+
+
+def test_날짜_없는_숙박비는_계획_줄에서_보인다():
+    """실측 2026-09-09: '숙박비 -> 코멘트' 만 찍히고 날짜 칸은 손도 안 댔다.
+
+    저장해봐야 Concur가 거부한다. 실패한 뒤에 이유를 찾느니 계획에서 보이게 한다.
+    """
+    import inspect
+
+    from src import fix_expenses as fx
+
+    소스 = inspect.getsource(fx.fix_phase)
+    assert "입실·퇴실 날짜가 작업지에 없습니다" in 소스
+    assert "not plan.lodging" in 소스

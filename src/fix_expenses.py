@@ -1401,10 +1401,13 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
         # 무엇을 읽었는지 같이 보여준다. '적었는데 왜 안 넣냐'가 되면 작업지를
         # 잘못 읽은 건지 정말 비어 있는 건지 이 줄로 갈린다 (실측 2026-09-09).
         if any("날짜" in h for _, holes in gaps for h in holes):
-            print("  작업지에서 읽은 값:")
+            print(f"  작업지에서 읽은 값 ({sheet_path.name}):")
             for entry, holes in gaps:
                 if any("날짜" in h for h in holes):
-                    print(f"    {entry.when} 입실 {entry.checkin!r} / 퇴실 {entry.checkout!r}")
+                    print(f"    {entry.when} {entry.amount:>9,}원  "
+                          f"입실 {entry.checkin!r} / 퇴실 {entry.checkout!r}")
+            print("    비어 있으면 그 작업지에 값이 없는 것입니다. "
+                  "B단계를 다시 누르면 예전에는 지워졌습니다 - 그 칸을 채우고 C만 눌러 주세요.")
     if missing:
         print(f"\n작업지에는 있으나 Concur에서 찾지 못한 것 {len(missing)}건:")
         for entry, why in missing:
@@ -1426,6 +1429,11 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
         if entry is not None:
             mark = f"   [{entry.when} {entry.merchant[:12]}"
             mark += f", {how} 배정]" if how != "단독" else "]"
+        # 숙박비인데 날짜가 없으면 저장해도 Concur가 거부한다. 계획 줄에서
+        # 미리 보이게 한다 - 실패한 뒤에 이유를 찾는 것보다 낫다
+        # (실측 2026-09-09: '숙박비 -> 코멘트' 만 찍히고 날짜 칸은 손도 안 댔다).
+        if LABEL_LODGING in (r.expense_type or plan.type_label or "") and not plan.lodging:
+            mark = "   <- 입실·퇴실 날짜가 작업지에 없습니다" + mark
         print(f"  {r.when} {r.amount:>9,}원  {r.expense_type[:22]:22} -> {plan.summary()}{mark}")
 
     skipped = len(rows) - len(plans)
