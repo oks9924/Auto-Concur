@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import zipfile
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PWTimeout
@@ -127,8 +128,63 @@ def _dump_modal(page, out_dir: Path) -> None:
         print(f"  모달 마크업을 저장했습니다: {path}")
 
 
+# 받은 파일이 무엇인지 확장자로 믿지 않는다. 실측 2026-09-09: 이름은 PDF인데
+# 내용이 ZIP이었고(PK\x03\x04), pypdf 가 'Stream has ended unexpectedly' 로 죽었다.
+MAGIC = {b"%PDF": "pdf", b"PK\x03\x04": "zip"}
+
+
+def _kind(path: Path) -> str:
+    head = path.open("rb").read(4)
+    for magic, name in MAGIC.items():
+        if head.startswith(magic):
+            return name
+    return repr(head)
+
+
+def _from_zip(bundle: Path, out_dir: Path, expected: int) -> int:
+    """ZIP으로 받은 전표를 꺼낸다. 안에 PDF 한 장이면 그것을 쪼갠다.
+
+    압축 안의 이름은 파일 경로로 쓰지 않는다. 우리가 정한 이름으로만 쓴다 -
+    압축 파일에 '../' 같은 이름이 들어 있으면 엉뚱한 데 쓰게 된다.
+    """
+    with zipfile.ZipFile(bundle) as zf:
+        members = sorted(
+            m for m in zf.namelist()
+            if m.lower().endswith(".pdf") and not m.endswith("/")
+        )
+        if not members:
+            raise DownloadError(
+                f"받은 압축 안에 PDF가 없습니다: {bundle}\n"
+                f"  들어 있던 것: {zf.namelist()[:5]}"
+            )
+        if len(members) == 1:
+            # 합본 한 장을 압축해서 준 경우다. 풀어서 평소대로 쪼갠다.
+            inner = bundle.with_name(bundle.stem + "_inner.pdf")
+            inner.write_bytes(zf.read(members[0]))
+            return _split(inner, out_dir, expected)
+        if len(members) != expected:
+            raise DownloadError(
+                f"{expected}건을 선택했는데 받은 압축에는 PDF가 {len(members)}개입니다. "
+                f"전표와 거래가 1:1이 아니면 이후 매칭을 믿을 수 없어서 여기서 멈춥니다: {bundle}"
+            )
+        for i, name in enumerate(members, 1):
+            (out_dir / f"slip_{i:03d}.pdf").write_bytes(zf.read(name))
+    return len(members)
+
+
 def _split(bundle: Path, out_dir: Path, expected: int) -> int:
-    """합본 PDF를 한 장씩 쪼갠다. 페이지 수가 건수와 다르면 멈춘다."""
+    """합본 PDF를 한 장씩 쪼갠다. 페이지 수가 건수와 다르면 멈춘다.
+
+    ZIP으로 올 때도 있어서 무엇을 받았는지 먼저 본다.
+    """
+    kind = _kind(bundle)
+    if kind == "zip":
+        return _from_zip(bundle, out_dir, expected)
+    if kind != "pdf":
+        raise DownloadError(
+            f"받은 파일이 PDF도 압축도 아닙니다 (앞부분: {kind}): {bundle}\n"
+            "  로그인이 풀려서 오류 페이지를 받았을 수 있습니다. 그 파일을 열어 확인해 주세요."
+        )
     reader = PdfReader(bundle)
     if len(reader.pages) != expected:
         raise DownloadError(
