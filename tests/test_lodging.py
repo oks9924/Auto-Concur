@@ -338,3 +338,80 @@ def test_빠진_날짜는_읽은_값까지_보여준다():
     소스 = inspect.getsource(fx.fix_phase)
     assert "작업지에서 읽은 값" in 소스
     assert "entry.checkin!r" in 소스
+
+
+def test_엑셀에_적은_값이_B단계를_다시_눌러도_남는다(tmp_path):
+    """실측 2026-09-09: 숙박 날짜를 엑셀에 적어뒀는데 C단계가 날짜 칸을 아예
+    건드리지 않았다.
+
+    사람이 여는 것은 manifest.xlsx 인데, 다시 만들 때 참고하는 것은
+    manifest.csv 뿐이었다. 엑셀에 적은 값은 아무도 읽지 않았고 B단계를 다시
+    누를 때마다 통째로 사라졌다.
+    """
+    import csv
+    import os
+
+    from src import settings
+    from src.organize import MANIFEST_COLUMNS, _kept_edits
+
+    base = dict.fromkeys(MANIFEST_COLUMNS, "")
+    적은것 = base | {
+        "거래일": "2026-08-12", "금액": "396000", "승인번호": "A1",
+        "경비유형": "숙박비", "코멘트": "현대 중공업 엔진 출장 숙박",
+        "입실날짜": "2026-08-17", "퇴실날짜": "2026-08-21",
+        "숙박위치": "국내", "Booking Channel": "Others",
+    }
+    sheet.write_xlsx(MANIFEST_COLUMNS, [적은것], tmp_path / "manifest.xlsx",
+                     settings.choices(settings.DEFAULTS))
+    # csv 에는 그 값이 없다. B단계가 만든 그대로다.
+    with (tmp_path / "manifest.csv").open("w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=MANIFEST_COLUMNS)
+        w.writeheader()
+        w.writerow(base | {"거래일": "2026-08-12", "금액": "396000", "승인번호": "A1"})
+    os.utime(tmp_path / "manifest.xlsx", None)  # 엑셀을 나중에 고쳤다
+
+    기억 = _kept_edits(tmp_path)["A1"]
+    assert 기억["입실날짜"].startswith("2026-08-17")
+    assert 기억["퇴실날짜"].startswith("2026-08-21")
+    assert 기억["숙박위치"] == "국내" and 기억["코멘트"] == "현대 중공업 엔진 출장 숙박"
+
+
+def test_csv를_나중에_고쳤으면_그쪽을_믿는다(tmp_path):
+    """두 파일은 B단계가 같이 만든다. 그 뒤로 사람이 손댄 쪽이 더 최근이다."""
+    import csv
+    import os
+    import time
+
+    from src import settings
+    from src.organize import MANIFEST_COLUMNS, _kept_edits
+
+    base = dict.fromkeys(MANIFEST_COLUMNS, "")
+    sheet.write_xlsx(MANIFEST_COLUMNS, [base | {"거래일": "2026-08-12", "금액": "1",
+                                                "승인번호": "A1", "코멘트": "엑셀"}],
+                     tmp_path / "manifest.xlsx", settings.choices(settings.DEFAULTS))
+    time.sleep(0.01)
+    with (tmp_path / "manifest.csv").open("w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=MANIFEST_COLUMNS)
+        w.writeheader()
+        w.writerow(base | {"거래일": "2026-08-12", "금액": "1",
+                           "승인번호": "A1", "코멘트": "csv"})
+    os.utime(tmp_path / "manifest.csv", None)
+
+    assert _kept_edits(tmp_path)["A1"]["코멘트"] == "csv"
+
+
+def test_수식은_수식으로_남는다(tmp_path):
+    """참석자·숙박위치는 유형을 고르면 따라오는 수식이다.
+
+    계산된 값을 가져오면 수식이 값으로 굳어서, 나중에 유형을 바꿔도 안 따라간다.
+    """
+    from src import settings
+    from src.organize import MANIFEST_COLUMNS, _edits_from_xlsx
+
+    base = dict.fromkeys(MANIFEST_COLUMNS, "")
+    sheet.write_xlsx(MANIFEST_COLUMNS, [base | {"거래일": "2026-08-12", "금액": "1",
+                                                "승인번호": "A1"}],
+                     tmp_path / "manifest.xlsx", settings.choices(settings.DEFAULTS),
+                     type_defaults=settings.type_defaults(settings.DEFAULTS))
+
+    assert _edits_from_xlsx(tmp_path / "manifest.xlsx")["A1"]["숙박위치"].startswith("=IF(")

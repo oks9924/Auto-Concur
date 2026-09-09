@@ -58,11 +58,58 @@ MANIFEST_COLUMNS = [
 ]
 
 
-def _kept_edits(manifest: Path) -> dict[str, dict[str, str]]:
-    """이미 있는 manifest에서 사람이 고친 값을 승인번호로 기억해둔다.
+def _edits_from_xlsx(book: Path) -> dict[str, dict[str, str]]:
+    """작업지(엑셀)에서 사람이 적은 값을 읽는다.
+
+    data_only=False 로 읽는다. 참석자·숙박위치처럼 우리가 수식으로 넣은 칸은
+    수식 그대로 가져와야 다시 만들 때도 수식으로 남는다 - 계산된 값을 가져오면
+    수식이 값으로 굳어서, 나중에 유형을 바꿔도 안 따라간다.
+    """
+    from openpyxl import load_workbook
+
+    ws = load_workbook(book, data_only=False).active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return {}
+    header = [str(c).strip() if c is not None else "" for c in rows[0]]
+    if "승인번호" not in header:
+        return {}
+    kept = {}
+    for r in rows[1:]:
+        cells = dict(zip(header, r))
+        key = str(cells.get("승인번호") or "").strip()
+        if key:
+            kept[key] = {
+                k: ("" if cells.get(k) is None else str(cells[k]).strip())
+                for k in EDITABLE
+            }
+    return kept
+
+
+def _kept_edits(folder: Path) -> dict[str, dict[str, str]]:
+    """사람이 고친 값을 승인번호로 기억해둔다. 엑셀을 먼저 본다.
 
     다시 돌릴 때마다 미리채움으로 덮어쓰면 손으로 고친 것이 날아간다.
+
+    csv 만 보고 있었다(실측 2026-09-09). 그런데 사람이 여는 것은 엑셀이라,
+    엑셀에 적은 값은 아무도 읽지 않았고 B단계를 다시 누를 때마다 통째로
+    사라졌다. 숙박 날짜를 적어뒀는데 C단계에서 날짜 칸을 아예 건드리지
+    않았던 것이 이것 때문이다.
     """
+    book, manifest = folder / "manifest.xlsx", folder / "manifest.csv"
+    # 나중에 고친 쪽을 믿는다. 두 파일 모두 B단계가 같이 만들지만, 그 뒤로
+    # 사람이 손댄 것은 한쪽뿐이다. 그 한쪽이 더 최근이다.
+    xlsx_newer = book.exists() and (
+        not manifest.exists() or book.stat().st_mtime >= manifest.stat().st_mtime
+    )
+    if xlsx_newer:
+        try:
+            kept = _edits_from_xlsx(book)
+            if kept:
+                return kept
+        except Exception as exc:  # 엑셀이 열려 있거나 깨졌으면 csv로 물러선다
+            print(f"  ({book.name} 을 읽지 못해 csv의 값을 씁니다: {exc})")
+
     if not manifest.exists():
         return {}
     with manifest.open(encoding="utf-8-sig", newline="") as f:
@@ -111,7 +158,7 @@ def _photo_row(path: Path) -> dict[str, str]:
 
 def organize(folder: Path, apply: bool) -> int:
     cfg = settings.load()
-    kept = _kept_edits(folder / "manifest.csv")
+    kept = _kept_edits(folder)
     pdfs = sorted(folder.glob("*.pdf"))
     photos = sorted(p for p in folder.iterdir() if p.is_file() and photo_slip.is_photo(p))
     if not pdfs and not photos:
