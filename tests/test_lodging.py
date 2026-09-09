@@ -201,15 +201,17 @@ def test_바뀐_것이_없으면_저장하지_않는다(monkeypatch):
 
 
 def test_명세가_있어도_상세를_바꿨으면_저장한다(monkeypatch):
-    """저장은 상세 정보 탭으로 돌아가서 한다.
+    """탭을 눌러 상세로 돌아가지 않는다.
 
-    항목별 명세 탭에는 '경비 저장'이 화면 밖에만 있는 화면이 있다. 거기 보이는
-    '항목별 명세 저장'을 누르면 열려 있는 명세 입력 폼이 저장돼버린다.
+    명세 화면이 전체 화면 사이드 패널로 열리면 그 패널이 탭을 덮어서 클릭이
+    30초 동안 막힌다 (실측 2026-09-09). 지금 화면에서 누를 수 있는 저장
+    버튼을 쓴다 - 여기서는 명세를 건드리지 않았으므로 어느 쪽이든 같다.
     """
-    from src.fix_expenses import SAVE_DETAIL
+    from src.fix_expenses import SAVE_ANYWHERE
 
     한일 = _숙박흐름(monkeypatch, 날짜바뀜=True, 위치바뀜=False, 명세="이미 있음")
-    assert 한일[-2:] == ["탭:상세 정보", f"저장:{SAVE_DETAIL}"]
+    assert 한일[-1] == f"저장:{SAVE_ANYWHERE}"
+    assert "탭:상세 정보" not in 한일[-2:]  # 덮인 탭을 누르러 가지 않는다
 
 
 def test_명세를_채웠으면_항목별_명세_저장으로_저장한다(monkeypatch):
@@ -576,3 +578,18 @@ def test_일련번호로_들어온_숙박_날짜가_박수까지_맞는다(tmp_p
     row = sheet.load(path)[0]
     assert (row.checkin, row.checkout) == (date(2026, 8, 17), date(2026, 8, 21))
     assert row.nights == 4
+
+
+def test_탭이_덮이면_30초를_버리지_않는다():
+    """실측 2026-09-09: '<span>금액</span> ... subtree intercepts pointer events'
+
+    전체 화면 사이드 패널이 탭을 덮으면 아무리 기다려도 안 눌린다. 30초를
+    버리고 Playwright 덤프를 토하느니 무엇이 막았는지 말한다.
+    """
+    import inspect
+
+    from src import fix_expenses as fx
+
+    소스 = inspect.getsource(fx._open_tab)
+    assert "timeout=8000" in 소스
+    assert "다른 화면이 탭을 덮고 있습니다" in 소스

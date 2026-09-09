@@ -491,6 +491,9 @@ DUMP_BUTTONS_JS = """
 REJECTED_RE = re.compile(r"오류|유효한 정보|valid information", re.I)
 
 SAVE_DETAIL = "경비 저장,저장"
+# 명세 화면에서 상세를 저장해야 할 때. 탭을 눌러 상세로 돌아갈 수 없는 화면이
+# 있어서(사이드 패널이 탭을 덮는다) 지금 보이는 저장 버튼 중에서 고른다.
+SAVE_ANYWHERE = "경비 저장,항목별 명세 저장,저장"
 SAVE_ITEMIZATION = "저장,항목별 명세 저장,경비 저장"
 
 LABEL_LODGING = "숙박비"
@@ -813,7 +816,14 @@ def _open_tab(page, selector: str, what: str) -> None:
         page.wait_for_selector(selector, timeout=20000)
     except PWTimeout:
         raise AttachError(f"{what} 탭을 찾지 못했습니다") from None
-    page.click(selector)
+    try:
+        # 30초를 통째로 버리지 않는다. 무엇이 막았는지 말하는 편이 낫다 -
+        # 전체 화면 사이드 패널이 탭을 덮으면 아무리 기다려도 안 눌린다.
+        page.click(selector, timeout=8000)
+    except PWTimeout:
+        raise AttachError(
+            f"{what} 탭을 누르지 못했습니다. 다른 화면이 탭을 덮고 있습니다"
+        ) from None
     page.wait_for_timeout(800)
 
 
@@ -920,6 +930,7 @@ def _itemization_ready(page) -> str | None:
     if step == "skip":
         return "항목별 명세가 이미 있어 건드리지 않았습니다"
     if step == "add":
+        print(f"     ('{ADD_ITEMIZATION_TEXT}' 를 누릅니다)")
         _click_marked(page, ADD_ITEMIZATION_JS, f"'{ADD_ITEMIZATION_TEXT}' 버튼")
         try:
             _wait_js(
@@ -969,8 +980,10 @@ def _fill_room_rates(page, amounts: list[int]) -> str:
             "확인해 주세요."
             + (f" (표 정보: {dump})" if dump else "")
         )
-    for cell, money in zip(cells, amounts):
+    print(f"     (객실 요금 {len(amounts)}행을 채웁니다)")
+    for n, (cell, money) in enumerate(zip(cells, amounts), 1):
         page.fill(cell["selector"], str(money))
+        print(f"       {n}/{len(amounts)}  {money:,}원")
         page.wait_for_timeout(150)
     return f"일일 객실 요금 {len(amounts)}행 (합 {sum(amounts):,}원)"
 
@@ -1242,6 +1255,7 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
     # 중간에 저장하지 않는다. 객실 요금이 비어 있는 채로 저장하면 '필수 정보가
     # 누락되었습니다' 창이 뜨고, 그 창을 닫으면 리포트로 튕겨 나간다. 넣을 것을
     # 다 넣고 한 번만 저장한다.
+    print("     (항목별 명세 탭으로 갑니다)")
     _open_tab(page, TAB_ITEMIZATION, "항목별 명세")
 
     # 화면이 어떤 상태인지 먼저 읽는다. 비어 있으면 '항목별 명세 추가'를 눌러
@@ -1253,13 +1267,14 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
         # 바꾼 것이 없으면 저장할 것도 없다. 다시 돌릴 때 이미 다 되어 있는
         # 건에서, 저장할 이유가 없는 화면의 저장 버튼을 찾다가 실패했다.
         if changed:
-            # 저장은 상세 정보 탭으로 돌아가서 한다. 항목별 명세 탭에는 '경비
-            # 저장'이 화면 밖(-10001, -9893)에만 있고 보이는 것은 '항목별 명세
-            # 저장'뿐인 화면이 있다(실측 2026-07-05 711,620원). 그 버튼을 누르면
-            # 열려 있는 명세 입력 폼이 저장돼서, 우리가 넣지 않은 명세가 생긴다.
-            _open_tab(page, TAB_DETAILS, "상세 정보")
+            # 탭을 눌러 상세로 돌아가지 않는다. 명세 화면이 전체 화면 사이드
+            # 패널로 열리면 그 패널이 탭을 덮어서 클릭이 30초 동안 막힌다
+            # (실측 2026-09-09: '<span>금액</span> ... subtree intercepts
+            # pointer events'). 지금 화면에서 누를 수 있는 저장 버튼을 쓴다 -
+            # '경비 저장'이 있으면 그것부터, 없으면 '항목별 명세 저장'이다.
+            # 여기서 우리가 명세를 건드리지 않았으므로 어느 쪽이든 같다.
             try:
-                _save_expense(page, plan.row, report_url, reopen=later)
+                _save_expense(page, plan.row, report_url, SAVE_ANYWHERE, reopen=later)
             except AttachError as exc:
                 raise AttachError(
                     f"{exc}\n     여기까지 했습니다: {', '.join(done) or '없음'}"
@@ -1267,6 +1282,7 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
         return done
 
     if needs_recurrence(len(amounts), lambda: bool(_eval(page, COMBO_READY_JS, HINT_RECURRENCE))):
+        print(f"     (반복을 '{RECUR_DIFFERENT_DAILY}' 으로 고릅니다)")
         _pick_from_combo(page, HINT_RECURRENCE, RECUR_DIFFERENT_DAILY, "반복")
         page.wait_for_timeout(800)
     else:
@@ -1277,6 +1293,7 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
     # 이 탭의 저장 버튼은 '경비 저장'이 아니라 '항목별 명세 저장'이다(실측:
     # data-nuiexp="itm-save-itemization"). 방금 채운 명세를 저장하는 것이므로
     # 이 버튼이 맞다. 저장하면 상세로 돌아온다.
+    print("     (항목별 명세를 저장합니다)")
     try:
         _save_expense(page, plan.row, report_url, SAVE_ITEMIZATION, reopen=later)
     except AttachError as exc:
