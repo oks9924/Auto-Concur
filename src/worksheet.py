@@ -38,13 +38,13 @@ def normalize(row: dict, cfg: dict | None = None) -> dict:
         if result.get(key):
             parsed = sheet._as_date(result[key], year)
             if parsed is None:
-                raise sheet.SheetError(f'{key}: YYYY-MM-DD 또는 M/D 형식으로 입력해 주세요.')
+                raise sheet.SheetError(f'{key}: 날짜를 읽을 수 없습니다. 숙박 날짜 달력을 사용하거나 2026-08-17, 20260817, 8/17처럼 입력해 주세요.')
             result[key] = parsed.isoformat()
     start, end = (result.get(key, '') for key in sheet.DATE_COLUMNS)
     if bool(start) != bool(end):
         raise sheet.SheetError('입실·퇴실은 함께 입력하거나 모두 비워 주세요.')
     if start and end <= start:
-        raise sheet.SheetError('퇴실날짜는 입실날짜보다 뒤여야 합니다.')
+        raise sheet.SheetError('퇴실날짜는 입실날짜보다 뒤여야 합니다. 연도를 넘기는 숙박이면 퇴실 연도도 지정해 주세요.')
     if cfg is not None:
         for key, choices in settings.choices(cfg).items():
             if result.get(key) and result[key] not in choices:
@@ -57,7 +57,8 @@ class Worksheet:
         self.source = source
         self.target = target or source.parent / NATIVE_NAME
         self.version = fingerprint(self.target)
-        sheet.load(source)
+        # 날짜 입력 오류는 편집창에서 고칠 수 있어야 한다. 저장/C단계에서는 검증한다.
+        sheet.load(source, validate_lodging=False)
         self.rows = sheet.read_raw(source)
         self.columns = list(dict.fromkeys([*self.rows[0], *sheet.EDITABLE]))
         self.original = deepcopy(self.rows)

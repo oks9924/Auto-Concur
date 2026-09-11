@@ -537,7 +537,8 @@ def test_숙박비인데_못_읽으면_칸의_원본을_보여준다(tmp_path, c
         "2026-08-12,396000,A1,숙박비,8월 17일,\n",
         encoding="utf-8-sig",
     )
-    sheet.load(path)
+    with pytest.raises(sheet.SheetError, match="둘 다"):
+        sheet.load(path)
     말 = capsys.readouterr().out
     assert "'8월 17일'" in 말 and "날짜로 읽지 못했습니다" in 말
     assert "작업지 칸:" in 말 and "입실날짜" in 말  # 어떤 칸이 있는지도

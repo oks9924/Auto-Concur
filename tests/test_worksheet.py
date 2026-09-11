@@ -42,6 +42,19 @@ def test_invalid_dates_do_not_overwrite_saved_data(source):
     assert source.read_bytes() == previous
 
 
+def test_saved_invalid_dates_can_be_opened_and_corrected(source):
+    rows = sheet.read_raw(source)
+    rows[0].update({'입실날짜': '잘못된 날짜', '퇴실날짜': '잘못된 날짜'})
+    write_json(source, {'version': 1, 'rows': rows})
+    with pytest.raises(sheet.SheetError, match='날짜로 읽지 못'):
+        sheet.load(source)
+    model = Worksheet(source)
+    assert model.rows[0]['입실날짜'] == '잘못된 날짜'
+    model.update(0, {'입실날짜': '8월 17일', '퇴실날짜': '20260821'})
+    model.save(settings.DEFAULTS)
+    assert sheet.load(source)[0].nights == 4
+
+
 def test_invalid_dropdown_does_not_silently_fall_back(source):
     model = Worksheet(source)
     model.update(0, {'경비유형': '틀린 유형'})
@@ -252,6 +265,40 @@ def test_transit_highlights_only_description(editor):
     highlighted = [name for name in sheet.EDITABLE if 'highlight' in
                    editor.table.MT.cell_options.get((0, editor.COLUMNS.index(name)), {})]
     assert highlighted == ['코멘트']
+
+
+def test_calendar_filtered_row_range_apply_and_undo(editor):
+    from src.stay_calendar import StayCalendar
+    editor.query.set('가게 2')
+    editor.table.select_cell(0, editor.COLUMNS.index('입실날짜'))
+    editor.pick_stay_dates()
+    dialog = next(w for w in editor.winfo_children() if isinstance(w, StayCalendar))
+    dialog.year, dialog.month = 2026, 12
+    dialog.choose(30)
+    dialog.move(1)
+    dialog.choose(2)
+    dialog.apply()
+    editor.sync()
+    assert editor.model.rows[0]['입실날짜'] == ''
+    assert editor.model.rows[1]['입실날짜'] == '2026-12-30'
+    assert editor.model.rows[1]['퇴실날짜'] == '2027-01-02'
+    editor.table.undo()
+    editor.sync()
+    assert editor.model.rows[1]['입실날짜'] == editor.model.rows[1]['퇴실날짜'] == ''
+
+
+def test_calendar_invalid_range_and_cancel_leave_data_unchanged(editor):
+    from src.stay_calendar import StayCalendar
+    editor.table.select_cell(0, editor.COLUMNS.index('입실날짜'))
+    editor.pick_stay_dates()
+    dialog = next(w for w in editor.winfo_children() if isinstance(w, StayCalendar))
+    dialog.choose(20)
+    dialog.choose(19)
+    dialog.apply()
+    assert dialog.winfo_exists()
+    assert editor.model.rows[0]['입실날짜'] == ''
+    dialog.close()
+    assert not editor.model.dirty
 
 
 def test_replace_dialog_all_is_one_undo_and_respects_filter(editor, monkeypatch):

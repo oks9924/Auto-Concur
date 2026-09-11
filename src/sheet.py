@@ -142,41 +142,8 @@ EXCEL_EPOCH_MAX = (date(2099, 12, 31) - EXCEL_EPOCH).days
 
 
 def _as_date(value, year: int | None = None) -> date | None:
-    """엑셀 셀이나 문자열에서 날짜를 뽑는다. 못 읽으면 None.
-
-    year는 연도가 없는 형식('8/17')을 읽을 때 쓸 해다. 작업지가 날짜를 m/d 로
-    보여주기 때문에 사람이 그대로 '8/17' 이라고 치는 일이 있는데, 연도를 안
-    주면 1900년이 된다. 그걸 그대로 Concur에 넣으면 아무도 못 알아챈다.
-    """
-    if value in (None, ""):
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    text = str(value).strip()[:19]
-
-    # 엑셀은 날짜를 '1899-12-30부터 며칠'인 숫자로 저장한다. 셀 서식이 날짜가
-    # 아니면 그 숫자가 그대로 읽힌다 (실측 2026-09-09: 입실 '46251' = 8/17).
-    # 사람 눈에는 8/17로 보이는데 우리는 못 읽어서, 날짜 없이 저장하다가
-    # Concur가 거부했다.
-    if EXCEL_SERIAL_RE.fullmatch(text):
-        days = int(float(text))
-        if EXCEL_EPOCH_MIN <= days <= EXCEL_EPOCH_MAX:
-            return EXCEL_EPOCH + timedelta(days=days)
-
-    for pattern in DATE_PATTERNS:
-        try:
-            when = datetime.strptime(text[:10] if len(pattern) > 5 else text, pattern)
-        except ValueError:
-            continue
-        if when.year == 1900 and year:  # '%m/%d' 처럼 연도가 없는 형식
-            when = when.replace(year=year)
-        return when.date()
-    try:  # '2026-08-02 00:00:00' 처럼 시각이 붙어 오는 경우
-        return datetime.fromisoformat(text).date()
-    except ValueError:
-        return None
+    from .date_input import parse_date
+    return parse_date(value, year)
 
 # 숫자로 넣고 천단위 구분을 붙일 칼럼. 75400 보다 75,400 이 읽기 쉽고,
 # 엑셀에서 합계도 바로 낼 수 있다. 저장되는 값은 그대로 숫자라 다시 읽는 데
@@ -326,7 +293,7 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path,
     wb.save(path)
 
 
-def load(path: Path) -> list[SheetRow]:
+def load(path: Path, *, validate_lodging: bool = True) -> list[SheetRow]:
     if not path.exists():
         raise SheetError(f"작업지가 없습니다: {path}\n먼저 B단계(파싱 · 작업지 생성)를 실행해 주세요.")
     raw = read_raw(path)
@@ -382,9 +349,13 @@ def load(path: Path) -> list[SheetRow]:
             # 못 읽는 형식이다. 이 구분이 안 돼서 여러 번 돌았다 (2026-09-09).
             print(f"  ({i}행 숙박비: 입실 {r.get('입실날짜')!r} / "
                   f"퇴실 {r.get('퇴실날짜')!r} -> 날짜로 읽지 못했습니다)")
-        if bool(checkin) != bool(checkout):
+        if validate_lodging:
+            for key, parsed in (("입실날짜", checkin), ("퇴실날짜", checkout)):
+                if str(r.get(key) or "").strip() and parsed is None:
+                    raise SheetError(f"{path} {i}행: {key} '{r[key]}'을 날짜로 읽지 못했습니다. 작업지의 숙박 날짜 달력에서 다시 선택해 주세요.")
+        if validate_lodging and bool(checkin) != bool(checkout):
             raise SheetError(f"{path} {i}행: 입실날짜와 퇴실날짜는 둘 다 적어 주세요.")
-        if checkin and checkout <= checkin:
+        if validate_lodging and checkin and checkout and checkout <= checkin:
             raise SheetError(
                 f"{path} {i}행: 퇴실날짜({checkout})가 입실날짜({checkin})보다 뒤여야 합니다."
             )
