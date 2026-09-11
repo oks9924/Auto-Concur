@@ -11,6 +11,8 @@ manifest.xlsx
 workbook.json
 workbook.previous.json
 workbook.draft.json
+concur-progress.json
+code-backups/
 browser-profile/
 inspect-out/
 # run.bat이 남기는 실행 기록. 가맹점명·금액이 찍혀 있다.

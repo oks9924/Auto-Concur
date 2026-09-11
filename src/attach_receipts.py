@@ -554,7 +554,7 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
     return 0
 
 
-def open_report():
+def open_report(automatic=False):
     """브라우저를 열고 사람이 로그인·리포트 열기를 마칠 때까지 기다린다.
 
     (playwright, context, page, report_url)을 준다. 닫는 것은 부르는 쪽 몫이다.
@@ -563,6 +563,16 @@ def open_report():
     pw = sync_playwright().start()
     ctx = browser.launch(pw, PROFILE_DIR, accept_downloads=True, locale='ko-KR')
     page = browser.open_first(ctx, START_URL)
+
+    if automatic:
+        from .report_session import ready_report
+        try:
+            report = ready_report(page)
+            return pw, ctx, page, report
+        except Exception:
+            ctx.close()
+            pw.stop()
+            raise
 
     print("\n" + "=" * 64)
     print("  Concur에 로그인하시고 처리할 경비 리포트를 열어 주세요.")

@@ -219,6 +219,22 @@ class App(tk.Tk):
                     message, done = payload
                     messagebox.showinfo("확인", message, parent=self)
                     done.set()
+                elif kind == 'confirm_action':
+                    message, action, done, answer = payload
+                    dialog = tk.Toplevel(self)
+                    dialog.title('Concur 작업 대상 확인')
+                    dialog.transient(self)
+                    frame = ttk.Frame(dialog, padding=18)
+                    frame.pack(fill='both', expand=True)
+                    ttk.Label(frame, text=message, wraplength=580).pack(pady=(0, 16))
+                    def finish(value, window=dialog, result=answer, event=done):
+                        result.append(value)
+                        window.destroy()
+                        event.set()
+                    ttk.Button(frame, text=action, command=lambda f=finish: f(True)).pack(side='left', padx=6)
+                    ttk.Button(frame, text='취소', command=lambda f=finish: f(False)).pack(side='left', padx=6)
+                    dialog.protocol('WM_DELETE_WINDOW', lambda f=finish: f(False))
+                    dialog.grab_set()
                 elif kind == "note":
                     self._say(payload, "강조")
                 elif kind == "end":
@@ -235,6 +251,12 @@ class App(tk.Tk):
         done = threading.Event()
         self.events.put(("ask", (message.strip(), done)))
         done.wait()
+
+    def _confirm_action(self, message, action):
+        done, answer = threading.Event(), []
+        self.events.put(('confirm_action', (message, action, done, answer)))
+        done.wait()
+        return bool(answer and answer[0])
 
     def _start(self, title: str, work, note: str = "") -> None:
         if self.busy:
@@ -259,9 +281,10 @@ class App(tk.Tk):
             writer = _Writer(self.events)
             sys.stdout = sys.stderr = writer
             console.set_prompt(self._ask)
+            console.set_confirmation(self._confirm_action)
             try:
                 result = work()
-                suffix = '일부 작업이 실패했습니다. 위 오류를 확인해 주세요.' if result else '마쳤습니다.'
+                suffix = getattr(result, 'summary', None) or ('일부 작업이 실패했습니다. 위 오류를 확인해 주세요.' if result else '마쳤습니다.')
                 self.events.put(("end", f"\n{title}: {suffix}\n"))
                 if note and not result:
                     self.events.put(("note", f"\n{note}\n"))
@@ -270,6 +293,7 @@ class App(tk.Tk):
                 self.events.put(("end", f"\n{title} 중에 멈췄습니다: {exc}\n"))
             finally:
                 console.set_prompt(None)
+                console.set_confirmation(None)
                 sys.stdout = sys.__stdout__
                 sys.stderr = sys.__stderr__
 

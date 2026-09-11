@@ -68,6 +68,31 @@ def test_english_expense_save_ignores_hidden_copy(page):
     assert page.evaluate('window.saved')
 
 
+def test_driver_readback_checks_persisted_comment_and_does_not_write(page, monkeypatch, tmp_path):
+    from src.concur_driver import Driver
+    row = ar.Row(0, date(2026, 8, 1), 1000, '', 'E1', '대중교통비')
+    plan = fx.Plan(row, None, '대중교통비', comment='택시')
+    driver = Driver(page, 'https://eu2.concursolutions.com/nui/expense/reports/R1', tmp_path)
+    monkeypatch.setattr(driver, 'guard', lambda: None)
+    persisted = ['이전 값']
+    monkeypatch.setattr(page, 'goto', lambda *a, **k: page.set_content(
+        '<input id="transactionAmount" value="1000"><textarea id="comment">' + persisted[0] + '</textarea>'))
+    assert driver.verify_edit(plan) is False
+    persisted[0] = '택시'
+    assert driver.verify_edit(plan) is True
+
+
+def test_driver_receipt_unknown_or_wrong_name_is_not_success(tmp_path):
+    from src.concur_driver import Driver
+    row = ar.Row(0, date(2026, 8, 1), 1000, '', 'E1', has_receipt=True, receipt_file='wrong.pdf')
+    slip = ar.Slip(tmp_path / 'expected.pdf', row.when, 1000, '', 'A')
+    driver = Driver(Mock(), 'report', tmp_path)
+    driver.rows = lambda: [row]
+    assert driver.receipt_present(row, slip) is None
+    row.receipt_file = 'expected.pdf'
+    assert driver.receipt_present(row, slip) is True
+
+
 def test_itemization_update_confirmation_uses_update_not_cancel(page):
     page.set_content('''<div role="dialog">다른 항목을 업데이트하시겠습니까?
       동일한 변경으로 이 경비의 항목별 명세 및 할당도 업데이트하시겠습니까?

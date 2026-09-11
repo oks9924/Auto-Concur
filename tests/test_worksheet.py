@@ -252,3 +252,28 @@ def test_transit_highlights_only_description(editor):
     highlighted = [name for name in sheet.EDITABLE if 'highlight' in
                    editor.table.MT.cell_options.get((0, editor.COLUMNS.index(name)), {})]
     assert highlighted == ['코멘트']
+
+
+def test_replace_dialog_all_is_one_undo_and_respects_filter(editor, monkeypatch):
+    from tkinter import ttk, messagebox
+    import tkinter as tk
+    for row in (0, 1):
+        editor.table.set_cell_data(row, editor.COLUMNS.index('코멘트'), 'old old')
+    editor.modified()
+    editor.query.set('가게 2')
+    monkeypatch.setattr(messagebox, 'askyesno', lambda *a, **k: True)
+    editor.find_replace()
+    dialog = next(w for w in editor.winfo_children() if isinstance(w, tk.Toplevel))
+    box = dialog.winfo_children()[0]
+    entries = [w for w in box.winfo_children() if w.winfo_class() == 'TEntry']
+    entries[0].insert(0, 'old')
+    entries[1].insert(0, 'new')
+    buttons = box.winfo_children()[-1].winfo_children()
+    next(b for b in buttons if b.cget('text') == '모두 바꾸기').invoke()
+    editor.sync()
+    assert editor.model.rows[0]['코멘트'] == 'old old'
+    assert editor.model.rows[1]['코멘트'] == 'new new'
+    next(b for b in buttons if b.cget('text') == '닫기').invoke()
+    editor.table.undo()
+    editor.sync()
+    assert editor.model.rows[1]['코멘트'] == 'old old'

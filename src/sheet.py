@@ -117,16 +117,7 @@ def _rows_from_xlsx(path: Path) -> list[dict]:
 
 
 # 이 유형을 고르면 그 칸들을 채워야 한다. 초록으로 물들여 알린다.
-ATTENDEE_REQUIRED_TYPE = "내부 직원간 식음료"
-LODGING_TYPE = "숙박비"
-TRANSIT_TYPE = "대중교통비(지하철, 버스, 기차, 택시, 통행료 등)"
-
-# {유형: 그 유형에서 채워야 하는 칸들}
-GREEN_BY_TYPE = {
-    ATTENDEE_REQUIRED_TYPE: [ATTENDEE_COLUMN, EXTRA_ATTENDEE_COLUMN, "비즈니스목적", "코멘트"],
-    LODGING_TYPE: [*LODGING_COLUMNS, "코멘트"],
-    TRANSIT_TYPE: ["코멘트"],
-}
+from .expense_policy import ATTENDEE_REQUIRED_TYPE, LODGING_TYPE, TRANSIT_TYPE, GREEN_BY_TYPE
 
 # 칸에 붙일 설명. 머리글에 마우스를 올리면 뜨고, 칸을 고르면 노란 쪽지로 뜬다.
 NOTES = {

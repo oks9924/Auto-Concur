@@ -15,8 +15,7 @@ import argparse
 from pathlib import Path
 
 from . import console, paths, settings, sheet
-from .attach_receipts import AttachError, attach_phase, load_manifest, open_report
-from .fix_expenses import fix_phase
+from .attach_receipts import AttachError, load_manifest, open_report
 
 
 def pick_sheet(folder: Path, given: str | None) -> Path | None:
@@ -47,26 +46,10 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None,
     cfg = dict(settings.load() if cfg is None else cfg)
     cfg['date_tolerance_days'] = tolerance
     precheck(folder, sheet_path)
-    pw, ctx, page, report_url = open_report()
+    from . import concur_workflow
+    pw, ctx, page, report = open_report(automatic=True)
     try:
-        print("\n" + "-" * 64)
-        print("[1/2] 영수증 첨부")
-        print("-" * 64)
-        first = attach_phase(page, report_url, folder, apply, tolerance, limit, again)
-
-        # 첨부하면서 상세 화면을 여러 번 오갔다. 목록으로 돌아가 다시 읽게 한다.
-        page.goto(report_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(2500)
-
-        print("\n" + "-" * 64)
-        print("[2/2] 경비유형 · 목적 · 코멘트 · 참석자")
-        if sheet_path:
-            print(f"      작업지: {sheet_path}")
-        else:
-            print("      작업지가 없어서 규칙대로 처리합니다.")
-        print("-" * 64)
-        second = fix_phase(page, report_url, cfg, apply, limit, sheet_path) if sheet_path else 0
-        return first or second
+        return concur_workflow.run(page, report, folder, cfg, sheet_path, apply, limit, again)
     finally:
         ctx.close()
         pw.stop()

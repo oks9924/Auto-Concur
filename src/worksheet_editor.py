@@ -39,7 +39,7 @@ class Editor(tk.Toplevel):
         tools.grid(row=1, column=0, sticky='ew')
         for label, command in [('복사', lambda: self.table.copy()), ('붙여넣기', lambda: self.table.paste()),
                                ('실행 취소', lambda: self.table.undo()), ('다시 실행', lambda: self.table.redo()),
-                               ('여러 행에 입력', self.bulk), ('다시 불러오기', self.reload), ('이전 저장 복원', self.restore),
+                               ('여러 행에 입력', self.bulk), ('찾기·바꾸기', self.find_replace), ('다시 불러오기', self.reload), ('이전 저장 복원', self.restore),
                                ('가져오기', self.import_file), ('내보내기', self.export_file)]:
             ttk.Button(tools, text=label, command=command).pack(side='left', padx=(0, 5))
         filters = ttk.Frame(self, padding=(16, 0, 16, 10))
@@ -86,6 +86,7 @@ class Editor(tk.Toplevel):
             ttk.Button(foot, text='저장하고 Concur 반영', command=self.run).pack(side='right', padx=(8, 0))
         ttk.Button(foot, text='저장', command=self.save).pack(side='right')
         self.bind('<Control-s>', lambda event: (self.save(), 'break')[1])
+        self.bind('<Control-h>', lambda event: (self.find_replace(), 'break')[1])
         recovered = False
         warning = ''
         try:
@@ -119,6 +120,83 @@ class Editor(tk.Toplevel):
         self.table.set_options(font=('맑은 고딕', size, 'normal'),
                                header_font=('맑은 고딕', size, 'bold'))
         self.table.set_all_row_heights(height=max(30, size * 3), redraw=True)
+
+    def find_replace(self):
+        from . import replacements
+        self.table.close_text_editor(set_data=True)
+        dialog = tk.Toplevel(self)
+        dialog.title('찾기·바꾸기')
+        dialog.transient(self)
+        box = ttk.Frame(dialog, padding=16)
+        box.pack(fill='both', expand=True)
+        find, replacement = tk.StringVar(), tk.StringVar()
+        field, scope = tk.StringVar(value='모든 입력 열'), tk.StringVar(value='현재 표시 행')
+        case, whole = tk.BooleanVar(), tk.BooleanVar()
+        for label, variable in [('찾을 내용', find), ('바꿀 내용', replacement)]:
+            ttk.Label(box, text=label).pack(anchor='w')
+            ttk.Entry(box, textvariable=variable, width=52).pack(fill='x', pady=4)
+        ttk.Combobox(box, textvariable=field, values=['모든 입력 열', *sheet.EDITABLE], state='readonly').pack(fill='x')
+        ttk.Combobox(box, textvariable=scope, values=['현재 표시 행', '전체 행'], state='readonly').pack(fill='x', pady=6)
+        ttk.Checkbutton(box, text='대소문자 구분', variable=case).pack(anchor='w')
+        ttk.Checkbutton(box, text='셀 내용 전체 일치', variable=whole).pack(anchor='w')
+        info = ttk.Label(box, text='거래일·금액·가맹점은 교체하지 않습니다. 빈 값으로 교체할 수 있습니다.')
+        info.pack(pady=8)
+        current = [None]
+
+        def search():
+            rows = (self.table.display_rows() if scope.get() == '현재 표시 행'
+                    else list(range(len(self.model.rows))))
+            return replacements.matches(self.table.get_sheet_data(), self.COLUMNS, rows, find.get(),
+                None if field.get() == '모든 입력 열' else field.get(), case.get(), whole.get())
+
+        def next_match():
+            try:
+                _, cells = search()
+                if not cells:
+                    current[0] = None
+                    info.configure(text='일치하는 셀이 없습니다.')
+                    return
+                cell = next((cell for cell in cells if current[0] is None or cell > current[0]), cells[0])
+                current[0] = cell
+                r, c = cell
+                if r in self.table.display_rows():
+                    display_r = self.table.display_rows().index(r)
+                    self.table.select_cell(display_r, c)
+                    self.table.see(display_r, c)
+                info.configure(text=f'{len(cells)}개 셀 일치 · 원본 {r + 1}행 / {self.COLUMNS[c]}: {self.table.get_sheet_data()[r][c]}')
+            except ValueError as exc:
+                info.configure(text=str(exc))
+
+        def change(all_cells=False):
+            try:
+                pattern, cells = search()
+                if not all_cells:
+                    if current[0] not in cells:
+                        next_match()
+                        return
+                    cells = [current[0]]
+                if not cells:
+                    info.configure(text='일치하는 셀이 없습니다.')
+                    return
+                if all_cells and not messagebox.askyesno('모두 바꾸기',
+                        f'{scope.get()}의 {len(cells)}개 셀에서\n{find.get()!r} → {replacement.get()!r}\n바꿀까요? 실행 취소할 수 있습니다.', parent=dialog):
+                    return
+                data = replacements.replaced(self.table.get_sheet_data(), pattern, cells, replacement.get())
+                self.table.set_data(0, 0, data=data, undo=True, emit_event=True)
+                info.configure(text=f'{len(cells)}개 셀을 바꿨습니다. Ctrl+Z로 실행 취소할 수 있습니다.')
+            except ValueError as exc:
+                info.configure(text=str(exc))
+
+        buttons = ttk.Frame(box)
+        buttons.pack(fill='x')
+        for label, command in [('다음 찾기', next_match), ('바꾸기', change), ('모두 바꾸기', lambda: change(True))]:
+            ttk.Button(buttons, text=label, command=command).pack(side='left', padx=3)
+        def close():
+            dialog.destroy()
+            self.grab_set()
+        ttk.Button(buttons, text='닫기', command=close).pack(side='left', padx=3)
+        dialog.protocol('WM_DELETE_WINDOW', close)
+        dialog.grab_set()
 
     def row_status(self, row):
         try:

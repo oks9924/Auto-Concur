@@ -22,6 +22,20 @@ HOLD_ENV = "AUTO_CONCUR_HOLD"
 
 # 창(GUI)에서 돌릴 때는 콘솔이 없다. 창이 자기 방식으로 물어보게 갈아끼운다.
 _ask = None
+_confirm = None
+
+
+def set_confirmation(fn):
+    global _confirm
+    _confirm = fn
+
+
+def confirm_action(message, action):
+    if _confirm is not None:
+        return _confirm(message, action)
+    print(message)
+    _drain()
+    return input(f'{action}? 시작하려면 START 입력, 취소하려면 Enter > ').strip() == 'START'
 
 
 def set_prompt(fn) -> None:

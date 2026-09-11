@@ -23,7 +23,7 @@ from pathlib import Path
 from playwright.sync_api import TimeoutError as PWTimeout
 
 from . import console, paths, settings, sheet
-from . import concur_ui
+from . import concur_ui, expense_policy
 from .sheet import nightly_split
 from .attach_receipts import dump_rows, print_unreadable
 from .attach_receipts import match as match_rows
@@ -532,7 +532,7 @@ class Plan:
     def __post_init__(self):
         # 대중교통에는 설명만 반영한다. 기존 작업지에 목적 등이 남아 있어도
         # 미리보기와 실행 모두에서 제외하며 원본 작업지 값은 지우지 않는다.
-        if self.type_code == 'TRAIN' or (self.type_label or '').strip().startswith('대중교통'):
+        if expense_policy.description_only(self.type_label, self.type_code):
             self.purpose = ''
             self.attendee = ''
             self.lodging = None
