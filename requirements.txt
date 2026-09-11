@@ -3,3 +3,4 @@ pypdf>=4.0
 pytest>=8.0
 playwright>=1.45
 openpyxl>=3.1
+tksheet==7.6.0

@@ -23,6 +23,7 @@ from pathlib import Path
 from playwright.sync_api import TimeoutError as PWTimeout
 
 from . import console, paths, settings, sheet
+from . import concur_ui
 from .sheet import nightly_split
 from .attach_receipts import dump_rows, print_unreadable
 from .attach_receipts import match as match_rows
@@ -34,6 +35,7 @@ from .attach_receipts import (
     _eval,
     expense_url,
     read_rows,
+    rows_when_ready,
 )
 
 PROFILE_DIR = paths.at("browser-profile", "concur")
@@ -48,7 +50,7 @@ COMMENT_FIELD = "textarea#comment"
 # 라벨을 찾는 방법이 여럿이고 요소마다 다르다. inspect_page가 fields.json을
 # 만들 때 쓴 것과 똑같은 순서로 찾아야 한다. 감싼 form-field만 보다가
 # aria-label에 있는 라벨을 놓쳐서 참석자 검색창을 못 찾았다.
-FIND_COMBO_FN = """
+FIND_COMBO_FN = concur_ui.DOM_HELPERS + """
   const labelOf = (el) => {
     const aria = el.getAttribute('aria-label');
     if (aria) return aria.trim();
@@ -72,8 +74,8 @@ FIND_COMBO_FN = """
     }
     return '';
   };
-  const findCombo = (re) => [...document.querySelectorAll('[role="combobox"]')]
-    .find(c => re.test(labelOf(c)));
+  const findCombo = (re) => [...surface().querySelectorAll('[role="combobox"]')]
+    .find(c => visible(c) && re.test(labelOf(c)));
 """
 
 # 못 찾았을 때 화면의 콤보박스를 전부 남긴다. 추측 대신 근거로 고치기 위해서다.
@@ -303,12 +305,12 @@ SELECT_ATTENDEE_BUTTON_JS = "() => {" + MARK_FN + ATTENDEE_COUNT_JS_BODY + " ret
 # 아래 훅은 전부 실제 화면 덤프에서 확인한 것이다 (2026-08, inspect_page).
 # 숙박 위치와 Booking channel은 정책이 정한 사용자 정의 필드라 id가 고정이다.
 # 그래도 id만 믿지 않고 aria-label로도 찾게 해둔다 - 정책이 바뀌면 번호가 바뀐다.
-COMBO_BY_HINT_FN = """
+COMBO_BY_HINT_FN = concur_ui.DOM_HELPERS + """
   const findByHint = (hint) => {
     const byId = document.getElementById(hint);
-    if (byId && byId.getAttribute('role') === 'combobox') return byId;
+    if (byId && surface().contains(byId) && visible(byId) && byId.getAttribute('role') === 'combobox') return byId;
     const re = new RegExp(hint, 'i');
-    return [...document.querySelectorAll('[role="combobox"]')].find(c => {
+    return [...surface().querySelectorAll('[role="combobox"]')].filter(visible).find(c => {
       const aria = c.getAttribute('aria-label') || '';
       const by = c.getAttribute('aria-labelledby');
       const text = by
@@ -332,10 +334,10 @@ COMBO_VALUE_JS = (
 )
 
 # 옵션은 보이는 글자로 고른다. 경비유형과 달리 id에 코드가 없다.
-OPTION_FN = """
+OPTION_FN = concur_ui.DOM_HELPERS + """
   const findOption = (want) => {
     const opts = [...document.querySelectorAll('li[role="option"]')]
-      .filter(o => o.getAttribute('aria-disabled') !== 'true');
+      .filter(o => visible(o) && o.getAttribute('aria-disabled') !== 'true');
     const text = (o) => (o.innerText || '').trim();
     return opts.find(o => text(o) === want) || opts.find(o => text(o).startsWith(want));
   };
@@ -368,7 +370,9 @@ TAB_ITEMIZATION = "#itemizations-tab"
 # (실측: SameRoomRateItemization.roomRate.0). '일일 금액 다름'으로 바꾸면 앞부분이
 # 달라질 수 있어서 뒤쪽 모양만 본다. 세금 칸(taxRate)은 건드리지 않는다.
 ROOM_RATE_INPUTS_JS = """
-() => [...document.querySelectorAll('input')]
+() => {
+""" + concur_ui.DOM_HELPERS + """
+ return [...surface().querySelectorAll('input')].filter(visible)
   .map(x => ({ key: x.id || x.getAttribute('name') || '', el: x }))
   .filter(o => /Itemization\\.roomRate\\.\\d+$/.test(o.key))
   .map(o => ({
@@ -377,7 +381,8 @@ ROOM_RATE_INPUTS_JS = """
     value: (o.el.value || '').trim(),
     locked: o.el.disabled || o.el.readOnly || o.el.getAttribute('aria-disabled') === 'true',
   }))
-  .sort((a, b) => a.index - b.index)
+  .sort((a, b) => a.index - b.index);
+}
 """
 
 # 표가 안 맞을 때 남길 근거. 행마다 첫 칸이 날짜다.
@@ -439,33 +444,7 @@ DIALOG_DISMISS = "아니요,아니오,No,닫기,취소"
 # "element is outside of the viewport"). 그렇다고 이런 버튼을 목록에서 빼버리면
 # 안 된다 - 빼고 나니 '저장 버튼을 찾지 못했습니다'로 그냥 넘어가버렸다.
 # 후보를 전부 모아 누를 만한 것부터 차례로 눌러 본다.
-SAVE_BUTTONS_JS = """
-(csv) => {
-  document.querySelectorAll('[data-auto-save]')
-    .forEach(e => e.removeAttribute('data-auto-save'));
-  const hidden = (b) => {
-    const cls = typeof b.className === 'string' ? b.className : '';
-    return /save-hidden-button/.test(cls) || /-hidden$/.test(b.getAttribute('data-nuiexp') || '');
-  };
-  const buttons = [...document.querySelectorAll('button')].filter(b => {
-    const r = b.getBoundingClientRect();
-    return r.width > 0 && r.height > 0 && !b.disabled;
-  });
-  const text = (b) => (b.innerText || '').trim();
-  const found = [];
-  for (const want of csv.split(',')) {
-    for (const b of buttons) {
-      if (text(b) === want && !found.includes(b)) found.push(b);
-    }
-  }
-  // 숨긴 버튼은 뒤로 민다. 앞의 것이 눌리면 거기까지 가지도 않는다.
-  found.sort((a, b) => (hidden(a) ? 1 : 0) - (hidden(b) ? 1 : 0));
-  return found.map((b, i) => {
-    b.setAttribute('data-auto-save', String(i));
-    return '[data-auto-save="' + i + '"]';
-  });
-}
-"""
+SAVE_BUTTONS_JS = concur_ui.SAVE_BUTTONS_JS
 
 # 못 눌렀을 때 남길 근거. 글자만 남기면 같은 글자 버튼 중 무엇이 문제였는지
 # 알 수 없다. 어떤 버튼인지(hook, class)와 어디에 있는지까지 남긴다.
@@ -490,11 +469,11 @@ DUMP_BUTTONS_JS = """
 # 이건 저장이 안 됐다는 뜻이라 성공으로 세면 안 된다.
 REJECTED_RE = re.compile(r"오류|유효한 정보|valid information", re.I)
 
-SAVE_DETAIL = "경비 저장,저장"
+SAVE_DETAIL = "경비 저장,Save Expense,저장,Save"
 # 명세 화면에서 상세를 저장해야 할 때. 탭을 눌러 상세로 돌아갈 수 없는 화면이
 # 있어서(사이드 패널이 탭을 덮는다) 지금 보이는 저장 버튼 중에서 고른다.
-SAVE_ANYWHERE = "경비 저장,항목별 명세 저장,저장"
-SAVE_ITEMIZATION = "저장,항목별 명세 저장,경비 저장"
+SAVE_ANYWHERE = "경비 저장,Save Expense,항목별 명세 저장,Save Itemization,저장,Save"
+SAVE_ITEMIZATION = "저장,Save,항목별 명세 저장,Save Itemization,경비 저장,Save Expense"
 
 LABEL_LODGING = "숙박비"
 RECUR_DIFFERENT_DAILY = "일일 금액 다름"
@@ -526,14 +505,14 @@ def _md(when: date) -> str:
 class Lodging:
     """숙박비 상세에 넣을 값. 입실·퇴실이 있어야 성립한다."""
 
-    checkin: date
-    checkout: date
+    checkin: date | None
+    checkout: date | None
     location: str
     channel: str
 
     @property
     def nights(self) -> int:
-        return (self.checkout - self.checkin).days
+        return (self.checkout - self.checkin).days if self.checkin and self.checkout else 0
 
     def dates(self) -> list[date]:
         """항목별 명세 표에 들어갈 날짜들. 입실일부터 숙박일수만큼."""
@@ -550,6 +529,14 @@ class Plan:
     attendee: str = ""
     lodging: Lodging | None = None
 
+    def __post_init__(self):
+        # 대중교통에는 설명만 반영한다. 기존 작업지에 목적 등이 남아 있어도
+        # 미리보기와 실행 모두에서 제외하며 원본 작업지 값은 지우지 않는다.
+        if self.type_code == 'TRAIN' or (self.type_label or '').strip().startswith('대중교통'):
+            self.purpose = ''
+            self.attendee = ''
+            self.lodging = None
+
     @property
     def fill_meal(self) -> bool:
         return bool(self.purpose or self.comment or self.attendee)
@@ -562,13 +549,16 @@ class Plan:
                                  ("참석자", self.attendee)) if v]
         if filled:
             what.append("·".join(filled))
-        if self.lodging:
+        if self.lodging and self.lodging.nights:
             per = nightly_split(self.row.amount or 0, self.lodging.nights)
             what.append(
                 f"숙박 {self.lodging.nights}박 "
                 f"({_md(self.lodging.checkin)}~{_md(self.lodging.checkout)}), "
                 f"일일 {per[0]:,}원"
             )
+        elif self.lodging:
+            what.extend(name for name, value in (("숙박 위치", self.lodging.location),
+                                                ("Booking channel", self.lodging.channel)) if value)
         return ", ".join(what) or "변경 없음"
 
 
@@ -591,21 +581,12 @@ def _wait_js(page, script: str, what: str, arg=None, timeout: int = 30000) -> No
     고정 시간으로 기다리면 안 된다. Concur는 상세 폼을 나눠서 그리고, 모달은
     주소로 열면 앱 전체를 다시 띄운다. 얼마나 걸릴지는 그때그때 다르다.
     """
-    try:
-        if arg is None:
-            page.wait_for_function(script, timeout=timeout)
-        else:
-            page.wait_for_function(script, arg=arg, timeout=timeout)
-    except PWTimeout:
-        raise AttachError(f"{what}이(가) 나타나지 않았습니다") from None
+    return concur_ui.wait_condition(page, script, what, arg, timeout)
 
 
 def _click_marked(page, script: str, what: str, arg=None) -> None:
     """JS로 대상을 표시하고 실제 마우스로 누른다."""
-    selector = _eval(page, script) if arg is None else _eval(page, script, arg)
-    if not selector:
-        raise AttachError(f"{what}을(를) 찾지 못했습니다")
-    page.click(selector, timeout=15000)
+    concur_ui.click_target(page, script, what, arg)
 
 
 def _set_type(page, code: str, label: str) -> None:
@@ -617,6 +598,12 @@ def _set_type(page, code: str, label: str) -> None:
     _click_marked(page, SELECT_TYPE_COMBO_JS, "경비 유형 콤보박스")
 
     _wait_js(page, HAS_TYPE_OPTION_JS, f"경비 유형 옵션({code})", arg=code, timeout=20000)
+    selected_label = _wait_js(page, """(code) => {
+      const option = [...document.querySelectorAll('li[role="option"]')]
+        .find(o => (o.id || '').includes('-_-_-' + code + '-_-_-')
+          && o.getBoundingClientRect().width > 0);
+      return option && (option.innerText || '').trim();
+    }""", f"경비 유형 옵션 이름({code})", arg=code, timeout=20000)
     _click_marked(page, SELECT_TYPE_OPTION_JS, f"경비 유형 옵션({code})", arg=code)
 
     # 고른 값이 실제로 반영됐는지 본다. 눌렀다고 바뀐 것은 아니다.
@@ -627,7 +614,7 @@ def _set_type(page, code: str, label: str) -> None:
         + " const cb = findCombo(/Expense Type|경비 유형/);"
         " return !!cb && (cb.innerText || '').includes(want); }",
         f"경비 유형이 '{label}'로 바뀌는 것",
-        arg=label,
+        arg=selected_label,
         timeout=20000,
     )
 
@@ -658,7 +645,7 @@ def _pick_from_combo(page, hint: str, want: str, what: str) -> bool:
     없으면 라벨로 찾는다. 정책이 바뀌어 번호가 달라져도 라벨로 걸린다.
     """
     # 이미 그 값이면 건드리지 않는다. 잠겨 있는 콤보박스를 눌러 실패하는 일도 막는다.
-    if want in (_eval(page, COMBO_VALUE_JS, hint) or ""):
+    if want == (_eval(page, COMBO_VALUE_JS, hint) or "").strip():
         return False
 
     try:
@@ -680,12 +667,9 @@ def _pick_from_combo(page, hint: str, want: str, what: str) -> bool:
             + ". 엑셀 드롭다운 목록을 --list-lodging 으로 다시 뽑아 주세요."
         ) from None
     _click_marked(page, SELECT_OPTION_JS, f"{what} 옵션 '{want}'", arg=want)
-    page.wait_for_timeout(600)
-
-    # 고른 값이 실제로 들어갔는지 본다. 눌렀다고 바뀐 것은 아니다.
-    shown = _eval(page, COMBO_VALUE_JS, hint) or ""
-    if want not in shown:
-        raise AttachError(f"{what}이(가) '{want}' 로 바뀌지 않았습니다 (화면: '{shown.strip()}')")
+    _wait_js(page, "(a) => {" + COMBO_BY_HINT_FN +
+             " const c = findByHint(a.hint); return !!c && (c.innerText || '').trim() === a.want; }",
+             f"{what} 값 '{want}' 반영", arg={"hint": hint, "want": want})
     return True
 
 
@@ -733,7 +717,7 @@ def _set_date_range(page, checkin: date, checkout: date) -> bool:
     return True
 
 
-def _dismiss_dialog(page, wait_ms: int = 2500) -> str | None:
+def _dismiss_dialog(page, wait_ms: int = 2500, _depth: int = 0) -> str | None:
     """저장 후 뜨는 확인창을 닫는다. 안 뜨면 아무것도 하지 않는다.
 
     '이 경비가 저장되었지만 필수 정보가 누락되었습니다. 지금 수정하시겠습니까?'
@@ -746,6 +730,26 @@ def _dismiss_dialog(page, wait_ms: int = 2500) -> str | None:
         return None  # 창이 안 떴다. 정상이다
 
     dialogs = _eval(page, DUMP_DIALOG_JS) or [{}]
+    full_text = dialogs[0].get('text') or ''
+    if ('다른 항목을 업데이트하시겠습니까' in full_text
+            and '항목별 명세' in full_text):
+        if _depth >= 3:
+            raise AttachError('항목별 명세 업데이트 확인창이 반복되어 중단했습니다')
+        # 사용자가 수정한 필드를 현재 경비의 명세에도 적용한다.
+        # 일반 저장/삭제 확인창에는 이 동작을 사용하지 않는다.
+        script = "() => {" + concur_ui.DOM_HELPERS + MARK_FN + """
+          const dlg = surface();
+          if (!(dlg.innerText || '').includes('다른 항목을 업데이트하시겠습니까')) return null;
+          return mark([...dlg.querySelectorAll('button')].find(b =>
+            visible(b) && !b.disabled && (b.innerText || '').trim() === '업데이트'));
+        }"""
+        concur_ui.click_target(page, script, '항목별 명세 업데이트', timeout=15000)
+        _wait_js(page, """() => ![...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')]
+          .some(d => d.getBoundingClientRect().width > 0 &&
+            (d.innerText || '').includes('다른 항목을 업데이트하시겠습니까'))""",
+                 '항목별 명세 업데이트 확인창 닫힘', timeout=20000)
+        following = _dismiss_dialog(page, wait_ms=wait_ms, _depth=_depth + 1)
+        return following or '변경한 필드를 항목별 명세에도 업데이트했습니다'
     text = (dialogs[0].get("text") or "").replace("\n", " ")[:60]
     selector = _eval(page, DIALOG_BUTTON_JS, DIALOG_DISMISS)
     if not selector:
@@ -775,25 +779,7 @@ def _save_expense(page, row: Row, report_url: str, labels: str = SAVE_DETAIL,
     숨겨둔 버튼)과 저장할 수 없는 것은 다르다. 하나도 못 누르면 멈춘다 -
     저장이 안 된 것을 넘어가면 안 된다.
     """
-    selectors = _eval(page, SAVE_BUTTONS_JS, labels) or []
-    if not selectors:
-        dump = _dump(page, "buttons", DUMP_BUTTONS_JS)
-        raise AttachError(
-            f"저장 버튼({labels})을 찾지 못했습니다"
-            + (f" (화면의 버튼 목록: {dump})" if dump else "")
-        )
-    for selector in selectors:
-        try:
-            page.click(selector, timeout=10000)
-            break
-        except PWTimeout:
-            continue
-    else:
-        dump = _dump(page, "buttons", DUMP_BUTTONS_JS)
-        raise AttachError(
-            f"저장 버튼({labels})을 {len(selectors)}개 찾았지만 하나도 누르지 못했습니다"
-            + (f" (화면의 버튼 목록: {dump})" if dump else "")
-        )
+    concur_ui.click_target(page, SAVE_BUTTONS_JS, f"저장 버튼({labels})", labels, timeout=30000)
     page.wait_for_timeout(800)
     # 넣을 것을 다 넣고 저장하므로 확인창은 안 뜨는 것이 정상이다. 뜰 때만
     # 짧게 잡는다 - 매번 오래 기다리면 건마다 그만큼 늦어진다.
@@ -812,19 +798,9 @@ def _save_expense(page, row: Row, report_url: str, labels: str = SAVE_DETAIL,
 
 
 def _open_tab(page, selector: str, what: str) -> None:
-    try:
-        page.wait_for_selector(selector, timeout=20000)
-    except PWTimeout:
-        raise AttachError(f"{what} 탭을 찾지 못했습니다") from None
-    try:
-        # 30초를 통째로 버리지 않는다. 무엇이 막았는지 말하는 편이 낫다 -
-        # 전체 화면 사이드 패널이 탭을 덮으면 아무리 기다려도 안 눌린다.
-        page.click(selector, timeout=8000)
-    except PWTimeout:
-        raise AttachError(
-            f"{what} 탭을 누르지 못했습니다. 다른 화면이 탭을 덮고 있습니다"
-        ) from None
-    page.wait_for_timeout(800)
+    concur_ui.click_target(page, "sel => document.querySelector(sel) ? sel : null",
+                          f"{what} 탭", selector, timeout=8000)
+    # 다음 화면에 필요한 요소의 대기는 그 화면 담당 함수에서 수행한다.
 
 
 # 항목별 명세 탭은 세 가지 얼굴이 있다(실측).
@@ -838,20 +814,20 @@ EMPTY_ITEMIZATION_TEXT = "항목별 명세 없음"
 ADD_ITEMIZATION_TEXT = "항목별 명세 추가"
 
 ITEMIZATION_STATE_JS = (
-    """
-(() => {
-  const rates = [...document.querySelectorAll('input')]
+    "(() => {" + concur_ui.DOM_HELPERS + """
+  const root = surface();
+  const rates = [...root.querySelectorAll('input')].filter(visible)
     .some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.getAttribute('name') || ''));
-  const add = [...document.querySelectorAll('button')].some(b => {
+  const add = [...root.querySelectorAll('button')].filter(visible).some(b => {
     const r = b.getBoundingClientRect();
     return r.width > 0 && r.height > 0 && (b.innerText || '').includes('"""
     + ADD_ITEMIZATION_TEXT
     + """');
   });
   return {
-    form: rates || !!document.querySelector('[name="recurrence"]'),
+    form: rates || visible(root.querySelector('[name="recurrence"]')),
     add: add,
-    empty: (document.body.innerText || '').includes('"""
+    empty: ((root === document ? document.body : root).innerText || '').includes('"""
     + EMPTY_ITEMIZATION_TEXT
     + """'),
   };
@@ -863,10 +839,10 @@ ITEMIZATION_STATE_JS = (
 # 누르는 것은 화면이 '항목별 명세 없음'이라고 말할 때뿐이다 - 잘못 누르면 필요
 # 없는 명세가 하나 더 생긴다.
 ADD_ITEMIZATION_JS = (
-    "() => {"
+    "() => {" + concur_ui.DOM_HELPERS
     + MARK_FN
     + """
-  const buttons = [...document.querySelectorAll('button')].filter(b => {
+  const buttons = [...surface().querySelectorAll('button')].filter(b => {
     const r = b.getBoundingClientRect();
     return r.width > 0 && r.height > 0 && !b.disabled;
   });
@@ -991,13 +967,9 @@ def _fill_room_rates(page, amounts: list[int]) -> str:
     틀어진 채로 저장하면 나중에 찾기 어렵다. 그래서 맞지 않으면 멈춘다.
     세금 칸은 건드리지 않는다 - 우리가 아는 값이 아니다.
     """
-    _wait_js(
-        page,
-        "() => [...document.querySelectorAll('input')]"
-        ".some(x => /Itemization\\.roomRate\\.\\d+$/.test(x.id || x.name || ''))",
-        "객실 요금 표",
-        timeout=25000,
-    )
+    _wait_js(page, "(n) => { const cells = (" + ROOM_RATE_INPUTS_JS +
+             ")(); return cells.length === n && cells.every(c => !c.locked); }",
+             f"입력 가능한 객실 요금 {len(amounts)}행", arg=len(amounts), timeout=25000)
     cells = _eval(page, ROOM_RATE_INPUTS_JS)
     if len(cells) != len(amounts):
         dump = _dump(page, "itemization-rows", DUMP_ITEMIZATION_JS)
@@ -1013,6 +985,10 @@ def _fill_room_rates(page, amounts: list[int]) -> str:
         page.fill(cell["selector"], str(money))
         print(f"       {n}/{len(amounts)}  {money:,}원")
         page.wait_for_timeout(150)
+    _wait_js(page, "(want) => { const cells = (" + ROOM_RATE_INPUTS_JS +
+             ")(); return cells.length === want.length && cells.every((c,i) => "
+             "c.value !== '' && Number(c.value.replace(/,/g, '')) === want[i]); }",
+             '객실 요금 입력 반영', arg=amounts)
     return f"일일 객실 요금 {len(amounts)}행 (합 {sum(amounts):,}원)"
 
 
@@ -1259,19 +1235,18 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
     바뀐 것이 하나도 없으면 저장하지 않는다.
     """
     lodging = plan.lodging
-    amounts = nightly_split(plan.row.amount or 0, lodging.nights)
+    amounts = nightly_split(plan.row.amount or 0, lodging.nights) if lodging.nights else []
     done = []
 
     _open_tab(page, TAB_DETAILS, "상세 정보")
-    want = f"{lodging.checkin:%Y-%m-%d} - {lodging.checkout:%Y-%m-%d}"
     # 실시간으로 찍는다. 실패했을 때 날짜를 넣고 실패한 건지 넣지도 못한 건지
     # 알 수 없어서 몇 번을 헤맸다 (실측 2026-09-09).
-    if _set_date_range(page, lodging.checkin, lodging.checkout):
-        changed = True
-        print(f"     (숙박 날짜 '{want}' 를 넣었습니다)")
-        done.append(f"숙박 {_md(lodging.checkin)}~{_md(lodging.checkout)} ({lodging.nights}박)")
-    else:
-        print(f"     (숙박 날짜가 이미 '{want}' 입니다)")
+    if lodging.nights:
+        want = f"{lodging.checkin:%Y-%m-%d} - {lodging.checkout:%Y-%m-%d}"
+        if _set_date_range(page, lodging.checkin, lodging.checkout):
+            changed = True
+            print(f"     (숙박 날짜 '{want}' 를 넣었습니다)")
+            done.append(f"숙박 {_md(lodging.checkin)}~{_md(lodging.checkout)} ({lodging.nights}박)")
 
     if lodging.location and _pick_from_combo(page, HINT_LOCATION, lodging.location, "숙박 위치"):
         done.append("숙박 위치")
@@ -1279,6 +1254,12 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
     if lodging.channel and _pick_from_combo(page, HINT_CHANNEL, lodging.channel, "Booking channel"):
         done.append("Booking channel")
         changed = True
+
+    # 날짜가 비었으면 기존 날짜·객실 요금에는 손대지 않는다.
+    if not lodging.nights:
+        if changed:
+            _save_expense(page, plan.row, report_url, reopen=bool(plan.attendee))
+        return done
 
     # 중간에 저장하지 않는다. 객실 요금이 비어 있는 채로 저장하면 '필수 정보가
     # 누락되었습니다' 창이 뜨고, 그 창을 닫으면 리포트로 튕겨 나간다. 넣을 것을
@@ -1330,25 +1311,11 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
 
 
 def _attendee_for(cfg: dict, entry, label: str) -> str:
-    """작업지의 '참석자' + '추가 참석자'. 식음료 행에서만 쓴다.
-
-    참석자 칸은 수식이라 본인이 자동으로 들어가고, 같이 드신 분은 옆의 추가
-    참석자 칸에 적는다. 둘을 합쳐서 순서대로 넣고 중복은 뺀다.
-
-    참석자 칸을 지우면 본인을 빼겠다는 뜻이다. 그때는 추가 참석자만 넣는다.
-    다만 둘 다 비어 있으면 설정에 적어둔 사람을 쓴다 - 아무도 안 넣으면
-    식음료는 필수값이 비어서 Concur가 리포트를 안 받는다. 엑셀을 한 번도
-    열지 않아 수식이 계산되지 않은 경우도 여기에 걸린다.
-
-    참석자 칸은 식음료 유형에만 있다. 주차비 같은 행에 넣으려 하면 그 버튼이
-    없어 실패하므로 유형을 보고 거른다.
-    """
+    """식음료에서 입력된 참석자만 합친다. 둘 다 비면 현재 참석자를 유지한다."""
     if LABEL_MEAL not in (entry.type_name or label or ""):
         return ""
     mine = parse_attendees(entry.attendee)
     others = parse_attendees(getattr(entry, "extra_attendee", ""))
-    if not mine and not others:
-        mine = parse_attendees(cfg.get("attendee_default", ""))
     return ", ".join(dict.fromkeys(mine + others))  # 순서 유지, 중복 제거
 
 
@@ -1394,23 +1361,21 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
         if entry.type_name and entry.type_name != (row.expense_type or "").strip():
             code, label = settings.code_for(cfg, entry.type_name), entry.type_name
         lodging = None
-        if entry.checkin and entry.checkout:
-            # 작업지의 수식이 계산되지 않은 채 저장되면 빈 칸으로 읽힌다.
-            # 그때는 설정의 기본값을 쓴다 - 엑셀이 보여주던 값과 같다.
+        if LABEL_LODGING in (entry.type_name or label or "") and (
+                (entry.checkin and entry.checkout) or entry.location or entry.channel):
+            # 빈 필드는 설정으로 대체하지 않는다.
             lodging = Lodging(
                 entry.checkin,
                 entry.checkout,
-                entry.location or cfg.get("lodging_location_default", ""),
-                entry.channel or cfg.get("booking_channel_default", ""),
+                entry.location,
+                entry.channel,
             )
         plan = Plan(row, code, label, entry.purpose, entry.comment,
                     _attendee_for(cfg, entry, label), lodging)
 
         # 숙박비인데 날짜가 없으면 상세를 못 채운다. 코멘트만 넣고 지나가면
         # 다 된 것처럼 보이므로 여기서 짚어준다.
-        holes = _gaps_with_defaults(cfg, entry, entry.type_name or label)
-        if holes:
-            gaps.append((entry, holes))
+        # 빈 필드는 미입력 지시다. 설정으로 대체하거나 오류로 취급하지 않는다.
         if plan.type_code or plan.fill_meal or plan.lodging:
             # entry를 같이 준다. 어느 전표가 이 경비에 짝지어졌는지 보여줘야
             # 유형이 이상할 때 작업지가 틀린 건지 짝이 틀린 건지 알 수 있다.
@@ -1426,20 +1391,12 @@ def rows_ready(rows: list[Row]) -> bool:
     날짜와 금액으로만 짓기 때문이다. 실측(2026-08-11): 같은 리포트를 두 번째
     돌렸을 때 3건을 읽고도 2건 다 못 찾았다.
     """
-    return bool(rows) and any(r.when and r.amount for r in rows)
+    return bool(rows) and all(r.expense_id and r.when and r.amount is not None for r in rows)
 
 
 def _rows_when_ready(page, tries: int = 10, wait_ms: int = 1000) -> list[Row]:
-    """값이 채워질 때까지 다시 읽는다. 끝내 안 채워지면 읽힌 것을 그대로 준다."""
-    rows: list[Row] = []
-    for attempt in range(tries):
-        rows = read_rows(page)
-        if rows_ready(rows):
-            return rows
-        if attempt == 0:
-            print("  (경비 목록이 아직 그려지는 중입니다. 기다립니다)")
-        page.wait_for_timeout(wait_ms)
-    return rows
+    """모든 행의 값이 준비될 때까지 기다린다. 부분 목록으로 진행하지 않는다."""
+    return rows_when_ready(page, tries=tries, wait_ms=wait_ms)
 
 
 def fix_phase(page, report_url: str, cfg: dict, apply: bool,
@@ -1592,7 +1549,7 @@ def list_lodging_phase(page, cfg: dict) -> int:
 def _default_sheet() -> Path:
     """전표 폴더의 작업지. xlsx를 csv보다 먼저 본다."""
     folder = paths.folder(settings.load()["downloads_dir"])
-    for name in ("manifest.xlsx", "manifest.csv"):
+    for name in ("workbook.json", "manifest.xlsx", "manifest.csv"):
         if (folder / name).exists():
             return folder / name
     return folder / "manifest.csv"

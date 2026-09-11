@@ -17,6 +17,7 @@ from pathlib import Path
 from . import console
 from . import photo_slip
 from . import settings, sheet
+from .worksheet import NATIVE_NAME, write_json
 from .slip_parser import Slip, SlipParseError, parse_slip
 
 # 앞쪽은 전표에서 읽은 사실, 뒤쪽 EDITABLE은 사람이 고쳐서 Concur에 넣을 값이다.
@@ -96,6 +97,10 @@ def _kept_edits(folder: Path) -> dict[str, dict[str, str]]:
     사라졌다. 숙박 날짜를 적어뒀는데 C단계에서 날짜 칸을 아예 건드리지
     않았던 것이 이것 때문이다.
     """
+    native = folder / NATIVE_NAME
+    if native.exists():
+        return {r['승인번호']: {k: r.get(k, '') for k in EDITABLE}
+                for r in sheet.read_raw(native) if r.get('승인번호')}
     book, manifest = folder / "manifest.xlsx", folder / "manifest.csv"
     # 나중에 고친 쪽을 믿는다. 두 파일 모두 B단계가 같이 만들지만, 그 뒤로
     # 사람이 손댄 것은 한쪽뿐이다. 그 한쪽이 더 최근이다.
@@ -107,8 +112,8 @@ def _kept_edits(folder: Path) -> dict[str, dict[str, str]]:
             kept = _edits_from_xlsx(book)
             if kept:
                 return kept
-        except Exception as exc:  # 엑셀이 열려 있거나 깨졌으면 csv로 물러선다
-            print(f"  ({book.name} 을 읽지 못해 csv의 값을 씁니다: {exc})")
+        except Exception as exc:
+            raise sheet.SheetError(f'{book.name}을 읽지 못해 기존 입력을 보존하고 중단합니다: {exc}') from exc
 
     if not manifest.exists():
         return {}
@@ -210,6 +215,18 @@ def organize(folder: Path, apply: bool) -> int:
 
     rows.sort(key=lambda r: (r["거래일"], r["거래시각"], r["승인번호"]))
 
+    if not apply or failures:
+        print(f'{len(rows)}건을 읽었습니다. ' + ('미리보기이므로 작업 데이터를 저장하지 않았습니다.' if not apply else
+                                              '실패한 파일이 있어 기존 입력 데이터를 보존했습니다.'))
+        for path, message in failures:
+            print(f'  ! {path.name}: {message}', file=sys.stderr)
+        return int(bool(failures))
+
+    # 새 프로그램의 저장 원본. 수식은 실행하지 않으며 빈 입력은 그대로 둔다.
+    native_rows = [{k: ('' if str(v).startswith('=') else str(v)) for k, v in row.items()} for row in rows]
+    if (folder / NATIVE_NAME).exists():
+        write_json(folder / 'workbook.previous.json', {'version': 1, 'rows': sheet.read_raw(folder / NATIVE_NAME)})
+    write_json(folder / NATIVE_NAME, {'version': 1, 'rows': native_rows})
     manifest = folder / "manifest.csv"
     # utf-8-sig: 엑셀에서 한글이 깨지지 않게.
     with manifest.open("w", newline="", encoding="utf-8-sig") as f:
@@ -224,14 +241,8 @@ def organize(folder: Path, apply: bool) -> int:
         what += f" (그중 사진 {photo_count}장)"
     print(f"\n{what}, 합계 {total:,}원을 정리했습니다  ->  {manifest}")
     # 엑셀본은 경비유형 칸에 드롭다운이 걸려 있어 오타로 못 쓰는 값을 막는다.
-    book = folder / "manifest.xlsx"
-    try:
-        sheet.write_xlsx(MANIFEST_COLUMNS, rows, book, settings.choices(cfg),
-                         hidden=HIDDEN, type_defaults=settings.type_defaults(cfg))
-        print(f"작업지를 만들었습니다: {book}  (경비유형은 드롭다운에서만 고르실 수 있습니다)")
-    except sheet.SheetError as exc:
-        print(f"xlsx는 만들지 못했습니다: {exc}")
-    print("엑셀에서 경비유형을 고르신 뒤 초록으로 바뀌는 칸을 채워 주세요.")
+    print(f"입력 데이터를 만들었습니다: {folder / NATIVE_NAME}")
+    print("프로그램의 [작업지 편집]에서 입력해 주세요. 엑셀 파일은 필요하지 않습니다.")
     print("  내부 직원간 식음료 -> 같이 드신 분이 있으면 '추가 참석자' 에 적어 주세요")
     print("  숙박비 -> 입실·퇴실 날짜, 숙박위치, Booking Channel")
     print("그 다음 update_concur 로 넘겨 주세요.")

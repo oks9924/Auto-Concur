@@ -129,7 +129,8 @@ def code_for(data: dict, type_name: str) -> str:
     for name, code in codes.items():
         if name.startswith(type_name) or type_name in name:
             return code
-    raise SystemExit(
+    from .sheet import SheetError
+    raise SheetError(
         f"경비유형 '{type_name}' 의 코드를 알 수 없습니다. settings.json 의 expense_type_codes 에 "
         "추가하시거나 `python -m src.fix_expenses --list-types` 로 확인해 주세요."
     )

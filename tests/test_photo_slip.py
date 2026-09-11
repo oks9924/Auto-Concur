@@ -62,7 +62,7 @@ def test_사진과_전표가_한_작업지에_들어간다(tmp_path):
 
     (tmp_path / "20260809-17000.jpg").write_bytes(b"\xff\xd8\xff")
     (tmp_path / "20260810-3,500.png").write_bytes(b"\x89PNG")
-    organize(tmp_path, apply=False)
+    organize(tmp_path, apply=True)
 
     from src import sheet
 
@@ -94,16 +94,15 @@ def test_적어둔_값은_다시_돌려도_남는다(tmp_path):
     photo.write_bytes(b"\xff\xd8\xff")
     organize(tmp_path, apply=True)
 
-    path = tmp_path / "manifest.csv"
-    rows = list(csv.DictReader(path.open(encoding="utf-8-sig")))
-    rows[0]["코멘트"] = "팀 점심"
-    with path.open("w", newline="", encoding="utf-8-sig") as f:
-        w = csv.DictWriter(f, fieldnames=MANIFEST_COLUMNS)
-        w.writeheader()
-        w.writerows(rows)
+    from src.worksheet import Worksheet
+    from src import settings, sheet
+    path = tmp_path / 'workbook.json'
+    model = Worksheet(path)
+    model.update(0, {'코멘트': '팀 점심'})
+    model.save(settings.DEFAULTS)
 
     organize(tmp_path, apply=True)
-    again = list(csv.DictReader(path.open(encoding="utf-8-sig")))
+    again = sheet.read_raw(path)
     assert again[0]["코멘트"] == "팀 점심"
 
 

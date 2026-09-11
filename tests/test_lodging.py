@@ -287,8 +287,8 @@ def test_사람이_적은_값은_수식으로_덮이지_않는다(tmp_path):
     assert ws.cell(row=2, column=MANIFEST_COLUMNS.index("숙박위치") + 1).value == "해외"
 
 
-def test_칸이_비어_있으면_설정_기본값을_쓴다(tmp_path):
-    """엑셀 수식이 계산되지 않은 채 저장되면 빈 칸으로 읽힌다. 그때도 채워야 한다."""
+def test_칸이_비어_있으면_설정_기본값도_쓰지_않는다(tmp_path):
+    """빈 칸은 Concur의 현재 값을 유지하라는 지시다."""
     import csv
 
     from src import fix_expenses as fx
@@ -309,7 +309,7 @@ def test_칸이_비어_있으면_설정_기본값을_쓴다(tmp_path):
     screen = [Row(0, date(2026, 8, 2), 450000, "숙박비", "ID1", "숙박비", "HOTEL")]
     plans, _, _ = fx.plans_from_sheet(settings.DEFAULTS, screen, path, 1)
     stay = plans[0][0].lodging
-    assert stay.location == "국내" and stay.channel == "Others"
+    assert stay.location == "" and stay.channel == ""
 
 
 def test_Concur가_거부하면_성공으로_세지_않는다():
@@ -592,4 +592,4 @@ def test_탭이_덮이면_30초를_버리지_않는다():
 
     소스 = inspect.getsource(fx._open_tab)
     assert "timeout=8000" in 소스
-    assert "다른 화면이 탭을 덮고 있습니다" in 소스
+    assert "concur_ui.click_target" in 소스

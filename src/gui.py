@@ -136,7 +136,7 @@ class App(tk.Tk):
         self.limit = tk.StringVar(value="")
         opts = ttk.Frame(run)
         opts.grid(row=0, column=0, sticky="w", **pad)
-        ttk.Label(opts, text="앞에서 N건만 (비워두면 전부):").pack(side="left")
+        ttk.Label(opts, text="각 단계 앞 N건만 (비워두면 전부):").pack(side="left")
         ttk.Entry(opts, textvariable=self.limit, width=6).pack(side="left", padx=6)
 
         self.buttons = []
@@ -154,6 +154,7 @@ class App(tk.Tk):
         tools = ttk.Frame(self)
         tools.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 4))
         for text, cmd in (
+            ("작업지 편집", self.edit_worksheet),
             ("경비유형 코드 확인", self.step_list_types),
             ("숙박비 목록 확인", self.step_list_lodging),
         ):
@@ -184,6 +185,20 @@ class App(tk.Tk):
         chosen = filedialog.askdirectory(title="전표 폴더 선택", initialdir=str(here))
         if chosen:
             self.folder.set(chosen)
+
+    def edit_worksheet(self) -> None:
+        from .worksheet_editor import Editor
+        from .update_concur import pick_sheet
+        folder = paths.folder(self.folder.get().strip())
+        source = pick_sheet(folder, None)
+        if source is None:
+            messagebox.showinfo('작업지 없음', '먼저 B. 파싱 · 작업지 생성을 실행해 주세요.', parent=self)
+            return
+        try:
+            cfg = {**self.cfg, 'attendee_default': self.attendee.get().strip()}
+            Editor(self, source, cfg, on_run=self.step_update)
+        except Exception as exc:
+            messagebox.showerror('작업지를 열지 못했습니다', str(exc), parent=self)
 
     def _say(self, text: str, tag: str | None = None) -> None:
         self.log.configure(state="normal")
@@ -245,9 +260,10 @@ class App(tk.Tk):
             sys.stdout = sys.stderr = writer
             console.set_prompt(self._ask)
             try:
-                work()
-                self.events.put(("end", f"\n{title} 을(를) 마쳤습니다.\n"))
-                if note:
+                result = work()
+                suffix = '일부 작업이 실패했습니다. 위 오류를 확인해 주세요.' if result else '마쳤습니다.'
+                self.events.put(("end", f"\n{title}: {suffix}\n"))
+                if note and not result:
                     self.events.put(("note", f"\n{note}\n"))
             except Exception as exc:
                 writer.write("\n" + traceback.format_exc())
@@ -269,13 +285,14 @@ class App(tk.Tk):
         return int(text) if text.isdigit() else None
 
     def step_download(self) -> None:
+        from_date, to_date, limit = self.from_date.get(), self.to_date.get(), self._limit()
         def work() -> None:
             download_slips = _module("download_slips")
-            download_slips.download(
-                download_slips._norm_date(self.from_date.get()),
-                download_slips._norm_date(self.to_date.get()),
+            return download_slips.download(
+                download_slips._norm_date(from_date),
+                download_slips._norm_date(to_date),
                 paths.folder(self.cfg["downloads_dir"]),
-                self._limit(),
+                limit,
             )
 
         self._start(
@@ -286,27 +303,29 @@ class App(tk.Tk):
 
     def step_organize(self) -> None:
         def work() -> None:
-            _module("organize").organize(paths.folder(self.cfg["downloads_dir"]), True)
+            return _module("organize").organize(paths.folder(self.cfg["downloads_dir"]), True)
 
         self._start(
             "B. 파싱 · 작업지 생성",
             work,
-            "다음: manifest.xlsx 를 열어 경비에 올릴 내용을 수정해 주세요.\n"
-            "      경비유형을 고르면 채워야 할 칸이 초록으로 바뀝니다.\n"
-            "      다 채우신 뒤 [C. Concur 반영] 을 눌러 주세요.",
+            "다음: [작업지 편집] 에서 입력해 주세요.\n"
+            "      빈칸은 유지하며 영수증이 없는 경비에는 영수증만 첨부합니다.\n"
+            "      [저장하고 Concur 반영] 을 누르면 C단계로 이어집니다.",
         )
 
     def step_update(self) -> None:
         """첨부와 입력을 한 세션에서 한다. 로그인을 두 번 하지 않아도 된다."""
+        limit = self._limit()
         def work() -> None:
             update_concur = _module("update_concur")
             folder = paths.folder(self.cfg["downloads_dir"])
-            update_concur.run(
+            return update_concur.run(
                 folder,
                 True,
                 int(self.cfg["date_tolerance_days"]),
-                self._limit(),
+                limit,
                 update_concur.pick_sheet(folder, None),
+                cfg=dict(self.cfg),
             )
 
         self._start(
@@ -328,6 +347,15 @@ class App(tk.Tk):
 
 
 def main() -> int:
+    console.setup()
+    # Tk 창 생성 전에 설정하여 Windows의 비트맵 확대에 따른 흐림을 줄인다.
+    import sys
+    if sys.platform == 'win32':
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except (AttributeError, OSError):
+            ctypes.windll.user32.SetProcessDPIAware()
     App().mainloop()
     return 0
 

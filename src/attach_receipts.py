@@ -28,7 +28,8 @@ from playwright.sync_api import Error as PWError
 from playwright.sync_api import TimeoutError as PWTimeout
 from playwright.sync_api import sync_playwright
 
-from . import browser, console, hangul, paths, settings
+from . import browser, console, hangul, paths, settings, concur_ui
+from .concur_ui import ConcurUIError as AttachError
 
 PROFILE_DIR = paths.at("browser-profile", "concur")
 START_URL = "https://travel.siemens.cloud"
@@ -167,10 +168,6 @@ def expense_url(report_url: str, expense_id: str) -> str:
 
 DATE_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})")
 AMOUNT_RE = re.compile(r"^-?[\d,]+(?:\.\d+)?$")
-
-
-class AttachError(Exception):
-    """추측으로 진행하면 안 되는 상태."""
 
 
 @dataclass
@@ -336,6 +333,21 @@ def read_rows(page) -> list[Row]:
     return rows
 
 
+def rows_when_ready(page, tries: int = 30, wait_ms: int = 500) -> list[Row]:
+    """전 행의 필수값이 채워지고 두 번 연속 동일할 때만 매칭한다."""
+    previous = None
+    for _ in range(tries):
+        rows = read_rows(page)
+        complete = bool(rows) and all(r.expense_id and r.when and r.amount is not None for r in rows)
+        signature = [(r.expense_id, r.when, r.amount, r.has_receipt, r.receipt_file) for r in rows]
+        if complete and signature == previous:
+            return rows
+        previous = signature if complete else None
+        page.wait_for_timeout(wait_ms)
+    raise AttachError("경비 목록이 아직 완전히 준비되지 않았습니다. 일부 행만으로 매칭하지 않았습니다."
+                      + concur_ui.diagnose(page, "경비 목록 준비"))
+
+
 # 가맹점 유사도 판정. 실측으로 같은 가게는 1.00, 다른 가게는 0.3 미만이었다.
 VENDOR_MIN = 0.6  # 이보다 낮으면 같은 가게로 보지 않는다
 VENDOR_MARGIN = 0.15  # 2등과 이만큼 벌어져야 확실하다고 본다
@@ -419,7 +431,8 @@ def attach(page, slip: Slip, row: Row, report_url: str, folder: Path) -> None:
     open_expense(page, slip, row, report_url, folder)
     page.set_input_files(UPLOAD_INPUT, str(slip.path))
     page.wait_for_timeout(3000)
-    page.get_by_role("button", name="경비 저장").first.click()
+    concur_ui.click_target(page, concur_ui.SAVE_BUTTONS_JS, '경비 저장',
+                          '경비 저장,Save Expense', timeout=30000)
     page.wait_for_timeout(2000)
 
 
@@ -429,13 +442,9 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
     slips = load_manifest(folder)
     done = load_done(folder)
     if done:
-        slips = [s for s in slips if s.approval not in done]
-        # 이 판단은 Concur를 본 것이 아니라 우리가 남긴 기록이다. 화면에
-        # 영수증이 없어도 여기 적혀 있으면 건너뛴다. Concur에서 경비를 지웠다
-        # 다시 만들었으면 그렇게 된다 - 그 말을 안 해줬더니 '왜 하나만
-        # 붙었냐'가 됐다.
-        print(f"{done_path(folder).name} 에 적힌 {len(done)}건은 이미 붙인 것으로 보고 "
-              f"건너뜁니다. 남은 전표는 {len(slips)}건입니다.")
+        # 완료 전표를 빼고 매칭하면 동액 거래의 연결이 밀린다. 전체를 비교한다.
+        print(f"{done_path(folder).name} 에 {len(done)}건의 기록이 있습니다. "
+              "기록만으로 제외하지 않고 현재 화면의 영수증을 확인합니다.")
     if not slips:
         print("붙일 영수증이 없습니다.")
         if done:
@@ -443,7 +452,7 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
                   "\n   그 파일을 지우거나 --again 으로 돌리면 처음부터 다시 붙입니다.)")
         return 0
 
-    rows = read_rows(page)
+    rows = rows_when_ready(page)
     if not rows:
         dump = folder / "concur-dump.html"
         try:
@@ -552,7 +561,7 @@ def open_report():
     C·D단계를 한 세션에서 이어 하려고 분리했다.
     """
     pw = sync_playwright().start()
-    ctx = browser.launch(pw, PROFILE_DIR, accept_downloads=True)
+    ctx = browser.launch(pw, PROFILE_DIR, accept_downloads=True, locale='ko-KR')
     page = browser.open_first(ctx, START_URL)
 
     print("\n" + "=" * 64)

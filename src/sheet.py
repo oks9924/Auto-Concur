@@ -10,6 +10,7 @@ organize가 전표에서 사실(거래일·금액·승인번호·가맹점)을 �
 from __future__ import annotations
 
 import csv
+import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -80,6 +81,21 @@ def nightly_split(amount: int, nights: int) -> list[int]:
 def _rows_from_csv(path: Path) -> list[dict]:
     with path.open(encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
+
+
+def read_raw(path: Path) -> list[dict]:
+    if path.suffix.lower() == '.json':
+        try:
+            payload = json.loads(path.read_text(encoding='utf-8'))
+            if not isinstance(payload, dict) or payload.get('version') != 1 or not isinstance(payload.get('rows'), list):
+                raise ValueError('지원하지 않는 작업 데이터 형식')
+            if not all(isinstance(row, dict) and all(isinstance(k, str) and isinstance(v, str)
+                       for k, v in row.items()) for row in payload['rows']):
+                raise ValueError('작업 데이터의 행 형식이 올바르지 않습니다')
+            return payload['rows']
+        except (ValueError, TypeError) as exc:
+            raise SheetError(f'{path}: {exc}') from exc
+    return _rows_from_xlsx(path) if path.suffix.lower() == '.xlsx' else _rows_from_csv(path)
 
 
 def _rows_from_xlsx(path: Path) -> list[dict]:
@@ -322,7 +338,7 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path,
 def load(path: Path) -> list[SheetRow]:
     if not path.exists():
         raise SheetError(f"작업지가 없습니다: {path}\n먼저 B단계(파싱 · 작업지 생성)를 실행해 주세요.")
-    raw = _rows_from_xlsx(path) if path.suffix.lower() == ".xlsx" else _rows_from_csv(path)
+    raw = read_raw(path)
     if not raw:
         raise SheetError(f"작업지가 비어 있습니다: {path}")
 

@@ -95,10 +95,10 @@ def test_참석자를_지우면_추가_참석자만_넣는다(tmp_path):
     assert 누구 == "hong.gildong, kim.minsu"
 
 
-def test_둘_다_비면_설정값을_쓴다(tmp_path):
-    """아무도 안 넣으면 식음료는 필수값이 비어서 리포트가 안 나간다."""
+def test_둘_다_비면_참석자를_건드리지_않는다(tmp_path):
+    """설정에 참석자가 있어도 빈 칸을 대신 채우지 않는다."""
     누구, gaps = _한건(tmp_path, "", "")
-    assert 누구 == "kyungsik.oh"
+    assert 누구 == ""
     assert not gaps
 
 
@@ -195,7 +195,7 @@ def test_검색_결과를_검색어로_고른다():
     assert "findOption(q)" in SELECT_ATTENDEE_OPTION_JS
 
 
-def test_건너뛴_근거가_어디에_있는지_말한다(tmp_path, capsys):
+def test_건너뛴_근거가_어디에_있는지_말한다(tmp_path, capsys, monkeypatch):
     """'이미 붙인 2건' 은 Concur를 본 것이 아니라 우리가 남긴 기록이다.
 
     화면에 영수증이 없어도 그 파일에 적혀 있으면 건너뛴다. 어디를 봐야
@@ -214,6 +214,10 @@ def test_건너뛴_근거가_어디에_있는지_말한다(tmp_path, capsys):
                     "거래일": "2026-08-09", "금액": "17000", "승인번호": "111",
                     "가맹점명": "가게"})
     ar.done_path(tmp_path).write_text("111\n", encoding="utf-8")
+
+    monkeypatch.setattr(ar, 'rows_when_ready', lambda page: [
+        ar.Row(0, date(2026, 8, 9), 17000, '', 'ID1', has_receipt=True, receipt_file='a.pdf')])
+    monkeypatch.setattr(ar, '_eval', lambda *a: [])
 
     assert ar.attach_phase(None, "http://x", tmp_path, True, 1, None) == 0
     말 = capsys.readouterr().out
@@ -234,7 +238,7 @@ def test_값이_안_채워진_목록은_다_읽힌_것이_아니다():
     assert not rows_ready([])
 
     반쯤 = [*빈행, Row(2, date(2026, 8, 9), 17000, "", "ID3", "", "")]
-    assert rows_ready(반쯤)  # 하나라도 채워졌으면 그리는 중이 아니다
+    assert not rows_ready(반쯤)  # 한 행만 채워져도 나머지는 아직 렌더링 중일 수 있다
 
 
 def test_값이_없는_행은_짝짓기에서_빠진다():

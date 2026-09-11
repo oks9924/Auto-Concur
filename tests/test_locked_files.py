@@ -93,17 +93,17 @@ def test_경로는_프로그램_폴더_기준이다():
     assert paths.folder("downloads") == 저장소 / "downloads"
 
 
-def test_직접_고른_폴더는_그대로_쓴다():
+def test_직접_고른_폴더는_그대로_쓴다(tmp_path):
     """'찾아보기'로 고른 값은 절대경로다. 기준을 붙이면 망가진다."""
     from pathlib import Path
 
     from src import paths
 
-    골랐다 = Path("/tmp/전표") if Path("/").exists() else Path("C:/전표")
+    골랐다 = tmp_path / '전표'
     assert paths.folder(골랐다) == 골랐다
 
 
-def test_exe로_묶이면_exe_옆을_본다(monkeypatch):
+def test_exe로_묶이면_exe_옆을_본다(monkeypatch, tmp_path):
     """PyInstaller의 _MEIPASS(임시 풀림 폴더)를 쓰면 끝날 때 같이 지워진다."""
     import sys
     from pathlib import Path
@@ -111,8 +111,8 @@ def test_exe로_묶이면_exe_옆을_본다(monkeypatch):
     from src import paths
 
     monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(sys, "executable", "/opt/앱/Auto-Concur.exe", raising=False)
-    assert paths.base() == Path("/opt/앱")
+    monkeypatch.setattr(sys, "executable", str(tmp_path / '앱' / 'Auto-Concur.exe'), raising=False)
+    assert paths.base() == tmp_path / '앱'
 
 
 def test_exe_진입점이_인수를_요구하지_않는다():
