@@ -1,0 +1,41 @@
+name: Internal meal attendee validation
+on:
+  push:
+    branches: [fix/meal-attendee-20260917]
+    paths: ['src/attendee_defaults.py', 'tests/test_attendee_defaults.py', '_attendee_patch.py', '.github/workflows/_attendee-validation.yml']
+permissions:
+  contents: write
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/meal-attendee-20260917
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply editor-only integration
+        run: python _attendee_patch.py
+      - name: Install test dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Test default, undo, form and original data preservation
+        run: xvfb-run -a python -m pytest -q tests/test_attendee_defaults.py tests/test_workspace_ux.py tests/test_worksheet.py tests/test_blank_policy.py --junitxml=attendee-results.xml
+      - name: Commit tested application code
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/attendee_defaults.py src/worksheet_editor.py src/row_editor.py tests/test_attendee_defaults.py docs/attendee-defaults-20260917.md
+          git rm _attendee_patch.py .github/workflows/_attendee-validation.yml
+          git commit -m 'Apply internal meal attendee defaults in table and form; scoped tests passed'
+          git push origin HEAD:fix/meal-attendee-20260917
+          git rev-parse HEAD > attendee-verified-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: attendee-validation
+          path: |
+            attendee-results.xml
+            attendee-verified-commit.txt
+          retention-days: 3
