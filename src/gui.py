@@ -88,7 +88,7 @@ class _Writer:
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Auto-Concur · 달력 UX 개선판 2026.09.17")
+        self.title("Auto-Concur · 작업 공간 UX 2026.09.17")
         self.cfg = settings.load()
         self.events: queue.Queue = queue.Queue()
         self.busy = False
@@ -99,97 +99,22 @@ class App(tk.Tk):
     # --- 화면 ---------------------------------------------------------------
 
     def _build(self) -> None:
-        pad = {"padx": 8, "pady": 4}
+        from .workspace_ui import build_workspace
+        build_workspace(self)
 
-        box = ttk.LabelFrame(self, text="설정")
-        box.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
+    def show_results(self):
+        self.result_tab.reload()
+        self.tabs.select(self.result_tab)
 
-        ttk.Label(box, text="기간").grid(row=0, column=0, sticky="w", **pad)
-        first, last = initial_period(self.cfg)
-        self.from_date = tk.StringVar(value=first)
-        self.to_date = tk.StringVar(value=last)
-        span = ttk.Frame(box)
-        span.grid(row=0, column=1, sticky="w", **pad)
-        dates = ttk.Frame(span)
-        dates.pack(anchor="w")
-        DateEntry(dates, self.from_date, "조회 시작일 선택").pack(side="left")
-        ttk.Label(dates, text=" ~ ").pack(side="left")
-        DateEntry(dates, self.to_date, "조회 종료일 선택").pack(side="left")
+    def copy_log(self):
+        self.clipboard_clear()
+        self.clipboard_append(self.log.get('1.0', 'end-1c'))
 
-        quick = ttk.Frame(span)
-        quick.pack(anchor="w", pady=(6, 0))
-        ttk.Button(quick, text="기간 선택", command=self.pick_period).pack(side="left", padx=(0, 6))
-        for name in ('오늘', '최근 7일', '이번 달', '지난달'):
-            ttk.Button(quick, text=name, command=lambda n=name: self.set_period(n)).pack(side="left", padx=2)
-
-        # 참석자는 사람마다 고정이다. 여기 적어두면 작업지에 따라 들어간다.
-        ttk.Label(box, text="참석자").grid(row=1, column=0, sticky="w", **pad)
-        self.attendee = tk.StringVar(value=str(self.cfg.get("attendee_default", "")))
-        who = ttk.Frame(box)
-        who.grid(row=1, column=1, sticky="w", **pad)
-        ttk.Entry(who, textvariable=self.attendee, width=40).pack(side="left")
-        ttk.Label(
-            who, text="여러 명은 쉼표로 (kyungsik.oh, hong.gildong)", foreground="#666"
-        ).pack(side="left", padx=6)
-
-        # 전표 폴더는 직접 고르게 한다. 경로를 손으로 치면 오타가 난다.
-        ttk.Label(box, text="전표 폴더").grid(row=2, column=0, sticky="w", **pad)
-        # 상대경로로 보여주면 어디에 받아지는지 알 수 없다. 푼 경로를 보여준다.
-        self.folder = tk.StringVar(value=str(paths.folder(self.cfg.get("downloads_dir") or "")))
-        picker = ttk.Frame(box)
-        picker.grid(row=2, column=1, sticky="w", **pad)
-        ttk.Entry(picker, textvariable=self.folder, width=40).pack(side="left")
-        ttk.Button(picker, text="찾아보기", command=self.pick_folder).pack(side="left", padx=6)
-
-        run = ttk.LabelFrame(self, text="실행")
-        run.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
-
-        # 버튼을 누르면 항상 실제로 반영한다. 창에서 계획만 보는 일이 없어서
-        # 체크박스는 매번 켜는 손이 하나 더 가는 것뿐이었다.
-        self.limit = tk.StringVar(value="")
-        opts = ttk.Frame(run)
-        opts.grid(row=0, column=0, sticky="w", **pad)
-        ttk.Label(opts, text="각 단계 앞 N건만 (비워두면 전부):").pack(side="left")
-        ttk.Entry(opts, textvariable=self.limit, width=6).pack(side="left", padx=6)
-
-        format_button = ttk.Button(opts, text="Concur 표시 서식", command=lambda: show_concur_formats(self))
-        format_button.pack(side="left", padx=12)
-        self.buttons = [format_button]
-        bar = ttk.Frame(run)
-        bar.grid(row=1, column=0, sticky="w", **pad)
-        for text, cmd in (
-            ("A. 전표 다운로드", self.step_download),
-            ("B. 파싱 · 작업지 생성", self.step_organize),
-            ("C. Concur 반영", self.step_update),
-        ):
-            button = ttk.Button(bar, text=text, width=22, command=cmd)
-            button.pack(side="left", padx=3)
-            self.buttons.append(button)
-
-        tools = ttk.Frame(self)
-        tools.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 4))
-        for text, cmd in (
-            ("작업지 편집", self.edit_worksheet),
-            ("경비유형 코드 확인", self.step_list_types),
-            ("숙박비 목록 확인", self.step_list_lodging),
-        ):
-            button = ttk.Button(tools, text=text, command=cmd)
-            button.pack(side="left", padx=(0, 6))
-            self.buttons.append(button)
-        ttk.Label(
-            tools, text="드롭다운 값이 바뀌었을 때 다시 뽑습니다", foreground="#666"
-        ).pack(side="left", padx=8)
-
-        self.log = scrolledtext.ScrolledText(self, width=100, height=20, state="disabled")
-        self.log.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 10))
-        # 다음에 뭘 해야 하는지는 굵게 찍는다. 진행 로그에 섞이면 지나친다.
-        self.log.tag_configure("강조", font=("TkDefaultFont", 10, "bold"), foreground="#0a5")
-        self.rowconfigure(3, weight=1)
-        self.columnconfigure(0, weight=1)
-        self._say("버튼을 누르면 여기에 진행 상황이 찍힙니다.\n")
-        # 지금 도는 코드가 언제 것인지 적는다. 'pull 했는데 왜 그대로냐' 를
-        # 눈으로 가릴 수 있어야 한다.
-        self._say(f"(코드 기준: {paths.stamp()})\n")
+    def close_window(self):
+        if self.busy:
+            messagebox.showinfo('작업 진행 중', '반영 중 강제 종료하면 저장 결과를 확정할 수 없습니다. 현재 작업이 끝난 뒤 닫아 주세요.', parent=self)
+            return
+        self.destroy()
 
     def set_period(self, name):
         first, last = period_preset(name)
@@ -244,10 +169,13 @@ class App(tk.Tk):
                     self._say(payload)
                 elif kind == "ask":
                     message, done = payload
+                    self.run_state.set("사용자 확인 대기 · 안내창을 확인하세요.")
                     messagebox.showinfo("확인", message, parent=self)
+                    self.run_state.set("작업을 계속 진행합니다.")
                     done.set()
                 elif kind == 'confirm_action':
                     message, action, done, answer = payload
+                    self.run_state.set('리포트 확인 대기 · 대상과 건수를 확인한 뒤 시작하세요.')
                     dialog = tk.Toplevel(self)
                     dialog.title('Concur 작업 대상 확인')
                     dialog.transient(self)
@@ -255,6 +183,7 @@ class App(tk.Tk):
                     frame.pack(fill='both', expand=True)
                     ttk.Label(frame, text=message, wraplength=580).pack(pady=(0, 16))
                     def finish(value, window=dialog, result=answer, event=done):
+                        self.run_state.set('작업을 계속 진행합니다.' if value else '반영 취소를 처리합니다.')
                         result.append(value)
                         window.destroy()
                         event.set()
@@ -269,6 +198,8 @@ class App(tk.Tk):
                     for button in self.buttons:
                         button.state(["!disabled"])
                     self._say(payload)
+                    from .workspace_ui import set_busy
+                    set_busy(self, False, payload.strip())
         except queue.Empty:
             pass
         self.after(100, self._drain)
@@ -293,11 +224,17 @@ class App(tk.Tk):
         # 있고, settings.json은 다음 실행 때 편하려고 남기는 것뿐이다.
         # (실측: 회사 PC에서 settings.json 이 잠겨 PermissionError로 단계가
         #  시작도 못 했다.)
+        text = self.limit.get().strip()
+        if text and (not text.isascii() or not text.isdecimal() or int(text) < 1):
+            messagebox.showerror('처리 건수 확인', '앞 N건에는 1 이상의 정수를 입력하세요. 전체 처리는 빈칸으로 두세요.', parent=self)
+            return
         try:
             self.save()
         except OSError as exc:
             self._say(f"\n(설정을 저장하지 못했습니다: {exc}\n 이번 실행에는 창의 값을 씁니다.)\n")
         self.busy = True
+        from .workspace_ui import set_busy
+        set_busy(self, True, title + " · 진행 중 (실제 완료율은 아직 확인되지 않았습니다)")
         for button in self.buttons:
             button.state(["disabled"])
         self._say(f"\n{'=' * 60}\n{title}\n{'=' * 60}\n")

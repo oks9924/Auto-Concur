@@ -40,11 +40,19 @@ class Editor(tk.Toplevel):
 
         tools = ttk.Frame(self, padding=(16, 0, 16, 10))
         tools.grid(row=1, column=0, sticky='ew')
-        for index, (label, command) in enumerate([('복사', lambda: self.table.copy()), ('붙여넣기', lambda: self.table.paste()),
-                               ('실행 취소', lambda: self.table.undo()), ('다시 실행', lambda: self.table.redo()),
-                               ('숙박 날짜 · 달력', self.pick_stay_dates), ('여러 행에 입력', self.bulk), ('찾기·바꾸기', self.find_replace), ('다시 불러오기', self.reload), ('이전 저장 복원', self.restore),
-                               ('가져오기', self.import_file), ('내보내기', self.export_file), ('유형 입력 안내', self.show_input_guide)]):
-            ttk.Button(tools, text=label, command=command).grid(row=index//6, column=index%6, sticky='ew', padx=(0, 5), pady=3)
+        for index, (label, command) in enumerate([
+                ('한 건 상세 편집', self.edit_row), ('실행 취소', lambda: self.table.undo()),
+                ('숙박 날짜', self.pick_stay_dates), ('여러 행 입력', self.bulk), ('찾기·바꾸기', self.find_replace)]):
+            ttk.Button(tools, text=label, command=command).grid(row=0, column=index, sticky='ew', padx=(0, 5), pady=3)
+        more = ttk.Menubutton(tools, text='더 보기')
+        menu = tk.Menu(more, tearoff=False)
+        for label, command in [('복사', lambda: self.table.copy()), ('붙여넣기', lambda: self.table.paste()),
+                ('다시 실행', lambda: self.table.redo()), ('유형 입력 안내', self.show_input_guide),
+                ('다시 불러오기', self.reload), ('이전 저장 복원', self.restore),
+                ('가져오기', self.import_file), ('내보내기', self.export_file)]:
+            menu.add_command(label=label, command=command)
+        more.configure(menu=menu)
+        more.grid(row=0, column=5, sticky='ew', padx=3)
         filters = ttk.Frame(self, padding=(16, 0, 16, 10))
         filters.grid(row=2, column=0, sticky='ew')
         ttk.Label(filters, text='검색').pack(side='left')
@@ -58,6 +66,8 @@ class Editor(tk.Toplevel):
 
         self.guide_count = ttk.Label(head, text='')
         self.guide_count.pack(anchor='w', pady=(3, 0))
+        self.scope_note = ttk.Label(head, text='Concur 반영은 저장된 전체 작업지 기준입니다. 필터·선택 행은 실행 범위를 제한하지 않습니다.', wraplength=760, foreground='#87551a')
+        self.scope_note.pack(anchor='w', pady=(4, 0))
         self.text_size = tk.StringVar(value='11')
         ttk.Combobox(filters, textvariable=self.text_size, values=['10', '11', '12', '14'],
                      state='readonly', width=3).pack(side='left')
@@ -82,15 +92,20 @@ class Editor(tk.Toplevel):
         self.text_size.trace_add('write', lambda *a: self.resize_text())
         self.query.trace_add('write', lambda *a: self.apply_filter())
         self.filter.trace_add('write', lambda *a: self.apply_filter())
-        foot = ttk.Frame(self, padding=16)
+        foot = ttk.Frame(self, padding=12)
         foot.grid(row=4, column=0, sticky='ew')
-        self.status = ttk.Label(foot, wraplength=650)
-        self.status.pack(side='left', fill='x', expand=True)
-        ttk.Button(foot, text='닫기', command=self.close).pack(side='right', padx=(8, 0))
+        self.status = ttk.Label(foot, wraplength=900)
+        self.status.pack(fill='x', pady=(0, 8))
+        foot.bind('<Configure>', lambda event: self.status.configure(wraplength=max(300, event.width - 30)))
+        actions = ttk.Frame(foot)
+        actions.pack(fill='x')
+        ttk.Label(actions, text='입력 상태 ≠ Concur 반영 결과', foreground='#536273').pack(side='left')
+        ttk.Button(actions, text='닫기', command=self.close).pack(side='right', padx=(8, 0))
         if on_run:
-            ttk.Button(foot, text='저장하고 Concur 반영', command=self.run).pack(side='right', padx=(8, 0))
-        ttk.Button(foot, text='저장', command=self.save).pack(side='right')
+            ttk.Button(actions, text='저장 후 반영 대상 확인', command=self.run).pack(side='right', padx=(8, 0))
+        ttk.Button(actions, text='작업지 저장', command=self.save).pack(side='right')
         self.bind('<Control-s>', lambda event: (self.save(), 'break')[1])
+        self.bind('<Control-e>', lambda event: (self.edit_row(), 'break')[1])
         self.bind('<Control-h>', lambda event: (self.find_replace(), 'break')[1])
         recovered = False
         warning = ''
@@ -333,7 +348,7 @@ class Editor(tk.Toplevel):
                 continue
             shown.append(i)
         self.table.display_rows(rows=shown, all_rows_displayed=False, redraw=True)
-        self.count.configure(text=f'{len(shown)} / {len(self.model.rows)}건 · 필터는 표시만 바꿉니다')
+        self.count.configure(text=f'표시 {len(shown)} / 전체 {len(self.model.rows)}건')
 
     def bulk(self):
         cells = self.table.get_selected_cells(get_rows=True, get_columns=True)
@@ -399,7 +414,27 @@ class Editor(tk.Toplevel):
         self.status.configure(text='저장했습니다. 엑셀을 열 필요 없이 C단계에 반영할 수 있습니다.')
         return True
 
+    def edit_row(self):
+        from .row_editor import RowEditor
+        self.table.close_text_editor(set_data=True)
+        self.sync()
+        selected = self.table.get_currently_selected()
+        if not selected:
+            messagebox.showinfo('행 선택', '편집할 경비 행을 선택한 뒤 한 건 상세 편집을 눌러 주세요.', parent=self)
+            return
+        index = self.table.displayed_row_to_data(selected.row)
+        return RowEditor(self, index)
+
     def run(self):
+        shown = len(self.table.display_rows())
+        total = len(self.model.rows)
+        text = (f'표시 {shown}건 / 작업지 전체 {total}건\n\n'
+                '필터나 선택 행에 관계없이 저장된 전체 작업지를 기준으로 매칭합니다.\n'
+                '첫 화면의 앞 N건 제한은 각 작업 종류별로 따로 적용됩니다.\n'
+                '영수증만 첨부되는 거래도 있을 수 있으며 실제 대상 건수는 다음 리포트 확인창에서 결정됩니다.\n\n'
+                '입력을 저장한 뒤 Concur 대상 확인 단계로 이동할까요?')
+        if not messagebox.askokcancel('실제 처리 범위 확인', text, parent=self):
+            return
         if self.save():
             callback = self.on_run
             self.destroy()
