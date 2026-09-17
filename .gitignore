@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+.pytest_cache/
 
 # 실제 전표/카드 데이터는 절대 커밋하지 않는다
 downloads/
@@ -17,6 +18,9 @@ browser-profile/
 inspect-out/
 # run.bat이 남기는 실행 기록. 가맹점명·금액이 찍혀 있다.
 run-log.txt
+startup-error.txt
+smoke-result.json
+test-results.xml
 
 # 사람마다 다른 설정. 받는 사람이 자기 값으로 만든다.
 settings.json
