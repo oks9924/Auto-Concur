@@ -188,7 +188,9 @@ def test_copy_uses_tab_separated_text(editor, monkeypatch):
     assert len(clipboard) == 1 and '\t1000\t' in clipboard[0] and '가게 1' in clipboard[0]
 
 
-def test_save_and_run_calls_parent_only_after_successful_save(editor):
+def test_save_and_run_calls_parent_only_after_successful_save(editor, monkeypatch):
+    from src import worksheet_editor
+    monkeypatch.setattr(worksheet_editor.messagebox, "askokcancel", lambda *a, **k: True)
     called = []
     editor.on_run = lambda: called.append('run')
     # destroy는 테스트 fixture에서 한다.
@@ -273,7 +275,8 @@ def test_calendar_filtered_row_range_apply_and_undo(editor):
     editor.table.select_cell(0, editor.COLUMNS.index('입실날짜'))
     editor.pick_stay_dates()
     dialog = next(w for w in editor.winfo_children() if isinstance(w, StayCalendar))
-    dialog.year, dialog.month = 2026, 12
+    from datetime import date
+    dialog.panel.show(date(2026, 12, 1))
     dialog.choose(30)
     dialog.move(1)
     dialog.choose(2)
