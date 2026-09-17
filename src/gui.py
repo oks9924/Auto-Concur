@@ -23,7 +23,9 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from . import console, paths, retry, settings
-from .calendar_input import DateEntry, initial_period, checked_period
+from .calendar_input import DateEntry, RangePicker, initial_period, checked_period
+from .calendar_widgets import date_text, period_preset
+from .date_input import parse_date
 
 
 # 버튼이 부르는 단계들. 창이 뜨자마자 미리 불러둔다.
@@ -85,7 +87,7 @@ class _Writer:
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Auto-Concur · 대상별 처리판 2026.09.17")
+        self.title("Auto-Concur · 달력 UX 개선판 2026.09.17")
         self.cfg = settings.load()
         self.events: queue.Queue = queue.Queue()
         self.busy = False
@@ -107,9 +109,17 @@ class App(tk.Tk):
         self.to_date = tk.StringVar(value=last)
         span = ttk.Frame(box)
         span.grid(row=0, column=1, sticky="w", **pad)
-        DateEntry(span, self.from_date, "조회 시작일 선택").pack(side="left")
-        ttk.Label(span, text=" ~ ").pack(side="left")
-        DateEntry(span, self.to_date, "조회 종료일 선택").pack(side="left")
+        dates = ttk.Frame(span)
+        dates.pack(anchor="w")
+        DateEntry(dates, self.from_date, "조회 시작일 선택").pack(side="left")
+        ttk.Label(dates, text=" ~ ").pack(side="left")
+        DateEntry(dates, self.to_date, "조회 종료일 선택").pack(side="left")
+
+        quick = ttk.Frame(span)
+        quick.pack(anchor="w", pady=(6, 0))
+        ttk.Button(quick, text="기간 선택", command=self.pick_period).pack(side="left", padx=(0, 6))
+        for name in ('오늘', '최근 7일', '이번 달', '지난달'):
+            ttk.Button(quick, text=name, command=lambda n=name: self.set_period(n)).pack(side="left", padx=2)
 
         # 참석자는 사람마다 고정이다. 여기 적어두면 작업지에 따라 들어간다.
         ttk.Label(box, text="참석자").grid(row=1, column=0, sticky="w", **pad)
@@ -177,6 +187,18 @@ class App(tk.Tk):
         # 지금 도는 코드가 언제 것인지 적는다. 'pull 했는데 왜 그대로냐' 를
         # 눈으로 가릴 수 있어야 한다.
         self._say(f"(코드 기준: {paths.stamp()})\n")
+
+    def set_period(self, name):
+        first, last = period_preset(name)
+        self.from_date.set(date_text(first, '.'))
+        self.to_date.set(date_text(last, '.'))
+
+    def pick_period(self):
+        def apply(first, last):
+            self.from_date.set(first.replace('-', '.'))
+            self.to_date.set(last.replace('-', '.'))
+        RangePicker(self, parse_date(self.from_date.get()), parse_date(self.from_date.get()),
+                    parse_date(self.to_date.get()), apply)
 
     def pick_folder(self) -> None:
         # 프로그램이 있는 폴더에서 시작한다. 적혀 있는 폴더가 실제로 있으면

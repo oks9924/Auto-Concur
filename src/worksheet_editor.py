@@ -7,6 +7,8 @@ from tkinter import filedialog, messagebox, ttk
 from tksheet import Sheet
 
 from . import sheet, settings
+from .expense_policy import input_guide
+from .calendar_input import DateEntry
 from .worksheet import Worksheet, normalize
 
 
@@ -21,8 +23,9 @@ class Editor(tk.Toplevel):
         self.pending = None
         self.loading = False
         self.title('경비 입력 · Auto-Concur')
-        self.geometry('1240x680')
-        self.minsize(980, 520)
+        width, height = min(1240, self.winfo_screenwidth()-60), min(700, self.winfo_screenheight()-100)
+        self.geometry(f'{width}x{height}')
+        self.minsize(min(820, width), min(520, height))
         self.resizable(True, True)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.columnconfigure(0, weight=1)
@@ -32,28 +35,29 @@ class Editor(tk.Toplevel):
         title = ttk.Label(head, text='경비 입력', font=('맑은 고딕', 17, 'bold'))
         title.pack(anchor='w')
         title.bind('<Double-Button-1>', self.toggle_maximize)
-        ttk.Label(head, text='빈칸은 현재 값을 유지합니다. 대중교통은 코멘트(설명)만 반영합니다. 영수증은 없을 때만 첨부합니다.').pack(anchor='w', pady=(5, 0))
-        ttk.Label(head, text='입실·퇴실 칸 더블클릭 또는 Enter: 달력   ·   Ctrl+C/V 복사·붙여넣기   ·   Ctrl+Z/Y 실행 취소·다시 실행   ·   Ctrl+S 저장').pack(anchor='w', pady=(3, 0))
+        ttk.Label(head, text='빈칸은 기존 Concur 값을 유지합니다. 초록색은 입력 안내이며, Concur 필수값 확인은 별도입니다.', wraplength=760).pack(anchor='w', pady=(5, 0))
+        ttk.Label(head, text='입실·퇴실 칸 더블클릭/Enter: 달력 · Ctrl+C/V: 복사/붙여넣기 · Ctrl+Z/Y: 실행 취소/다시 실행 · Ctrl+S: 저장', wraplength=760).pack(anchor='w', pady=(3, 0))
 
         tools = ttk.Frame(self, padding=(16, 0, 16, 10))
         tools.grid(row=1, column=0, sticky='ew')
-        for label, command in [('복사', lambda: self.table.copy()), ('붙여넣기', lambda: self.table.paste()),
+        for index, (label, command) in enumerate([('복사', lambda: self.table.copy()), ('붙여넣기', lambda: self.table.paste()),
                                ('실행 취소', lambda: self.table.undo()), ('다시 실행', lambda: self.table.redo()),
                                ('숙박 날짜 · 달력', self.pick_stay_dates), ('여러 행에 입력', self.bulk), ('찾기·바꾸기', self.find_replace), ('다시 불러오기', self.reload), ('이전 저장 복원', self.restore),
-                               ('가져오기', self.import_file), ('내보내기', self.export_file)]:
-            ttk.Button(tools, text=label, command=command).pack(side='left', padx=(0, 5))
+                               ('가져오기', self.import_file), ('내보내기', self.export_file), ('유형 입력 안내', self.show_input_guide)]):
+            ttk.Button(tools, text=label, command=command).grid(row=index//6, column=index%6, sticky='ew', padx=(0, 5), pady=3)
         filters = ttk.Frame(self, padding=(16, 0, 16, 10))
         filters.grid(row=2, column=0, sticky='ew')
         ttk.Label(filters, text='검색').pack(side='left')
         self.query = tk.StringVar()
         ttk.Entry(filters, textvariable=self.query, width=32).pack(side='left', padx=(6, 14))
         self.filter = tk.StringVar(value='전체')
-        ttk.Combobox(filters, textvariable=self.filter, values=['전체', '숙박비', '식음료', '입력 있음', '영수증만', '입력 확인'],
+        ttk.Combobox(filters, textvariable=self.filter, values=['전체', '숙박비', '식음료', '입력 있음', '영수증만', '입력 확인', '안내 미등록'],
                      state='readonly', width=15).pack(side='left')
         self.count = ttk.Label(filters)
         self.count.pack(side='right')
 
-        ttk.Label(filters, text='초록색: 유형별 입력 안내 (빈칸은 유지)').pack(side='left', padx=8)
+        self.guide_count = ttk.Label(head, text='')
+        self.guide_count.pack(anchor='w', pady=(3, 0))
         self.text_size = tk.StringVar(value='11')
         ttk.Combobox(filters, textvariable=self.text_size, values=['10', '11', '12', '14'],
                      state='readonly', width=3).pack(side='left')
@@ -272,10 +276,33 @@ class Editor(tk.Toplevel):
     def highlight_inputs(self):
         self.table.dehighlight_cells(all_=True, redraw=False)
         for r, row in enumerate(self.model.rows):
-            for name in sheet.GREEN_BY_TYPE.get(row.get('경비유형', '').strip(), []):
+            kind = row.get('경비유형', '').strip()
+            fields, known = input_guide(kind, self.cfg.get('expense_type_codes', {}).get(kind))
+            if kind and not known:
+                self.table.highlight_cells(row=r, column=self.COLUMNS.index('경비유형'),
+                                           bg='#fff0c2', fg='#604b08', redraw=False)
+            for name in fields:
                 self.table.highlight_cells(row=r, column=self.COLUMNS.index(name),
                                            bg='#d9efdc', fg='#173d22', redraw=False)
+        unregistered = sum(bool(row.get('경비유형', '').strip()) and not input_guide(
+            row.get('경비유형'), self.cfg.get('expense_type_codes', {}).get(row.get('경비유형', '').strip()))[1]
+            for row in self.model.rows)
+        self.guide_count.configure(text=f'초록: 입력 안내 · 노랑: 안내 미등록 {unregistered}건 (필수 여부 미확인) · 유형 입력 안내 버튼으로 확인')
         self.table.refresh()
+
+    def show_input_guide(self):
+        self.table.close_text_editor(set_data=True)
+        self.sync()
+        selected = self.table.get_currently_selected()
+        if not selected:
+            messagebox.showinfo('유형 입력 안내', '경비 행을 먼저 선택해 주세요.', parent=self)
+            return
+        row = self.model.rows[self.table.displayed_row_to_data(selected.row)]
+        kind = row.get('경비유형', '').strip()
+        fields, known = input_guide(kind, self.cfg.get('expense_type_codes', {}).get(kind))
+        detail = ('초록색 안내 항목: '+', '.join(fields) if known else '이 유형의 안내 규칙은 아직 등록되지 않았습니다.')
+        messagebox.showinfo('유형 입력 안내', (kind or '경비유형 미선택')+'\n\n'+detail+
+            '\n\n초록색은 Concur 필수값 확정을 뜻하지 않습니다. 빈칸은 기존 값을 유지합니다.\n미등록 유형은 임의로 필수값을 정하지 않습니다.', parent=self)
 
     def autosave(self):
         self.pending = None
@@ -298,6 +325,8 @@ class Editor(tk.Toplevel):
                 continue
             if mode in ('입력 있음', '영수증만', '입력 확인') and status != mode:
                 continue
+            if mode == '안내 미등록' and (not kind.strip() or input_guide(kind, self.cfg.get('expense_type_codes', {}).get(kind.strip()))[1]):
+                continue
             if mode == '숙박비' and '숙박비' not in kind:
                 continue
             if mode == '식음료' and '식음료' not in kind:
@@ -319,9 +348,21 @@ class Editor(tk.Toplevel):
         box.pack()
         name, value = tk.StringVar(value='코멘트'), tk.StringVar()
         ttk.Combobox(box, textvariable=name, values=sheet.EDITABLE, state='readonly', width=25).pack(fill='x')
-        entry = ttk.Combobox(box, textvariable=value, width=60)
-        entry.pack(fill='x', pady=10)
-        name.trace_add('write', lambda *a: entry.configure(values=['', *settings.choices(self.cfg).get(name.get(), [])]))
+        value_box = ttk.Frame(box)
+        value_box.pack(fill='x', pady=10)
+        entry = ttk.Combobox(value_box, textvariable=value, width=60)
+        entry.pack(fill='x')
+        date_entry = DateEntry(value_box, value, '선택 행에 입력할 날짜', separator='-')
+        def change_field(*args):
+            value.set('')
+            entry.pack_forget()
+            date_entry.pack_forget()
+            if name.get() in sheet.DATE_COLUMNS:
+                date_entry.pack(fill='x')
+            else:
+                entry.configure(values=['', *settings.choices(self.cfg).get(name.get(), [])])
+                entry.pack(fill='x')
+        name.trace_add('write', change_field)
         ttk.Label(box, text='기존 값도 바뀝니다. 빈 값은 해당 필드를 미입력으로 만듭니다.').pack()
         if self.cfg.get('attendee_default'):
             def fill_mine():

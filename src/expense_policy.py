@@ -11,3 +11,14 @@ GREEN_BY_TYPE = {
 
 def description_only(label, code=None):
     return code == 'TRAIN' or (label or '').strip().startswith('대중교통')
+
+
+# A registered input guide is NOT proof that the company's Concur form requires a field.
+# Keep unreviewed expense types unmarked rather than inferring requirements by name.
+_GUIDE_BY_CODE = {'01182': ATTENDEE_REQUIRED_TYPE, 'LODNG': LODGING_TYPE, 'TRAIN': TRANSIT_TYPE}
+
+
+def input_guide(label, code=None):
+    name = (label or '').strip()
+    canonical = name if name in GREEN_BY_TYPE else _GUIDE_BY_CODE.get(code)
+    return list(GREEN_BY_TYPE.get(canonical, [])), canonical is not None
