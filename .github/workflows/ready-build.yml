@@ -1,0 +1,25 @@
+name: Auto-Concur ready build
+on:
+  push:
+    branches: [fix/ready-calendar-20260917]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Auto-Concur-source
+          path: |
+            src/
+            tests/
+            docs/
+            *.py
+            *.bat
+            *.cs
+            *.md
+            requirements.txt
+          retention-days: 3
