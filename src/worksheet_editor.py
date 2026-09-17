@@ -10,6 +10,7 @@ from . import sheet, settings
 from .expense_policy import input_guide
 from .calendar_input import DateEntry
 from .worksheet import Worksheet, normalize
+from .attendee_defaults import AttendeeDefaults
 
 
 class Editor(tk.Toplevel):
@@ -87,6 +88,7 @@ class Editor(tk.Toplevel):
                                    'right_click_popup_menu', 'rc_select', 'select_all', 'ctrl_select')
         self.table.readonly_columns([0, 1, 2, 3])
         self.table.highlight_columns([0, 1, 2, 3], bg='#f1f4f8')
+        self.attendee_defaults = AttendeeDefaults(self)
         self.table.bind('<<SheetModified>>', self.modified)
         self.table.extra_bindings('begin_edit_cell', self.begin_cell_edit)
         self.text_size.trace_add('write', lambda *a: self.resize_text())
@@ -278,6 +280,7 @@ class Editor(tk.Toplevel):
     def modified(self, event=None):
         if self.loading:
             return
+        filled = self.attendee_defaults.apply(event)
         self.sync()
         for i, row in enumerate(self.model.rows):
             self.table.set_cell_data(i, 0, self.row_status(row), redraw=False)
@@ -286,7 +289,7 @@ class Editor(tk.Toplevel):
         if self.pending:
             self.after_cancel(self.pending)
         self.pending = self.after(800, self.autosave)
-        self.status.configure(text='편집 중 · 잠시 후 임시 저장합니다. 저장된 입력만 C단계에 반영됩니다.')
+        self.status.configure(text=(f'내부 직원간 식음료 {filled}건의 빈 참석자에 기본 참석자를 채웠습니다. Ctrl+Z로 함께 되돌릴 수 있습니다.' if filled else '편집 중 · 잠시 후 임시 저장합니다. 저장된 입력만 C단계에 반영됩니다.'))
 
     def highlight_inputs(self):
         self.table.dehighlight_cells(all_=True, redraw=False)
