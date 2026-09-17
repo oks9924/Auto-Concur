@@ -23,6 +23,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from . import console, paths, retry, settings
+from .calendar_input import DateEntry, initial_period, checked_period
 
 
 # 버튼이 부르는 단계들. 창이 뜨자마자 미리 불러둔다.
@@ -84,7 +85,7 @@ class _Writer:
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Concur 경비 자동화")
+        self.title("Auto-Concur · 대상별 처리판 2026.09.17")
         self.cfg = settings.load()
         self.events: queue.Queue = queue.Queue()
         self.busy = False
@@ -101,13 +102,14 @@ class App(tk.Tk):
         box.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
 
         ttk.Label(box, text="기간").grid(row=0, column=0, sticky="w", **pad)
-        self.from_date = tk.StringVar(value="2026.08.01")
-        self.to_date = tk.StringVar(value="2026.08.31")
+        first, last = initial_period(self.cfg)
+        self.from_date = tk.StringVar(value=first)
+        self.to_date = tk.StringVar(value=last)
         span = ttk.Frame(box)
         span.grid(row=0, column=1, sticky="w", **pad)
-        ttk.Entry(span, textvariable=self.from_date, width=12).pack(side="left")
+        DateEntry(span, self.from_date, "조회 시작일 선택").pack(side="left")
         ttk.Label(span, text=" ~ ").pack(side="left")
-        ttk.Entry(span, textvariable=self.to_date, width=12).pack(side="left")
+        DateEntry(span, self.to_date, "조회 종료일 선택").pack(side="left")
 
         # 참석자는 사람마다 고정이다. 여기 적어두면 작업지에 따라 들어간다.
         ttk.Label(box, text="참석자").grid(row=1, column=0, sticky="w", **pad)
@@ -302,6 +304,8 @@ class App(tk.Tk):
     def save(self) -> None:
         self.cfg["downloads_dir"] = self.folder.get().strip()  # 빈 값은 프로그램 폴더
         self.cfg["attendee_default"] = self.attendee.get().strip()
+        self.cfg["period_from"] = self.from_date.get()
+        self.cfg["period_to"] = self.to_date.get()
         settings.save(self.cfg)
 
     def _limit(self) -> int | None:
@@ -309,7 +313,12 @@ class App(tk.Tk):
         return int(text) if text.isdigit() else None
 
     def step_download(self) -> None:
-        from_date, to_date, limit = self.from_date.get(), self.to_date.get(), self._limit()
+        try:
+            from_date, to_date = checked_period(self.from_date.get(), self.to_date.get())
+        except ValueError as exc:
+            messagebox.showerror("조회 기간 확인", str(exc), parent=self)
+            return
+        limit = self._limit()
         def work() -> None:
             download_slips = _module("download_slips")
             return download_slips.download(

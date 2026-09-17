@@ -25,19 +25,29 @@ class Report:
 
 
 def signature(rows):
-    return tuple((r.expense_id, r.when, r.amount, r.expense_type, r.has_receipt, r.receipt_file) for r in rows)
+    return ar.snapshot_signature(rows)
 
 
 def ready_report(page, timeout=600):
     print('Concur에 로그인한 뒤 처리할 경비 리포트의 목록을 열어 주세요. 화면을 자동 확인합니다.')
     deadline, previous, repeats = time.monotonic() + timeout, None, 0
+    list_since, list_key, last_note = None, None, 0
     while time.monotonic() < deadline:
         if page.is_closed():
             raise ar.AttachError('브라우저를 닫아 작업을 중단했습니다.')
         try:
             key = report_key(page.url)
             rows = ar.read_rows(page) if key else []
-            complete = bool(rows) and all(r.expense_id and r.when and r.amount is not None for r in rows)
+            now = time.monotonic()
+            if key != list_key:
+                list_since, list_key = (now if key else None), key
+            if key and now - last_note >= 10:
+                print("  목록 확인: " + ar.readiness_detail(rows))
+                last_note = now
+            complete = ar.rows_observed(rows)
+            if list_since is not None and now - list_since >= 45 and not complete:
+                raise ar.AttachError("경비 목록을 안전하게 읽지 못했습니다. " + ar.readiness_detail(rows)
+                                     + ar.concur_ui.diagnose(page, "경비 목록 준비"))
             current = (key, signature(rows)) if complete else None
             repeats = repeats + 1 if current and current == previous else 0
             previous = current
@@ -54,7 +64,7 @@ def ready_report(page, timeout=600):
 def revalidate(page, report):
     if report_key(page.url) != report.key:
         raise ar.AttachError('선택한 리포트가 바뀌었습니다. C단계를 다시 시작해 작업 대상을 확인해 주세요.')
-    rows = ar.rows_when_ready(page)
+    rows = ar.rows_when_ready(page, allow_incomplete=True)
     if signature(rows) != signature(report.rows):
         raise ar.AttachError('시작 확인 중 경비 목록이 바뀌었습니다. 새 계획을 확인하도록 C단계를 다시 시작해 주세요.')
 

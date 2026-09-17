@@ -200,3 +200,32 @@ def test_editor_enter_on_filtered_checkout_opens_right_calendar(root, tmp_path):
     if editor.pending:
         editor.after_cancel(editor.pending)
     editor.destroy()
+
+
+
+def test_target_scope_keeps_unreadable_rows_and_matches_only_safe_ones(page):
+    from src.target_matching import match_sources
+    from pathlib import Path
+    page.set_content(row_html() + row_html(day='invalid', amount='9000', rowid='manual'))
+    rows = ar.rows_when_ready(page, tries=4, wait_ms=1, allow_incomplete=True)
+    assert len(rows) == 2 and rows[1].when is None
+    target = ar.Slip(Path('fake.pdf'), date(2026, 9, 17), 17000, '', 'TEST')
+    batch = match_sources([target], [], rows, 1)
+    assert len(batch.receipt_pairs) == 1 and len(batch.excluded_rows) == 1
+
+
+def test_target_scope_unknown_amount_only_blocks_related_date(page):
+    from src.target_matching import match_sources
+    from pathlib import Path
+    page.set_content(row_html() + row_html(amount='invalid', rowid='manual'))
+    rows = ar.rows_when_ready(page, tries=4, wait_ms=1, allow_incomplete=True)
+    target = ar.Slip(Path('fake.pdf'), date(2026, 9, 17), 17000, '', 'TEST')
+    assert not match_sources([target], [], rows, 1).receipt_pairs
+
+
+@pytest.mark.parametrize('attrs', ['aria-busy="true"', 'aria-rowcount="100"'])
+def test_target_scope_still_blocks_loading_or_unseen_rows(page, attrs, monkeypatch):
+    monkeypatch.setattr(ar.concur_ui, 'diagnose', lambda *a: '')
+    page.set_content('<div role="grid" ' + attrs + '>' + row_html() + '</div>')
+    with pytest.raises(ar.AttachError):
+        ar.rows_when_ready(page, tries=4, wait_ms=1, allow_incomplete=True)

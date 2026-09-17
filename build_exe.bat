@@ -54,10 +54,11 @@ venv\Scripts\python.exe -m PyInstaller ^
   --name Auto-Concur ^
   --collect-submodules src ^
   --collect-all playwright ^
+  --collect-all tksheet ^
   --noupx ^
   --clean ^
   --noconfirm ^
-  launcher.py
+  launcher_ready.py
 if errorlevel 1 goto fail
 
 if not exist dist\Auto-Concur.exe goto missing

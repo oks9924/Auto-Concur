@@ -8,8 +8,8 @@
 
 기본은 계획 출력이다. 잘못 붙인 전표는 감사에서 문제가 되므로 사람이 먼저 본다.
 
-매칭 규칙: 금액이 정확히 같고 거래일이 ±1일 안. 후보가 정확히 하나일 때만
-붙인다. 없거나 둘 이상이면 건너뛰고 사람에게 넘긴다. 카드 매입 처리 때문에
+매칭 규칙: 금액과 허용 범위 내 거래일로 찾고, 가맹점 구별과 1:1 관계까지
+확인한다. 불완전하거나 구별되지 않는 관련 후보가 있으면 해당 거래만 보류한다. 카드 매입 처리 때문에
 Concur 날짜가 거래일과 하루 어긋날 수 있어서 ±1일을 둔다.
 """
 
@@ -30,6 +30,9 @@ from playwright.sync_api import sync_playwright
 
 from . import browser, console, hangul, paths, settings, concur_ui
 from .concur_ui import ConcurUIError as AttachError
+from .target_matching import VENDOR_MIN, VENDOR_MARGIN
+from .concur_values import resolve_dates, parse_amount, amount_from_summary
+from .concur_rows import rows_complete, rows_observed, readiness_detail, snapshot_signature
 
 PROFILE_DIR = paths.at("browser-profile", "concur")
 START_URL = "https://travel.siemens.cloud"
@@ -47,61 +50,7 @@ ROWS_FN = """
   const gridRows = () => [...document.querySelectorAll('[role="row"][data-testid="data-row"]')];
 """
 
-READ_ROWS_JS = (
-    "() => {"
-    + ROWS_FN
-    + """
-  // innerText 는 화면에 그려진 글자다. 칸이 숨겨져 있으면(좁아서 접힌 칼럼,
-  // 영수증 뷰어를 연 상태 등) 빈 문자열이 나온다. 그때는 textContent 로
-  // 떨어뜨린다 - 그쪽은 화면에 안 보여도 글자를 준다.
-  const pick = (r, hook) => {
-    const el = r.querySelector('[data-nuiexp="' + hook + '"]');
-    if (!el) return '';
-    const text = el.innerText || el.textContent || '';
-    return text.trim().replace(/\\s+/g, ' ');
-  };
-  // 영수증이 이미 붙어 있는지.
-  //
-  // 붙어 있으면 파일 이름이 박힌 미리보기 버튼이 생긴다(실측 2026-08):
-  //   data-nuiexp="receipt-thumbnail-button-20260809_17000_00817287.pdf"
-  // 예전에는 '칸 안에 img/svg/button/a 가 있으면 붙은 것'으로 봤는데, 안 붙은
-  // 행에도 자리표시자 아이콘과 올리기 버튼이 있어서 전부 '붙음'으로 나왔다.
-  // 파일 이름이 박힌 버튼만 근거로 삼는다.
-  //
-  // 칸 자체를 못 찾으면 null - '없다'가 아니라 '모른다'다. 모를 때 붙은 것으로
-  // 치면 조용히 빠뜨리게 되므로 그때는 평소대로 진행한다.
-  const RECEIPT_HOOK = '[data-nuiexp^="receipt-thumbnail-button"]';
-  const receiptCell = (r) =>
-    r.querySelector('[data-nuiexp="receipts-cell"], [class*="receipt-cell"]');
-  const receipt = (r) => {
-    const cell = receiptCell(r);
-    return cell ? !!cell.querySelector(RECEIPT_HOOK) : null;
-  };
-  const receiptFile = (r) => {
-    const cell = receiptCell(r);
-    const hit = cell && cell.querySelector(RECEIPT_HOOK);
-    return hit ? (hit.getAttribute('data-nuiexp') || '').replace('receipt-thumbnail-button-', '') : '';
-  };
-  // 행마다 화면낭독기용 요약이 하나 붙어 있다(실측):
-  //   '경비, 내부 직원간 식음료 (...), KRW 17,000, 날짜, 2026-08-09 선택'
-  // 금액 칸을 못 읽을 때 여기서 꺼낸다. 칸 이름이 바뀌어도 이건 남는다.
-  const label = (r) => {
-    const el = r.querySelector('[class*="screen-reader-only"]');
-    return el ? (el.textContent || '').trim().replace(/\\s+/g, ' ') : '';
-  };
-  return gridRows().map((r, i) => ({
-    index: i,
-    id: r.id || r.getAttribute('data-row-key') || null,
-    date: pick(r, 'date-cell'),
-    amount: pick(r, 'amount-cell'),
-    vendor: pick(r, 'vendor-name'),
-    expenseType: pick(r, 'expense-type-cell'),
-    receipt: receipt(r),
-    receiptFile: receiptFile(r),
-    label: label(r),
-  }));
-}"""
-)
+from .concur_rows import READ_ROWS_JS
 
 # 행을 읽지 못했을 때 남길 근거. 훅 이름이 바뀌었는지, 칸이 숨겨졌는지는
 # 이 마크업을 봐야 안다. 추측으로 셀렉터를 고치지 않는다.
@@ -195,6 +144,7 @@ class Row:
     raw_date: str = ""
     raw_amount: str = ""
     receipt_file: str = ""  # 붙어 있는 영수증 파일 이름 (화면이 알려준다)
+    read_problem: str = ""
 
 
 def done_path(folder: Path) -> Path:
@@ -260,19 +210,11 @@ LABEL_AMOUNT_RE = re.compile(r"(?:[A-Z]{3}|₩|\$)\s*([\d,]+(?:\.\d+)?)")
 
 
 def amount_from_label(label: str) -> int | None:
-    """행 요약에서 금액을 읽는다. 금액 칸을 못 읽을 때 쓴다."""
-    m = LABEL_AMOUNT_RE.search(label or "")
-    return _parse_amount(m.group(1)) if m else None
+    return amount_from_summary(label)
 
 
 def _parse_amount(text: str) -> int | None:
-    cleaned = text.replace("원", "").replace("KRW", "").strip()
-    if not AMOUNT_RE.match(cleaned):
-        return None
-    try:
-        return int(round(float(cleaned.replace(",", ""))))
-    except ValueError:
-        return None
+    return parse_amount(text)
 
 
 def print_unreadable(rows: list[Row]) -> None:
@@ -282,7 +224,7 @@ def print_unreadable(rows: list[Row]) -> None:
     화면 말이 영어면 날짜가 '08/09/2026' 으로 나오는데 우리는 '2026-08-09'
     만 읽는다 - 그런 것은 이 줄을 봐야 드러난다.
     """
-    bad = [r for r in rows if not (r.when and r.amount)]
+    bad = [r for r in rows if r.when is None or r.amount is None]
     if not bad:
         return
     print("  화면에 적혀 있던 글자:")
@@ -308,88 +250,51 @@ def dump_rows(page) -> str | None:
 
 
 def read_rows(page) -> list[Row]:
+    raw_rows = _eval(page, READ_ROWS_JS)
+    dates = resolve_dates(raw_rows)
     rows = []
-    for raw in _eval(page, READ_ROWS_JS):
-        m = DATE_RE.search(raw["date"])
-        when = date(*(int(g) for g in m.groups())) if m else None
-        label = " ".join(x for x in (raw["expenseType"], raw["vendor"], raw["amount"]) if x)
-        rows.append(
-            Row(
-                index=raw["index"],
-                when=when,
-                # 금액 칸을 못 읽으면 행 요약에서 꺼낸다. 실측 2026-08-11:
-                # amount-cell 훅이 안 잡혀 3건 다 0원으로 읽혔다.
-                amount=_parse_amount(raw["amount"]) or amount_from_label(raw.get("label", "")),
-                text=label[:80],
-                expense_id=raw["id"],
-                expense_type=raw["expenseType"],
-                vendor=raw["vendor"],
-                has_receipt=raw.get("receipt"),
-                raw_date=raw["date"],
-                raw_amount=raw["amount"] or raw.get("label", ""),
-                receipt_file=raw.get("receiptFile", ""),
-            )
-        )
+    for raw, when in zip(raw_rows, dates):
+        amount = _parse_amount(raw.get("amount", ""))
+        backup = amount_from_label(raw.get("label", ""))
+        if amount is None and not str(raw.get("amount", "")).strip():
+            amount = backup
+        elif amount is not None and backup is not None and amount != backup:
+            amount = None
+        label = " ".join(x for x in (raw.get("expenseType", ""), raw.get("vendor", ""), raw.get("amount", "")) if x)
+        rows.append(Row(index=raw["index"], when=when, amount=amount,
+                        text=label[:80], expense_id=raw.get("id"),
+                        expense_type=raw.get("expenseType", ""), vendor=raw.get("vendor", ""),
+                        has_receipt=raw.get("receipt"), raw_date=raw.get("date", ""),
+                        raw_amount=raw.get("amount", "") or raw.get("label", ""),
+                        receipt_file=raw.get("receiptFile", ""), read_problem=raw.get("readProblem", "")))
     return rows
 
 
-def rows_when_ready(page, tries: int = 30, wait_ms: int = 500) -> list[Row]:
-    """전 행의 필수값이 채워지고 두 번 연속 동일할 때만 매칭한다."""
-    previous = None
+def rows_when_ready(page, tries: int = 90, wait_ms: int = 500,
+                    allow_incomplete: bool = False) -> list[Row]:
+    """목록이 안정될 때까지 기다린다. 대상별 처리에서는 불완전 행도 보존한다."""
+    previous, repeats = None, 0
     for _ in range(tries):
         rows = read_rows(page)
-        complete = bool(rows) and all(r.expense_id and r.when and r.amount is not None for r in rows)
-        signature = [(r.expense_id, r.when, r.amount, r.has_receipt, r.receipt_file) for r in rows]
-        if complete and signature == previous:
+        complete = rows_complete(rows)
+        observed = rows_observed(rows) if allow_incomplete else complete
+        signature = snapshot_signature(rows)
+        repeats = repeats + 1 if observed and signature == previous else 0
+        # 늦게 채워지는 필드와 영구적인 미확인을 혼동하지 않도록 불완전 행은 더 기다린다.
+        if observed and repeats >= (3 if not complete else 1):
             return rows
-        previous = signature if complete else None
+        previous = signature if observed else None
+        if _ in (10, 30, 60):
+            print("  목록 확인 중: " + readiness_detail(rows))
         page.wait_for_timeout(wait_ms)
-    raise AttachError("경비 목록이 아직 완전히 준비되지 않았습니다. 일부 행만으로 매칭하지 않았습니다."
-                      + concur_ui.diagnose(page, "경비 목록 준비"))
-
-
-# 가맹점 유사도 판정. 실측으로 같은 가게는 1.00, 다른 가게는 0.3 미만이었다.
-VENDOR_MIN = 0.6  # 이보다 낮으면 같은 가게로 보지 않는다
-VENDOR_MARGIN = 0.15  # 2등과 이만큼 벌어져야 확실하다고 본다
+    raise AttachError("경비 목록을 안전하게 읽지 못했습니다. 일부 행만으로 매칭하지 않았습니다.\n"
+                      + readiness_detail(rows) + concur_ui.diagnose(page, "경비 목록 준비"))
 
 
 def match(slips: list[Slip], rows: list[Row], tolerance_days: int) -> tuple[list, list]:
-    """(확정 매칭, 건너뛴 것).
-
-    날짜와 금액이 같은 후보가 여럿이면 가맹점명으로 가른다. manifest는 한글,
-    Concur는 로마자라서 옮겨서 견준다. 그것도 갈리지 않으면 앞에서부터
-    순서대로 배정한다 — 날짜와 금액이 같으면 어느 쪽이든 된다고 보기로 했다.
-
-    각 매칭은 (전표, 행, 어떻게 정했는지) 세 값이다.
-    """
-    pairs, skipped = [], []
-    used: set[int] = set()
-    for slip in slips:
-        cands = [
-            r
-            for r in rows
-            if r.index not in used
-            and r.amount == slip.amount
-            and r.when is not None
-            and abs((r.when - slip.when).days) <= tolerance_days
-        ]
-        if not cands:
-            skipped.append((slip, "후보 없음"))
-            continue
-
-        chosen, how = cands[0], "단독"
-        if len(cands) > 1:
-            how = "순서"
-            scored = sorted(
-                ((hangul.similarity(slip.merchant, c.vendor), c) for c in cands),
-                key=lambda x: -x[0],
-            )
-            best, runner_up = scored[0], scored[1]
-            if best[0] >= VENDOR_MIN and best[0] - runner_up[0] >= VENDOR_MARGIN:
-                chosen, how = best[1], "가맹점"
-        used.add(chosen.index)
-        pairs.append((slip, chosen, how))
-    return pairs, skipped
+    """대상별 매칭. 불완전 후보 보존, 중복/애매한 거래 보류, 순서 배정 금지."""
+    from .target_matching import match as safe_match
+    return safe_match(slips, rows, tolerance_days)
 
 
 def open_expense(page, slip: Slip, row: Row, report_url: str, folder: Path) -> None:
@@ -452,7 +357,7 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
                   "\n   그 파일을 지우거나 --again 으로 돌리면 처음부터 다시 붙입니다.)")
         return 0
 
-    rows = rows_when_ready(page)
+    rows = rows_when_ready(page, allow_incomplete=True)
     if not rows:
         dump = folder / "concur-dump.html"
         try:
@@ -464,16 +369,16 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
             + (f" 화면 정보를 {dump} 에 남겼습니다." if dump else "")
         )
 
-    dated = [r for r in rows if r.when and r.amount and r.expense_id]
+    dated = [r for r in rows if r.when is not None and r.amount is not None and r.expense_id]
     print(f"\n경비 {len(rows)}건 중 {len(dated)}건을 읽었습니다. 붙일 전표는 {len(slips)}건입니다.")
     if len(dated) != len(rows):
-        print(f"  알림: {len(rows) - len(dated)}건은 값을 읽지 못해 대상에서 제외했습니다")
+        print(f"  알림: {len(rows) - len(dated)}건은 값을 읽지 못해 관련 거래만 보류합니다")
         print_unreadable(rows)
         dump = dump_rows(page)
         if dump:
             print(f"  (행 마크업을 {dump} 에 남겼습니다)")
 
-    pairs, skipped = match(slips, dated, tolerance)
+    pairs, skipped = match(slips, rows, tolerance)
 
     # 이미 영수증이 붙어 있는 경비는 다시 붙이지 않는다. 같은 파일이 두 장
     # 붙으면 감사에서 설명해야 한다. 화면에서 확인할 수 없었던 행(None)은
@@ -551,7 +456,7 @@ def attach_phase(page, report_url: str, folder: Path, apply: bool,
         for slip, why in failed:
             print(f"  ! {slip.path.name}: {why}")
         return 1
-    return 0
+    return int(bool(skipped))
 
 
 def open_report(automatic=False):

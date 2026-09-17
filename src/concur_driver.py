@@ -9,6 +9,7 @@ from .report_session import check_context
 class Driver:
     def __init__(self, page, report_url, folder):
         self.page, self.report_url, self.folder = page, report_url, folder
+        self.matching = None
 
     def guard(self):
         check_context(self.page, self.report_url)
@@ -17,10 +18,17 @@ class Driver:
         self.guard()
         self.page.goto(self.report_url, wait_until='domcontentloaded')
         self.guard()
-        return ar.rows_when_ready(self.page)
+        return ar.rows_when_ready(self.page, allow_incomplete=True)
+
+    def check_binding(self, intended, rows):
+        if self.matching is not None and not self.matching.verify(intended, rows):
+            raise ar.AttachError('보류: 현재 목록에서 대상 경비를 유일하게 확인하지 못했습니다.')
 
     def receipt_present(self, row, slip, again=False):
-        found = next((r for r in self.rows() if r.expense_id == row.expense_id), None)
+        current = self.rows()
+        self.check_binding(row, current)
+        matches = [r for r in current if r.expense_id == row.expense_id]
+        found = matches[0] if len(matches) == 1 else None
         if not found or found.when != row.when or found.amount != row.amount:
             raise ar.AttachError('전표와 경비의 식별 정보가 달라졌습니다.')
         if found.has_receipt is None:
@@ -46,6 +54,8 @@ class Driver:
     def verify_edit(self, plan):
         page = self.page
         self.guard()
+        if self.matching is not None:
+            self.check_binding(plan.row, self.rows())
         page.goto(ar.expense_url(self.report_url, plan.row.expense_id), wait_until='domcontentloaded')
         self.guard()
         ui.wait_condition(page, ar.WAIT_AMOUNT_JS, '저장된 경비 금액 확인', str(plan.row.amount))

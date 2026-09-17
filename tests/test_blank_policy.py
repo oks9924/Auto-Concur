@@ -71,11 +71,11 @@ def test_lodging_location_only_does_not_edit_dates_or_itemization(monkeypatch):
 
 def test_receipts_use_screen_even_with_local_done_record(monkeypatch, tmp_path):
     slips = [ar.Slip(tmp_path / 'a.pdf', date(2026, 8, 1), 1000, '', 'A'),
-             ar.Slip(tmp_path / 'b.pdf', date(2026, 8, 1), 1000, '', 'B')]
+             ar.Slip(tmp_path / 'b.pdf', date(2026, 8, 1), 2000, '', 'B')]
     rows = [ar.Row(0, slips[0].when, 1000, '', 'E1', has_receipt=True, receipt_file='a.pdf'),
-            ar.Row(1, slips[0].when, 1000, '', 'E2', has_receipt=False)]
+            ar.Row(1, slips[0].when, 2000, '', 'E2', has_receipt=False)]
     monkeypatch.setattr(ar, 'load_manifest', lambda p: slips)
-    monkeypatch.setattr(ar, 'rows_when_ready', lambda p: rows)
+    monkeypatch.setattr(ar, 'rows_when_ready', lambda p, **kwargs: rows)
     ar.done_path(tmp_path).write_text('A\nB\n', encoding='utf-8')
     attach = Mock()
     monkeypatch.setattr(ar, 'attach', attach)

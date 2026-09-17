@@ -18,7 +18,7 @@ def slip(day: int, amount: int, month: int = 7, merchant: str = "가맹점") -> 
 
 
 def row(index: int, day: int, amount: int, month: int = 7, vendor: str = "") -> Row:
-    return Row(index, date(2026, month, day), amount, f"{day} | {amount}", vendor=vendor)
+    return Row(index, date(2026, month, day), amount, f"{day} | {amount}", expense_id=f"E{index}", vendor=vendor)
 
 
 def test_날짜와_금액이_같으면_붙인다():
@@ -42,11 +42,10 @@ def test_금액이_다르면_안_붙인다():
     assert not pairs and skipped
 
 
-def test_같은_날_같은_금액이_둘이면_순서대로_배정한다():
-    # 커피 두 잔. 날짜와 금액이 같으면 어느 쪽이든 된다고 보기로 했다.
+def test_같은_날_같은_금액이_둘이면_보류한다():
+    # 동일 금액 두 건을 순서로 고르지 않는다.
     pairs, skipped = match([slip(2, 14000)], [row(0, 2, 14000), row(1, 2, 14000)], 1)
-    assert len(pairs) == 1 and not skipped
-    assert pairs[0][1].index == 0 and pairs[0][2] == "순서"
+    assert not pairs and "보류" in skipped[0][1]
 
 
 def test_후보가_여럿이면_가맹점으로_가른다():
@@ -57,16 +56,16 @@ def test_후보가_여럿이면_가맹점으로_가른다():
     assert pairs[0][1].index == 1 and pairs[0][2] == "가맹점"
 
 
-def test_가맹점이_비슷하지_않으면_순서로_간다():
+def test_가맹점이_구별되지_않으면_보류한다():
     rows = [row(0, 16, 450000, vendor="AAA BBB"), row(1, 16, 450000, vendor="CCC DDD")]
-    pairs, _ = match([slip(16, 450000, merchant="라한호텔울산")], rows, 1)
-    assert pairs[0][2] == "순서"
+    pairs, skipped = match([slip(16, 450000, merchant="라한호텔울산")], rows, 1)
+    assert not pairs and "보류" in skipped[0][1]
 
 
 def test_한_행은_한_번만_쓴다():
-    # 전표 둘이 같은 행을 두고 다투면 첫 전표만 가져가고 나머지는 건너뛴다.
+    # 전표 둘이 같은 행을 두고 다투면 둘 다 보류한다.
     pairs, skipped = match([slip(1, 5000), slip(1, 5000)], [row(0, 1, 5000)], 1)
-    assert len(pairs) == 1 and len(skipped) == 1
+    assert not pairs and len(skipped) == 2
 
 
 def test_금액_파싱():

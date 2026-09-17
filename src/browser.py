@@ -61,7 +61,7 @@ def channels() -> list[str | None]:
     """시도할 순서. 환경변수로 하나만 고를 수 있다."""
     want = (os.environ.get("CONCUR_BROWSER") or "").strip().lower()
     if not want:
-        return CHANNELS
+        return ["msedge", "chrome", None] if getattr(sys, "frozen", False) else CHANNELS
     return [None] if want == "chromium" else [want]
 
 

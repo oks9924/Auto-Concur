@@ -33,7 +33,7 @@ def test_confirmation_does_not_override_changed_report(monkeypatch):
     report = rs.Report(URL, rs.report_key(URL), 'Report', (row,))
     with pytest.raises(ar.AttachError):
         rs.revalidate(Mock(url=URL.replace('R1', 'R2')), report)
-    monkeypatch.setattr(ar, 'rows_when_ready', lambda page: [])
+    monkeypatch.setattr(ar, 'rows_when_ready', lambda page, **kwargs: [])
     with pytest.raises(ar.AttachError):
         rs.revalidate(Mock(url=URL), report)
 

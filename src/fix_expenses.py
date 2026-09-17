@@ -1353,6 +1353,11 @@ def plans_from_sheet(cfg: dict, rows: list[Row], sheet_path: Path, tolerance: in
     """
     entries = sheet.load(sheet_path)
     pairs, missing = match_rows(entries, rows, tolerance)
+    return plans_from_matches(cfg, pairs, missing)
+
+
+def plans_from_matches(cfg, pairs, missing):
+    """영수증과 통합하여 판정한 매칭을 재사용한다."""
     plans, gaps = [], []
     for entry, row, how in pairs:
         code, label = None, row.expense_type
@@ -1395,23 +1400,23 @@ def rows_ready(rows: list[Row]) -> bool:
 
 
 def _rows_when_ready(page, tries: int = 10, wait_ms: int = 1000) -> list[Row]:
-    """모든 행의 값이 준비될 때까지 기다린다. 부분 목록으로 진행하지 않는다."""
-    return rows_when_ready(page, tries=tries, wait_ms=wait_ms)
+    """목록 안정화 후 모든 행을 넘겨 대상별 미확인을 판단한다."""
+    return rows_when_ready(page, tries=tries, wait_ms=wait_ms, allow_incomplete=True)
 
 
 def fix_phase(page, report_url: str, cfg: dict, apply: bool,
               limit: int | None, sheet_path: Path) -> int:
     """작업지에 적힌 대로 유형·목적·코멘트·참석자·숙박 상세를 채운다."""
     rows = _rows_when_ready(page)
-    usable = [r for r in rows if r.expense_id and r.when and r.amount]
+    usable = [r for r in rows if r.expense_id and r.when is not None and r.amount is not None]
     if len(usable) != len(rows):
         print(f"  알림: 경비 {len(rows)}건 중 {len(rows) - len(usable)}건은 날짜·금액을 "
-              "읽지 못해 짝짓기에서 제외했습니다")
+              "읽지 못해 관련 가능 거래만 보류합니다")
         print_unreadable(rows)
         dump = dump_rows(page)
         if dump:
             print(f"  (행 마크업을 {dump} 에 남겼습니다)")
-    paired, gaps, missing = plans_from_sheet(cfg, [r for r in rows if r.expense_id],
+    paired, gaps, missing = plans_from_sheet(cfg, rows,
                                              sheet_path, int(cfg["date_tolerance_days"]))
     plans = [p for p, _, _ in paired]
     source = {id(p): (entry, how) for p, how, entry in paired}
@@ -1460,7 +1465,7 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
 
     skipped = len(rows) - len(plans)
     if skipped:
-        print(f"\n{skipped}건은 그대로 둡니다 (이미 맞거나 대상이 아닙니다)")
+        print(f"\n{skipped}건은 자동 반영하지 않습니다 (대상 무관·매칭 보류·입력 없음)")
 
     if not apply:
         print("\n계획만 보여 드렸습니다. 실제로 반영하시려면 --apply 를 붙여 주세요.")
@@ -1486,7 +1491,7 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
         for plan, why in failed:
             print(f"  ! {plan.row.when} {plan.row.amount:,}원: {why}")
         return 1
-    return 0
+    return int(bool(missing))
 
 
 def list_types_phase(page, report_url: str) -> int:

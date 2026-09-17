@@ -1,4 +1,4 @@
-"""완성형 폴더 배포의 진입점. --smoke-test는 빌드 검증 전용이다."""
+"""Windows 단일 EXE/폴더 배포의 진입점. --smoke-test는 빌드 검증 전용이다."""
 import json
 import sys
 import traceback
@@ -63,6 +63,6 @@ if __name__ == '__main__':
             from tkinter import messagebox
             root = tk.Tk()
             root.withdraw()
-            messagebox.showerror('Auto-Concur 실행 오류', '프로그램을 시작하지 못했습니다. ZIP의 전체 폴더를 풀었는지 확인해 주세요.\n\n'+detail[-1600:])
+            messagebox.showerror('Auto-Concur 실행 오류', '프로그램을 시작하지 못했습니다. 빌드한 실행파일과 사용 폴더의 쓰기 권한을 확인해 주세요.\n\n'+detail[-1600:])
             root.destroy()
         raise SystemExit(1)

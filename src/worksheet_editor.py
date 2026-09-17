@@ -33,13 +33,13 @@ class Editor(tk.Toplevel):
         title.pack(anchor='w')
         title.bind('<Double-Button-1>', self.toggle_maximize)
         ttk.Label(head, text='빈칸은 현재 값을 유지합니다. 대중교통은 코멘트(설명)만 반영합니다. 영수증은 없을 때만 첨부합니다.').pack(anchor='w', pady=(5, 0))
-        ttk.Label(head, text='Ctrl+C/V 복사·붙여넣기   ·   Ctrl+Z/Y 실행 취소·다시 실행   ·   Ctrl+S 저장   ·   Delete 선택 칸 비우기').pack(anchor='w', pady=(3, 0))
+        ttk.Label(head, text='입실·퇴실 칸 더블클릭 또는 Enter: 달력   ·   Ctrl+C/V 복사·붙여넣기   ·   Ctrl+Z/Y 실행 취소·다시 실행   ·   Ctrl+S 저장').pack(anchor='w', pady=(3, 0))
 
         tools = ttk.Frame(self, padding=(16, 0, 16, 10))
         tools.grid(row=1, column=0, sticky='ew')
         for label, command in [('복사', lambda: self.table.copy()), ('붙여넣기', lambda: self.table.paste()),
                                ('실행 취소', lambda: self.table.undo()), ('다시 실행', lambda: self.table.redo()),
-                               ('숙박 날짜', self.pick_stay_dates), ('여러 행에 입력', self.bulk), ('찾기·바꾸기', self.find_replace), ('다시 불러오기', self.reload), ('이전 저장 복원', self.restore),
+                               ('숙박 날짜 · 달력', self.pick_stay_dates), ('여러 행에 입력', self.bulk), ('찾기·바꾸기', self.find_replace), ('다시 불러오기', self.reload), ('이전 저장 복원', self.restore),
                                ('가져오기', self.import_file), ('내보내기', self.export_file)]:
             ttk.Button(tools, text=label, command=command).pack(side='left', padx=(0, 5))
         filters = ttk.Frame(self, padding=(16, 0, 16, 10))
@@ -122,14 +122,15 @@ class Editor(tk.Toplevel):
                                header_font=('맑은 고딕', size, 'bold'))
         self.table.set_all_row_heights(height=max(30, size * 3), redraw=True)
 
-    def pick_stay_dates(self):
+    def pick_stay_dates(self, row_index=None, date_column=None):
         from .stay_calendar import StayCalendar
         self.table.close_text_editor(set_data=True)
         selected = self.table.get_currently_selected()
-        if not selected:
+        if row_index is None and not selected:
             messagebox.showinfo('행 선택', '날짜를 입력할 경비 행을 먼저 선택해 주세요.', parent=self)
             return
-        row_index = self.table.displayed_row_to_data(selected.row)
+        if row_index is None:
+            row_index = self.table.displayed_row_to_data(selected.row)
         self.sync()
         row = self.model.rows[row_index]
         anchor = sheet._as_date(row.get('거래일'))
@@ -141,13 +142,17 @@ class Editor(tk.Toplevel):
             data[row_index][self.COLUMNS.index('입실날짜')] = start
             data[row_index][self.COLUMNS.index('퇴실날짜')] = end
             self.table.set_data(0, 0, data=data, undo=True, emit_event=True)
-        StayCalendar(self, anchor, sheet._as_date(row.get('입실날짜'), anchor.year),
-                     sheet._as_date(row.get('퇴실날짜'), anchor.year), apply)
+        dialog = StayCalendar(self, anchor, sheet._as_date(row.get('입실날짜'), anchor.year),
+                              sheet._as_date(row.get('퇴실날짜'), anchor.year), apply)
+        if date_column == '퇴실날짜':
+            dialog.mode.set('퇴실')
 
     def begin_cell_edit(self, event):
         column = self.table.displayed_column_to_data(event.column)
-        if self.COLUMNS[column] in sheet.DATE_COLUMNS and event.key == '??':
-            self.after_idle(self.pick_stay_dates)
+        if self.COLUMNS[column] in sheet.DATE_COLUMNS:
+            row = self.table.displayed_row_to_data(event.row)
+            name = self.COLUMNS[column]
+            self.after_idle(lambda: self.pick_stay_dates(row, name))
             return None
         return event.value
 

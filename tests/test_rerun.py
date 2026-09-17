@@ -215,7 +215,7 @@ def test_건너뛴_근거가_어디에_있는지_말한다(tmp_path, capsys, mon
                     "가맹점명": "가게"})
     ar.done_path(tmp_path).write_text("111\n", encoding="utf-8")
 
-    monkeypatch.setattr(ar, 'rows_when_ready', lambda page: [
+    monkeypatch.setattr(ar, 'rows_when_ready', lambda page, **kwargs: [
         ar.Row(0, date(2026, 8, 9), 17000, '', 'ID1', has_receipt=True, receipt_file='a.pdf')])
     monkeypatch.setattr(ar, '_eval', lambda *a: [])
 

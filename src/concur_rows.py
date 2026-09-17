@@ -81,3 +81,15 @@ def readiness_detail(rows):
         notes.append('중복 경비 ID')
     return f'경비 {len(rows)}건' + (f' · 읽지 못한 값: {missing}' if missing else '') + (
         ' · ' + ', '.join(notes) if notes else '')
+
+
+def rows_observed(rows):
+    """목록 로딩/누락은 차단하되 안정된 불완전 행은 매칭 단계에 그대로 넘긴다."""
+    return bool(rows) and not any(getattr(r, 'read_problem', '') for r in rows)
+
+
+def snapshot_signature(rows):
+    """해석값뿐 아니라 원문 변화도 재렌더링/대상 변경으로 감지한다."""
+    return tuple((r.expense_id, r.when, r.amount, r.vendor, r.expense_type,
+                  r.has_receipt, r.receipt_file, r.raw_date, r.raw_amount,
+                  getattr(r, 'read_problem', '')) for r in rows)

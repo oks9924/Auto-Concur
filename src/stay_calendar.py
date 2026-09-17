@@ -42,6 +42,7 @@ class StayCalendar(tk.Toplevel):
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.draw()
         self.grab_set()
+        self.bind('<Escape>', lambda event: self.close())
 
     def move(self, delta):
         number = self.year * 12 + self.month - 1 + delta

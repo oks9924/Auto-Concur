@@ -2,7 +2,8 @@
 from dataclasses import asdict, dataclass
 from hashlib import sha256
 
-from . import attach_receipts as ar, fix_expenses as fx, console
+from . import attach_receipts as ar, fix_expenses as fx, console, sheet
+from .target_matching import match_sources
 from .concur_driver import Driver
 from .execution import Task, Journal, task_key, execute
 from .report_session import revalidate
@@ -15,6 +16,7 @@ class WorkPlan:
     edits: int
     skipped_receipts: int
     unmatched: list
+    matching: object
 
 
 class RunResult(int):
@@ -40,7 +42,9 @@ def unmatched_transactions(receipts, edits):
 def build_plan(report, folder, cfg, sheet_path, limit=None, again=False, driver=None):
     tasks, unmatched = [], []
     slips = ar.load_manifest(folder)
-    pairs, missed = ar.match(slips, list(report.rows), int(cfg['date_tolerance_days']))
+    entries = sheet.load(sheet_path) if sheet_path else []
+    matching = match_sources(slips, entries, list(report.rows), int(cfg['date_tolerance_days']))
+    pairs, missed = matching.receipt_pairs, matching.receipt_missing
     skipped = sum(bool(row.has_receipt) for _, row, _ in pairs) if not again else 0
     pairs = [(s, r, how) for s, r, how in pairs if again or r.has_receipt is not True]
     pairs = pairs[:limit] if limit else pairs
@@ -56,8 +60,7 @@ def build_plan(report, folder, cfg, sheet_path, limit=None, again=False, driver=
             lambda s=slip, r=row: driver.receipt_present(r, s, again)))
     paired, missed_edits = [], []
     if sheet_path:
-        paired, _, missed_edits = fx.plans_from_sheet(cfg, list(report.rows), sheet_path,
-                                                     int(cfg['date_tolerance_days']))
+        paired, _, missed_edits = fx.plans_from_matches(cfg, matching.edit_pairs, matching.edit_missing)
     unmatched = unmatched_transactions(missed, missed_edits)
     paired = paired[:limit] if limit else paired
     for plan, how, entry in paired:
@@ -67,7 +70,7 @@ def build_plan(report, folder, cfg, sheet_path, limit=None, again=False, driver=
         key = task_key(report.url, plan.row.expense_id, 'edit', intent)
         tasks.append(Task(key, f'{plan.row.when} {plan.row.amount:,}원 · {plan.summary()}',
             lambda p=plan: driver.apply_edit(p), lambda p=plan: driver.verify_edit(p)))
-    return WorkPlan(tasks, len(pairs), len(paired), skipped, unmatched)
+    return WorkPlan(tasks, len(pairs), len(paired), skipped, unmatched, matching)
 
 
 def run(page, report, folder, cfg, sheet_path, apply, limit=None, again=False):
@@ -75,8 +78,11 @@ def run(page, report, folder, cfg, sheet_path, apply, limit=None, again=False):
     plan = build_plan(report, folder, cfg, sheet_path, limit, again, driver)
     message = (f'{report.title}\n리포트 ID: {report.key[1]}\n'
                f'경비 {len(report.rows)}건 · 영수증 첨부 {plan.receipts}건 · 입력 수정 {plan.edits}건\n'
-               f'기존 영수증 유지 {plan.skipped_receipts}건 · 매칭 확인 필요 {len(plan.unmatched)}건')
+               f'기존 영수증 유지 {plan.skipped_receipts}건 · 매칭 확인 필요 {len(plan.unmatched)}건\n'
+               f'대상 무관 경비 {len(plan.matching.excluded_rows)}건 제외 (Concur에서 삭제하지 않음)')
     print(message)
+    for row in plan.matching.excluded_rows:
+        print(f'  - 대상 무관: 목록 {row.index + 1}행 · 읽힌 날짜 또는 금액이 모든 원본 거래와 다름')
     for task in plan.tasks:
         print(f'  - {task.label}')
     for item in plan.unmatched:
@@ -90,6 +96,7 @@ def run(page, report, folder, cfg, sheet_path, apply, limit=None, again=False):
         print('반영을 취소했습니다. Concur는 변경하지 않았습니다.')
         return RunResult(0, '사용자가 반영을 취소했습니다.')
     revalidate(page, report)
+    driver.matching = plan.matching
     journal = Journal(folder / 'concur-progress.json')
     result = execute(plan.tasks, journal, driver.guard)
     print(f'실행 결과: {journal.path}\n결과 확인 필요 항목은 화면에서 확인해 주세요. 확인된 완료 작업은 재전송하지 않습니다.')
