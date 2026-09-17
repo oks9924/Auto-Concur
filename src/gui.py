@@ -23,6 +23,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from . import console, paths, retry, settings
+from .concur_formats import show_settings as show_concur_formats
 from .calendar_input import DateEntry, RangePicker, initial_period, checked_period
 from .calendar_widgets import date_text, period_preset
 from .date_input import parse_date
@@ -151,7 +152,9 @@ class App(tk.Tk):
         ttk.Label(opts, text="각 단계 앞 N건만 (비워두면 전부):").pack(side="left")
         ttk.Entry(opts, textvariable=self.limit, width=6).pack(side="left", padx=6)
 
-        self.buttons = []
+        format_button = ttk.Button(opts, text="Concur 표시 서식", command=lambda: show_concur_formats(self))
+        format_button.pack(side="left", padx=12)
+        self.buttons = [format_button]
         bar = ttk.Frame(run)
         bar.grid(row=1, column=0, sticky="w", **pad)
         for text, cmd in (

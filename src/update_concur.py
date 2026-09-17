@@ -10,6 +10,7 @@
 """
 
 from __future__ import annotations
+from .concur_formats import configured_run, amount_check_js, room_check_js, range_matches, format_range
 
 import argparse
 from pathlib import Path
@@ -41,6 +42,7 @@ def precheck(folder: Path, sheet_path: Path | None) -> None:
         print(f"작업지 {len(sheet.load(sheet_path))}행을 읽었습니다: {sheet_path}")
 
 
+@configured_run
 def run(folder: Path, apply: bool, tolerance: int, limit: int | None,
         sheet_path: Path | None, again: bool = False, cfg: dict | None = None) -> int:
     cfg = dict(settings.load() if cfg is None else cfg)

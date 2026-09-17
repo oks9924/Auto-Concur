@@ -12,6 +12,7 @@
 """
 
 from __future__ import annotations
+from .concur_formats import configured_run, amount_check_js, room_check_js, range_matches, format_range
 
 import argparse
 import json
@@ -677,13 +678,12 @@ def _set_date_range(page, checkin: date, checkout: date) -> bool:
     """'날짜 범위' 한 칸에 입실과 퇴실을 함께 넣는다. 바꿨으면 True.
 
     입실·퇴실이 따로 있는 게 아니라 한 입력이다. 화면이 알려주는 형식은
-    'YYYY-MM-DD - YYYY-MM-DD' 라 그대로 친다. 달력을 눌러 고르는 것보다 확실하다.
+    입력값/placeholder/명시한 날짜 순서로 확인한다. 언어만으로 날짜 순서를 추측하지 않는다.
 
     이미 그 날짜면 건드리지 않는다. 다시 돌릴 때 같은 값을 또 쳐 넣으면
     바뀐 것이 없는데도 저장을 해야 하고, 저장할 일이 없는 화면에서 저장
     버튼을 찾다가 실패한다.
     """
-    want = f"{checkin:%Y-%m-%d} - {checkout:%Y-%m-%d}"
     try:
         page.wait_for_selector(DATE_RANGE_FIELD, timeout=20000)
     except PWTimeout:
@@ -694,8 +694,13 @@ def _set_date_range(page, checkin: date, checkout: date) -> bool:
         ) from None
 
     already = page.input_value(DATE_RANGE_FIELD).strip()
-    if checkin.strftime("%Y-%m-%d") in already and checkout.strftime("%Y-%m-%d") in already:
+    placeholder = page.get_attribute(DATE_RANGE_FIELD, 'placeholder') or ''
+    if range_matches(already, checkin, checkout, placeholder):
         return False
+    try:
+        want = format_range(checkin, checkout, already, placeholder)
+    except ValueError as exc:
+        raise AttachError(str(exc)) from exc
 
     page.click(DATE_RANGE_FIELD)
     page.keyboard.press("Control+A")
@@ -712,7 +717,7 @@ def _set_date_range(page, checkin: date, checkout: date) -> bool:
 
     # 넣은 대로 남았는지 본다. 달력이 값을 다시 쓰는 경우가 있다.
     shown = page.input_value(DATE_RANGE_FIELD).strip()
-    if checkin.strftime("%Y-%m-%d") not in shown or checkout.strftime("%Y-%m-%d") not in shown:
+    if not range_matches(shown, checkin, checkout, placeholder):
         raise AttachError(f"날짜 범위가 '{want}' 로 들어가지 않았습니다 (화면: '{shown}')")
     return True
 
@@ -794,7 +799,7 @@ def _save_expense(page, row: Row, report_url: str, labels: str = SAVE_DETAIL,
 
     if reopen:
         page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
-        _wait_js(page, WAIT_AMOUNT_JS, f"{row.amount:,}원 경비 상세", arg=str(row.amount))
+        _wait_js(page, amount_check_js(), f"{row.amount:,}원 경비 상세", arg=str(row.amount))
 
 
 def _open_tab(page, selector: str, what: str) -> None:
@@ -985,10 +990,8 @@ def _fill_room_rates(page, amounts: list[int]) -> str:
         page.fill(cell["selector"], str(money))
         print(f"       {n}/{len(amounts)}  {money:,}원")
         page.wait_for_timeout(150)
-    _wait_js(page, "(want) => { const cells = (" + ROOM_RATE_INPUTS_JS +
-             ")(); return cells.length === want.length && cells.every((c,i) => "
-             "c.value !== '' && Number(c.value.replace(/,/g, '')) === want[i]); }",
-             '객실 요금 입력 반영', arg=amounts)
+    _wait_js(page, room_check_js(ROOM_RATE_INPUTS_JS),
+             '객실 요금 입력 반영', arg=[str(value) for value in amounts])
     return f"일일 객실 요금 {len(amounts)}행 (합 {sum(amounts):,}원)"
 
 
@@ -1182,7 +1185,7 @@ def apply_plan(page, plan: Plan, report_url: str) -> str:
 
     # 이 금액이 화면에 뜰 때까지 기다린다. 대기와 '맞는 경비를 열었나' 확인이
     # 한 번에 된다. 목록과 상세가 같은 화면에 있어서 필드 존재만으로는 모른다.
-    _wait_js(page, WAIT_AMOUNT_JS, f"{row.amount:,}원 경비 상세", arg=str(row.amount))
+    _wait_js(page, amount_check_js(), f"{row.amount:,}원 경비 상세", arg=str(row.amount))
 
     done = []
     if plan.type_code:
@@ -1560,6 +1563,7 @@ def _default_sheet() -> Path:
     return folder / "manifest.csv"
 
 
+@configured_run
 def run(apply: bool, limit: int | None, list_types: bool = False,
         sheet_path: Path | None = None, list_lodging: bool = False) -> int:
     cfg = settings.load()

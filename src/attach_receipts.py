@@ -14,6 +14,7 @@ Concur 날짜가 거래일과 하루 어긋날 수 있어서 ±1일을 둔다.
 """
 
 from __future__ import annotations
+from .concur_formats import configured_run, amount_check_js, room_check_js, range_matches, format_range
 
 import argparse
 import csv
@@ -103,12 +104,7 @@ DUMP_RECEIPTS_JS = (
 
 # 상세 폼이 이 전표의 금액을 보여줄 때까지 기다린다. 대기와 검증을 한 번에 한다.
 # SPA라 행을 눌러도 load 이벤트가 안 나므로 네비게이션을 기다리면 안 된다.
-WAIT_AMOUNT_JS = """
-(expected) => {
-  const el = document.querySelector('#transactionAmount');
-  return !!el && el.value.replace(/[^0-9]/g, '') === expected;
-}
-"""
+WAIT_AMOUNT_JS = amount_check_js()
 
 def expense_url(report_url: str, expense_id: str) -> str:
     """리포트 주소에서 경비 상세 주소를 만든다."""
@@ -313,7 +309,7 @@ def open_expense(page, slip: Slip, row: Row, report_url: str, folder: Path) -> N
     page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
 
     try:
-        page.wait_for_function(WAIT_AMOUNT_JS, arg=str(slip.amount), timeout=20000)
+        page.wait_for_function(amount_check_js(), arg=str(slip.amount), timeout=20000)
     except PWTimeout:
         try:
             shown = page.input_value(AMOUNT_FIELD, timeout=2000)
@@ -488,6 +484,7 @@ def open_report(automatic=False):
     return pw, ctx, page, page.url
 
 
+@configured_run
 def run(folder: Path, apply: bool, tolerance: int, limit: int | None, again: bool) -> int:
     pw, ctx, page, report_url = open_report()
     try:
