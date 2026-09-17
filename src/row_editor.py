@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from . import sheet, settings
 from .worksheet import normalize
+from .attendee_defaults import attendee_on_type_change
 from .expense_policy import input_guide
 from .calendar_input import DateEntry
 from .stay_calendar import StayCalendar
@@ -63,7 +64,8 @@ class RowEditor(tk.Toplevel):
                 widget.grid(row=i, column=1, sticky='ew', pady=6)
             if title == '숙박 정보':
                 ttk.Button(group, text='입실·퇴실 함께 선택', command=self.calendar).grid(row=len(fields), column=1, sticky='w')
-        self.variables['경비유형'].trace_add('write', lambda *a: self.update_guide())
+        self.previous_type = self.variables['경비유형'].get()
+        self.variables['경비유형'].trace_add('write', self.type_changed)
         self.update_guide()
         foot = ttk.Frame(self, padding=12)
         foot.grid(row=2, column=0, sticky='ew'); foot.columnconfigure(0, weight=1)
@@ -81,6 +83,15 @@ class RowEditor(tk.Toplevel):
     def values(self):
         return {**{k: v.get() for k, v in self.variables.items()},
                 **{k: v.get('1.0', 'end-1c') for k, v in self.texts.items()}}
+
+    def type_changed(self, *args):
+        after = self.values()
+        before = {**after, '경비유형': self.previous_type}
+        self.previous_type = after['경비유형']
+        value = attendee_on_type_change(before, after, self.editor.cfg)
+        if value is not None:
+            self.variables['참석자'].set(value)
+        self.update_guide()
 
     def update_guide(self):
         kind = self.variables['경비유형'].get()
@@ -111,7 +122,10 @@ class RowEditor(tk.Toplevel):
         data = deepcopy(self.editor.table.get_sheet_data())
         for name in sheet.EDITABLE:
             data[self.row_index][self.editor.COLUMNS.index(name)] = value.get(name, '')
-        self.editor.table.set_data(0, 0, data=data, undo=True, emit_event=True)
+        # The form already applied the default at type selection. Respect a
+        # name the user subsequently cleared or replaced before applying.
+        with self.editor.attendee_defaults.pause():
+            self.editor.table.set_data(0, 0, data=data, undo=True, emit_event=True)
         self.finish()
         return True
 

@@ -37,7 +37,15 @@ def editor(tmp_path):
     cfg={**deepcopy(settings.DEFAULTS),'attendee_default':DEFAULT}
     e=Editor(root,path,cfg); root.update()
     yield e
-    for task in root.tk.call('after','info'): root.after_cancel(task)
+    if e.winfo_exists():
+        if e.pending:
+            e.after_cancel(e.pending)
+            e.pending = None
+        e.grab_release()
+        e.destroy()
+    # Descendant callbacks must be cleaned up by their owning widgets first.
+    for task in root.tk.call('after', 'info'):
+        root.after_cancel(task)
     root.destroy()
 
 
