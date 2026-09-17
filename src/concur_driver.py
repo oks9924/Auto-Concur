@@ -4,6 +4,8 @@ from decimal import Decimal, InvalidOperation
 
 from . import attach_receipts as ar, fix_expenses as fx, concur_ui as ui
 from .report_session import check_context
+from .concur_formats import amount_check_js, range_matches
+from .concur_values import parse_amount, same_text
 
 
 class Driver:
@@ -58,12 +60,12 @@ class Driver:
             self.check_binding(plan.row, self.rows())
         page.goto(ar.expense_url(self.report_url, plan.row.expense_id), wait_until='domcontentloaded')
         self.guard()
-        ui.wait_condition(page, ar.WAIT_AMOUNT_JS, '저장된 경비 금액 확인', str(plan.row.amount))
+        ui.wait_condition(page, amount_check_js(), '저장된 경비 금액 확인', str(plan.row.amount))
         checks = []
         for selector, expected in ((fx.PURPOSE_FIELD, plan.purpose), (fx.COMMENT_FIELD, plan.comment)):
             if expected:
                 actual = page.evaluate('(s) => document.querySelector(s)?.value ?? null', selector)
-                checks.append(None if actual is None else actual.strip() == expected.strip())
+                checks.append(None if actual is None else same_text(actual, expected))
         if plan.type_code:
             # 저장 후 선택된 이름을 해당 코드의 실제 옵션 이름과 비교한다.
             actual = page.evaluate('() => {' + fx.FIND_COMBO_FN +
@@ -81,10 +83,10 @@ class Driver:
             for hint, expected in ((fx.HINT_LOCATION, lodging.location), (fx.HINT_CHANNEL, lodging.channel)):
                 if expected:
                     actual = page.evaluate(fx.COMBO_VALUE_JS, hint)
-                    checks.append(None if actual is None else actual.strip() == expected.strip())
+                    checks.append(None if actual is None else same_text(actual, expected))
             if lodging.nights:
                 value = page.evaluate('(s) => document.querySelector(s)?.value ?? null', fx.DATE_RANGE_FIELD)
-                checks.append(None if value is None else all(d.isoformat() in value for d in (lodging.checkin, lodging.checkout)))
+                checks.append(None if value is None else range_matches(value, lodging.checkin, lodging.checkout, page.get_attribute(fx.DATE_RANGE_FIELD, 'placeholder') or ''))
         if plan.attendee:
             page.goto(ar.expense_url(self.report_url, plan.row.expense_id) + '?modal=attendees&context=entry',
                       wait_until='domcontentloaded')
@@ -93,7 +95,7 @@ class Driver:
             checks.append(bool(names) and len(names) == len(wanted) and
                           all(any(fx.name_matches(q, n) for n in names) for q in wanted))
             page.goto(ar.expense_url(self.report_url, plan.row.expense_id), wait_until='domcontentloaded')
-            ui.wait_condition(page, ar.WAIT_AMOUNT_JS, '경비 상세 복귀', str(plan.row.amount))
+            ui.wait_condition(page, amount_check_js(), '경비 상세 복귀', str(plan.row.amount))
         if lodging and lodging.nights:
             fx._open_tab(page, fx.TAB_ITEMIZATION, '저장된 명세 조회')
             state = page.evaluate(fx.ITEMIZATION_STATE_JS)
@@ -101,11 +103,9 @@ class Driver:
             if state.get('empty'):
                 checks.append(False)
             elif rates:
-                try:
-                    values = [Decimal(re.sub(r'[^0-9.\-]', '', r['value']) or '0') for r in rates]
-                    checks.append(values == fx.nightly_split(plan.row.amount, lodging.nights))
-                except InvalidOperation:
-                    checks.append(None)
+                values = [parse_amount(r.get('value')) for r in rates]
+                checks.append(None if any(value is None for value in values) else
+                              values == fx.nightly_split(plan.row.amount, lodging.nights))
             else:
                 # 기존 명세 표를 수치로 읽을 근거가 없으면 완료로 오인하지 않는다.
                 checks.append(None)

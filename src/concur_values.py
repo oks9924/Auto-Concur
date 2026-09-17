@@ -1,14 +1,14 @@
-"""Concur 화면 값 해석. 날짜 순서나 통화가 모호하면 추측하지 않는다."""
+"""Concur display values. Keep uncertainty rather than changing a transaction's meaning."""
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
 import re
 import unicodedata
+from .concur_formats import DATE_ORDER, NUMBER_STYLE
 
 
 def clean(value):
     text = unicodedata.normalize('NFKC', str('' if value is None else value))
     text = re.sub('[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]', '', text)
-    return text.replace('\u2212', '-').replace('\u2011', '-').strip()
+    return re.sub(r'\s+', ' ', text.replace('\u2212', '-').replace('\u2011', '-')).strip()
 
 
 def _date(y, m, d):
@@ -18,46 +18,55 @@ def _date(y, m, d):
         return None
 
 
+_MONTHS = {name: i for i, name in enumerate(
+    ('jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'), 1)}
+_NAMES = r'(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
+_PATTERNS = [
+    (r'(?<!\d)(\d{4})\s*([/.-])\s*(\d{1,2})\s*\2\s*(\d{1,2})(?!\d)', 'YMD'),
+    (r'(?<!\d)(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일?', 'KO'),
+    (r'(?<!\d)(\d{1,2})\s*([/.-])\s*(\d{1,2})\s*\2\s*(\d{4})(?!\d)', 'NUM'),
+    (r'(?<!\w)' + _NAMES + r'\.?[ -]+(\d{1,2})(?:st|nd|rd|th)?,?[ -]+(\d{4})(?!\d)', 'MONTH'),
+    (r'(?<!\d)(\d{1,2})(?:st|nd|rd|th)?[ -]+' + _NAMES + r'\.?,?[ -]+(\d{4})(?!\d)', 'DAY'),
+]
+
+
 def date_options(value):
-    """가능한 날짜와 해석 순서. 연도 없는 화면 값에는 현재 연도를 주입하지 않는다."""
+    """A full four-digit-year date. Multiple dates and invalid dates are not salvaged."""
     if isinstance(value, datetime):
         return {value.date(): 'YMD'}
     if isinstance(value, date):
         return {value: 'YMD'}
     text = clean(value)
-    hit = re.search(r'(?<!\d)(\d{4})\s*[-/.년]\s*(\d{1,2})\s*[-/.월]\s*(\d{1,2})(?!\d)', text)
-    if hit:
-        parsed = _date(*hit.groups())
+    if re.fullmatch(r'\d{8}', text):
+        parsed = _date(text[:4], text[4:6], text[6:])
         return {parsed: 'YMD'} if parsed else {}
-    hit = re.fullmatch(r'(\d{4})(\d{2})(\d{2})', text)
-    if hit:
-        parsed = _date(*hit.groups())
-        return {parsed: 'YMD'} if parsed else {}
-    hit = re.search(r'(?<!\d)(\d{1,2})\s*[/.-]\s*(\d{1,2})\s*[/.-]\s*(\d{4})(?!\d)', text)
-    if hit:
-        first, second, year = hit.groups()
+    hits = [(hit, kind) for pattern, kind in _PATTERNS for hit in re.finditer(pattern, text, re.I)]
+    if len(hits) != 1:
+        return {}
+    hit, kind = hits[0]
+    if kind == 'YMD':
+        parsed = _date(hit[1], hit[3], hit[4])
+    elif kind == 'KO':
+        parsed = _date(hit[1], hit[2], hit[3])
+    elif kind == 'NUM':
         options = {}
-        for month, day, order in ((first, second, 'MDY'), (second, first, 'DMY')):
-            parsed = _date(year, month, day)
+        for m, d, order in ((hit[1], hit[3], 'MDY'), (hit[3], hit[1], 'DMY')):
+            parsed = _date(hit[4], m, d)
             if parsed:
                 options[parsed] = 'SAME' if parsed in options else order
         return options
-    months = {name: i for i, name in enumerate(
-        ('jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'), 1)}
-    names = r'(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)'
-    for pattern, day_first in ((names + r'\s+(\d{1,2}),?\s+(\d{4})', False),
-                               (r'(\d{1,2})\s+' + names + r',?\s+(\d{4})', True)):
-        hit = re.search(pattern, text, flags=re.I)
-        if hit:
-            a, b, year = hit.groups()
-            name, day = (b, a) if day_first else (a, b)
-            parsed = _date(year, months[name[:3].lower()], day)
-            return {parsed: 'NAMED'} if parsed else {}
-    return {}
+    elif kind == 'MONTH':
+        parsed = _date(hit[3], _MONTHS[hit[1][:3].lower()], hit[2])
+    else:
+        parsed = _date(hit[3], _MONTHS[hit[2][:3].lower()], hit[1])
+    return {parsed: 'YMD' if kind in ('YMD','KO') else 'NAMED'} if parsed else {}
 
 
-def resolve_dates(raw_rows):
-    """동일 목록의 일관된 날짜 순서 또는 같은 셀의 ISO 증거로만 해석한다."""
+def resolve_dates(raw_rows, order=None):
+    """Use same-cell evidence, consistent row evidence, or explicit per-run settings."""
+    explicit = (order or DATE_ORDER.get()).upper()
+    if explicit not in ('AUTO', 'YMD', 'MDY', 'DMY'):
+        raise ValueError('지원하지 않는 날짜 순서입니다.')
     options, orders = [], set()
     for raw in raw_rows:
         primary = date_options(raw.get('date'))
@@ -66,45 +75,72 @@ def resolve_dates(raw_rows):
         candidates = set.intersection(*(set(x) for x in available)) if available else set()
         if clean(raw.get('date')) and not primary:
             candidates = set()
+        if clean(raw.get('dateISO')) and not extra[0]:
+            candidates = set()
+        if explicit != 'AUTO' and primary and any(v in ('MDY','DMY','SAME') for v in primary.values()):
+            candidates = {d for d in candidates if primary.get(d) in (explicit, 'SAME')}
         if len(candidates) == 1 and primary:
-            order = primary.get(next(iter(candidates)))
-            if order in ('MDY', 'DMY'):
-                orders.add(order)
+            detected = primary.get(next(iter(candidates)))
+            if detected in ('MDY', 'DMY'):
+                orders.add(detected)
         options.append((candidates, primary))
-    order = next(iter(orders)) if len(orders) == 1 else None
+    inferred = next(iter(orders)) if len(orders) == 1 else None
     resolved = []
     for candidates, primary in options:
-        if len(candidates) > 1 and order:
-            candidates = {d for d in candidates if primary.get(d) == order}
+        if len(candidates) > 1 and inferred and explicit == 'AUTO':
+            candidates = {d for d in candidates if primary.get(d) == inferred}
         resolved.append(next(iter(candidates)) if len(candidates) == 1 else None)
     return resolved
 
 
-def parse_amount(value):
-    """정수 KRW/통화 미표기만 지원. 소수 원 단위는 반올림하지 않는다."""
+def money_pattern(style=None):
+    style = style or NUMBER_STYLE.get()
+    if style not in ('DOT', 'COMMA'):
+        raise ValueError('지원하지 않는 금액 서식입니다.')
+    group, decimal = (',', r'\.') if style == 'DOT' else (r'\.', ',')
+    return r'(?:[0-9]+|[0-9]{1,3}(?:' + group + r'[0-9]{3})+|[0-9]{1,3}(?: [0-9]{3})+)(?:' + decimal + r'0{1,2})?'
+
+
+def parse_amount(value, style=None):
+    """Exact integer KRW. Currency/sign/grouping errors and fractional won stay unknown."""
+    style = style or NUMBER_STYLE.get()
     text = clean(value)
-    if not text:
+    text = re.sub('KRW', '', text, flags=re.I).replace('₩', '').replace('원', '').strip()
+    negative = False
+    if text.startswith('(') and text.endswith(')'):
+        negative, text = True, text[1:-1].strip()
+    elif text.endswith('-'):
+        negative, text = True, text[:-1].strip()
+    elif text[:1] in ('+', '-'):
+        negative, text = text[0] == '-', text[1:].strip()
+    if not re.fullmatch(money_pattern(style), text):
         return None
-    codes = re.findall(r'\b[A-Z]{3}\b', text.upper())
-    if any(code != 'KRW' for code in codes) or any(symbol in text for symbol in '$€£¥'):
-        return None
-    text = re.sub(r'(?i)\bKRW\b', '', text).replace('₩', '').replace('원', '').strip()
-    negative = text.startswith('(') and text.endswith(')')
-    if negative:
-        text = text[1:-1].strip()
-    if not re.fullmatch(r'[+-]?(?:\d+|\d{1,3}(?:,\d{3})+|\d{1,3}(?:\s\d{3})+)(?:\.0{1,2})?', text):
-        return None
+    integral = text.split(',' if style == 'COMMA' else '.')[0]
     try:
-        amount = Decimal(re.sub(r'[,\s]', '', text))
-        if amount != amount.to_integral_value():
-            return None
-        return -int(amount) if negative else int(amount)
-    except (InvalidOperation, ValueError, OverflowError):
+        amount = int(re.sub('[,. ]', '', integral))
+        return -amount if negative else amount
+    except (ValueError, OverflowError):
         return None
 
 
 def amount_from_summary(value):
+    """Consume the complete currency-marked number, not a valid-looking prefix."""
     text = clean(value)
-    hits = re.findall(r'(?:KRW|₩)\s*([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)', text, flags=re.I)
-    values = [parse_amount(hit) for hit in hits]
-    return values[0] if len(values) == 1 else None
+    number = r'[0-9](?:[0-9., ]*[0-9])?'
+    prefix = r'(?:\(\s*)?(?:[+-]\s*)?(?:\b[A-Z]{3}\b|[₩$€£¥])\s*(?:\(\s*)?(?:[+-]\s*)?' + number + r'(?:\s*\))?-?'
+    suffix = r'(?:\(\s*)?(?:[+-]\s*)?' + number + r'\s*(?:원|\bKRW\b)(?:\s*\))?-?'
+    hits = list(re.finditer(prefix + '|' + suffix, text, re.I))
+    if len(hits) != 1:
+        return None
+    hit = hits[0]
+    tail = text[hit.end():]
+    if re.match(r"(?:['’][0-9]|[A-Za-z][0-9])", tail):
+        return None
+    return parse_amount(hit[0])
+
+
+def same_text(actual, expected):
+    """Compare presentation whitespace without modifying persisted user content."""
+    def normalize(value):
+        return unicodedata.normalize('NFC', str(value)).replace('\r\n', '\n').replace('\r', '\n').replace('\xa0', ' ').replace('\u202f', ' ').strip()
+    return normalize(actual) == normalize(expected)
