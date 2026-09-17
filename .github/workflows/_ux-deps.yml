@@ -1,0 +1,20 @@
+name: UX test dependency
+on:
+  push:
+    branches: [fix/ux-workspace-20260917]
+    paths: [.github/workflows/_ux-deps.yml]
+permissions:
+  contents: read
+jobs:
+  dependency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip download --no-deps tksheet==7.6.0 -d wheels
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ux-test-wheel
+          path: wheels/
+          retention-days: 1
