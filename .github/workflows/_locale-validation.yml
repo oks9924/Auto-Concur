@@ -1,0 +1,42 @@
+name: Display format targeted validation
+on:
+  push:
+    branches: [fix/display-formats-20260917]
+permissions:
+  contents: write
+jobs:
+  scoped-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/display-formats-20260917
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply format changes
+        run: python _locale_patch.py
+      - name: Dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Related regressions only
+        run: xvfb-run -a python -m pytest -q tests/test_display_formats.py tests/test_ready_update.py tests/test_lodging.py tests/test_target_matching.py tests/test_matching.py tests/test_concur_ui.py tests/test_concur_workflow.py tests/test_execution.py tests/test_blank_policy.py tests/test_rerun.py --junitxml=format-results.xml
+      - name: Commit tested sources on working branch
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/concur_formats.py src/concur_values.py src/attach_receipts.py src/fix_expenses.py src/concur_driver.py src/gui.py src/update_concur.py tests/test_display_formats.py docs/display-formats-20260917.md
+          git rm _locale_patch.py .github/workflows/_locale-validation.yml
+          git commit -m 'Normalize per-user Concur display formats; targeted regressions passed'
+          git push origin HEAD:fix/display-formats-20260917
+          git rev-parse HEAD > format-verified-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: display-format-validation
+          path: |
+            format-results.xml
+            format-verified-commit.txt
+          retention-days: 7
