@@ -33,3 +33,6 @@ replace('src/row_editor.py', '        self.editor.table.set_data(0, 0, data=data
         # name the user subsequently cleared or replaced before applying.
         with self.editor.attendee_defaults.pause():
             self.editor.table.set_data(0, 0, data=data, undo=True, emit_event=True)''')
+replace('tests/test_attendee_defaults.py',
+    "    for task in root.tk.call('after','info'): root.after_cancel(task)\n    root.destroy()",
+    "    if e.winfo_exists():\n        if e.pending:\n            e.after_cancel(e.pending)\n            e.pending = None\n        e.grab_release()\n        e.destroy()\n    # Descendant callbacks must be cleaned up by their owning widgets first.\n    for task in root.tk.call('after', 'info'):\n        root.after_cancel(task)\n    root.destroy()")
