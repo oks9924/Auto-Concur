@@ -1,0 +1,26 @@
+name: Repair source snapshot
+on:
+  push:
+    branches: [fix/windows-ci-download-20260918]
+    paths: [.github/workflows/_repair-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repair-source
+          path: |
+            src/
+            tests/
+            docs/
+            requirements.txt
+            *.bat
+            *.py
+            .github/workflows/tests.yml
+            README.md
+          include-hidden-files: true
+          retention-days: 1
