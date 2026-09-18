@@ -15,7 +15,8 @@ def _dispose_tk(root):
     child's _tclCommands, so child.destroy then fails and leaves modal grabs.
     This helper changes test cleanup only; assertions and Tk grabs stay real.
     """
-    if not root.winfo_exists():
+    # Tk.destroy clears its Python commands. Calling winfo after that raises.
+    if root._tclCommands is None or not root.winfo_exists():
         return
 
     def walk(widget):
@@ -32,7 +33,6 @@ def _dispose_tk(root):
         if owner is not None:
             owner.after_cancel(job)
         else:
-            # Tcl-owned callback: cancel timer without deleting a Python command.
             root.tk.call('after', 'cancel', job)
     grabbed = root.tk.call('grab', 'current', root._w)
     if grabbed:
