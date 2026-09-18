@@ -116,3 +116,32 @@ def test_multiple_mileage_rows_each_persist_verified_id(tmp_path,monkeypatch):
     assert all(r['concur_state']=='verified' and r['concur_expense_id'].startswith('EXP-') for r in saved)
     assert mileage_concur.run(tmp_path,True,None)==0
     assert len(calls)==2
+
+
+def test_known_prewrite_ui_failure_is_retryable(tmp_path,monkeypatch):
+    book=prepared(tmp_path)
+    book.rows[0]['concur_state']='needs_review'
+    book.rows[0]['concur_note']='Locator.click timeout [data-auto-mileage-combo="1"]'
+    book.save()
+    info=mileage_concur.status(tmp_path)
+    assert info['pending']==1 and info['needs_review']==0 and info['retryable_prewrite']==1
+
+    called=[]
+    monkeypatch.setattr(mileage_concur,'create_one',
+        lambda page,url,row,image:(called.append(row['id']) or 'EXP-RETRY'))
+    result=mileage_concur.run_in_session(object(),'https://example/reports/R',tmp_path,True,None)
+    assert result==0 and len(called)==1
+    saved=MileageBook(tmp_path).rows[0]
+    assert saved['concur_state']=='verified' and saved['concur_expense_id']=='EXP-RETRY'
+
+
+def test_safe_pre_save_screen_failure_stays_retryable(tmp_path,monkeypatch):
+    prepared(tmp_path)
+    monkeypatch.setattr(mileage_concur,'create_one',
+        lambda *a,**k:(_ for _ in ()).throw(mileage_concur.MileageConcurError('상세 화면을 못 찾음')))
+    result=mileage_concur.run_in_session(object(),'https://example/reports/R',tmp_path,True,None)
+    assert result==1
+    saved=MileageBook(tmp_path).rows[0]
+    assert saved['concur_state']=='retryable'
+    assert '상세 화면' in saved['concur_note']
+    assert mileage_concur.status(tmp_path)['pending']==1
