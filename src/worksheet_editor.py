@@ -11,7 +11,7 @@ from .expense_policy import input_guide
 from .calendar_input import DateEntry
 from .worksheet import Worksheet, normalize
 from .attendee_defaults import AttendeeDefaults
-from .attendee_picker import AttendeesEntry, show_picker, show_manager
+from .attendee_picker import AttendeesEntry, show_picker, show_popover, show_manager
 
 
 class Editor(tk.Toplevel):
@@ -76,12 +76,14 @@ class Editor(tk.Toplevel):
                      state='readonly', width=3).pack(side='left')
         ttk.Label(filters, text='pt').pack(side='left')
 
-        self.tables = ttk.Panedwindow(self, orient='vertical')
+        self.tables = tk.PanedWindow(self, orient='vertical', opaqueresize=False,
+                                     sashwidth=7, sashrelief='raised', borderwidth=0,
+                                     background='#d6dbe3')
         self.tables.grid(row=3, column=0, sticky='nsew', padx=16)
         cards = ttk.Frame(self.tables)
         cards.columnconfigure(0, weight=1)
         cards.rowconfigure(0, weight=1)
-        self.tables.add(cards, weight=3)
+        self.tables.add(cards, minsize=120, stretch='always')
         self.mileage_panel = None
         self.table = Sheet(cards, headers=self.COLUMNS, theme='light blue',
                            font=('맑은 고딕', 11, 'normal'), header_font=('맑은 고딕', 11, 'bold'),
@@ -129,18 +131,26 @@ class Editor(tk.Toplevel):
         self.refresh()
         self.apply_view()
         from .mileage import BOOK_NAME
-        if (self.model.target.parent / BOOK_NAME).exists():
-            self.show_mileage()
+        has_mileage = (self.model.target.parent / BOOK_NAME).exists()
         self.status.configure(text=warning or ('임시 저장 내용을 복원했습니다. 확인 후 저장하세요.' if recovered else '거래일·금액·가맹점은 원본 보호를 위해 수정할 수 없습니다.'))
         self.deiconify()
         self.grab_set()
+        if has_mileage:
+            self.after_idle(self.show_mileage)
 
     def show_mileage(self):
         if self.mileage_panel is None:
             from .mileage_ui import MileagePanel
             try:
                 self.mileage_panel = MileagePanel(self.tables, self.model.target.parent)
-                self.tables.add(self.mileage_panel, weight=2)
+                self.tables.add(self.mileage_panel, minsize=145, stretch='always')
+                def place_initial_sash():
+                    try:
+                        if len(self.tables.panes()) > 1 and self.tables.winfo_height() > 320:
+                            self.tables.sash_place(0, 1, int(self.tables.winfo_height() * 0.62))
+                    except tk.TclError:
+                        pass
+                self.after_idle(place_initial_sash)
             except (ValueError, OSError) as exc:
                 messagebox.showerror('마일리지 데이터 확인', str(exc), parent=self)
                 return None
@@ -204,9 +214,12 @@ class Editor(tk.Toplevel):
             mt = self.table.MT
             self.table.see(display_row, column)
             self.update_idletasks()
-            x = mt.winfo_rootx() + mt.col_positions[column] - mt.canvasx(0)
-            top = mt.winfo_rooty() + mt.row_positions[display_row] - mt.canvasy(0)
-            bottom = mt.winfo_rooty() + mt.row_positions[display_row + 1] - mt.canvasy(0)
+            x = (mt.winfo_rootx() - self.winfo_rootx()
+                 + mt.col_positions[column] - mt.canvasx(0))
+            top = (mt.winfo_rooty() - self.winfo_rooty()
+                   + mt.row_positions[display_row] - mt.canvasy(0))
+            bottom = (mt.winfo_rooty() - self.winfo_rooty()
+                      + mt.row_positions[display_row + 1] - mt.canvasy(0))
             width = mt.col_positions[column + 1] - mt.col_positions[column]
             return (int(x), int(top), int(bottom), int(width))
         except (ValueError, IndexError, tk.TclError, AttributeError):
@@ -231,12 +244,17 @@ class Editor(tk.Toplevel):
             if value != original:
                 self.table.set_data(row_index, column, data=value, undo=True, emit_event=True)
             return True
-        picker = show_picker(self, original, apply, anchor=self._attendee_anchor(row_index, column))
+        anchor = self._attendee_anchor(row_index, column)
+        if anchor is None:
+            return show_picker(self, original, apply)
+        def closed():
+            self.attendee_picker = None
+            try:
+                self.grab_set()
+            except tk.TclError:
+                pass
+        picker = show_popover(self, original, apply, anchor, on_close=closed)
         self.attendee_picker = picker
-        if picker is not None:
-            picker.bind('<Destroy>', lambda event, p=picker:
-                        setattr(self, 'attendee_picker', None) if event.widget is p and self.attendee_picker is p else None,
-                        add='+')
         return picker
 
     def pick_extra_attendees_if_selected(self):
@@ -251,12 +269,13 @@ class Editor(tk.Toplevel):
     def begin_cell_edit(self, event):
         column = self.table.displayed_column_to_data(event.column)
         if self.COLUMNS[column] == sheet.EXTRA_ATTENDEE_COLUMN:
-            # Never open tksheet's transient text editor here. On Windows/Korean IME
-            # it could appear as a detached white composition box. The checkbox LOV
-            # owns all edits; its standard ttk.Entry still supports manual comma input.
-            row = self.table.displayed_row_to_data(event.row)
-            self.after_idle(lambda: self.pick_extra_attendees(row))
-            return None
+            # Double-click/Enter opens the inline LOV. Typing/F2 remains a normal
+            # tksheet edit path so a picker failure can never make the cell uneditable.
+            if event.key in ('??', 'Return'):
+                row = self.table.displayed_row_to_data(event.row)
+                self.after_idle(lambda: self.pick_extra_attendees(row))
+                return None
+            return event.value
         if self.COLUMNS[column] in sheet.DATE_COLUMNS:
             row = self.table.displayed_row_to_data(event.row)
             name = self.COLUMNS[column]
@@ -380,23 +399,20 @@ class Editor(tk.Toplevel):
         if self.loading:
             return
         filled = self.attendee_defaults.apply(event)
-        changed = set()
-        if isinstance(event, dict):
-            changed = {r for r, _ in event.get('cells', {}).get('table', {})}
-        if changed:
-            for row_index in changed:
-                if 0 <= row_index < len(self.model.rows):
-                    self.sync_row(row_index)
-                    self.table.set_cell_data(row_index, 0, self.row_status(self.model.rows[row_index]), redraw=False)
-        else:
-            self.sync()
-            for i, row in enumerate(self.model.rows):
-                self.table.set_cell_data(i, 0, self.row_status(row), redraw=False)
+        # Keep the full model synchronized for save/undo correctness. Dialog opening
+        # no longer calls this path, and highlight recomputation is skipped unless the
+        # expense type changed.
+        self.sync()
+        changed_cells = (event.get('cells', {}).get('table', {})
+                         if isinstance(event, dict) else {})
+        changed_rows = {r for r, _ in changed_cells}
+        targets = changed_rows or range(len(self.model.rows))
+        for row_index in targets:
+            if 0 <= row_index < len(self.model.rows):
+                self.table.set_cell_data(row_index, 0, self.row_status(self.model.rows[row_index]), redraw=False)
 
         type_col = self.COLUMNS.index('경비유형')
-        type_changed = (not changed or any(c == type_col for _, c in
-                        (event.get('cells', {}).get('table', {}) if isinstance(event, dict) else {})))
-        if type_changed:
+        if not changed_cells or any(c == type_col for _, c in changed_cells):
             self.highlight_inputs(redraw=False)
         self.table.refresh()
         if self.pending:
@@ -429,8 +445,8 @@ class Editor(tk.Toplevel):
             '• 초록색은 입력 안내이며 Concur 필수값 확정을 뜻하지 않습니다.\n'
             f'• {self.guide_summary.get()}\n'
             '• 입실·퇴실: 셀 더블클릭/Enter → 달력\n'
-            '• 추가 참석자: 셀 더블클릭/Enter/F4/Alt+↓ → 체크박스 LOV\n'
-            '  여러 명 선택 가능 · 직접 입력은 LOV 안에서 쉼표로 추가\n'
+            '• 추가 참석자: 더블클릭/Enter/F4/Alt+↓ → 셀 안 체크박스 LOV\n'
+            '  문자 입력/F2는 셀 직접 편집 · LOV에서도 여러 명/직접 입력 가능\n'
             '• Ctrl+C/V: 복사/붙여넣기 · Ctrl+Z/Y: 실행 취소/다시 실행 · Ctrl+S: 저장\n\n'
             'Concur 반영은 저장된 전체 작업지를 기준으로 합니다.\n'
             '현재 필터나 선택 행은 실행 범위를 제한하지 않습니다.'
