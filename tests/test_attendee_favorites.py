@@ -212,3 +212,25 @@ def test_home_management_button_disabled_when_busy(monkeypatch,tmp_path,tk_clean
     assert button in app.buttons
     button.invoke();manager=next(w for w in app.winfo_children() if isinstance(w,FavoritesManager));manager.close()
     # Registered with tk_cleanup before any assertions.
+
+
+
+def test_table_attendee_picker_is_cell_anchored_popover(editor,store):
+    editor.table.select_cell(0,editor.COLUMNS.index('추가 참석자'))
+    picker=editor.pick_extra_attendees()
+    assert isinstance(picker,AttendeePicker)
+    assert picker.popover_anchor is not None
+    assert bool(picker.overrideredirect())
+    x,top,bottom,width=picker.popover_anchor
+    assert bottom>=top and width>0
+    picker.close()
+
+
+def test_row_form_attendee_picker_remains_normal_dialog(editor,store):
+    from src.row_editor import RowEditor
+    row=RowEditor(editor,0)
+    entry=next(w for w in descendants(row) if isinstance(w,AttendeesEntry))
+    picker=entry.open()
+    assert picker.popover_anchor is None
+    assert not bool(picker.overrideredirect())
+    picker.close();row.cancel()
