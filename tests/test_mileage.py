@@ -127,6 +127,8 @@ def test_saved_panel_reopens(editor):
     from src.worksheet_editor import Editor
     panel=editor.show_mileage();panel.book.commit_rows([ready(panel.book,editor.model.target.parent)]);panel.save()
     second=Editor(editor.master,editor.model.target,deepcopy(settings.DEFAULTS))
+    assert second.mileage_panel is None  # initial card table can paint first
+    second.update_idletasks()
     assert second.mileage_panel is not None and len(second.mileage_panel.book.rows)==1
     second.destroy()
 
