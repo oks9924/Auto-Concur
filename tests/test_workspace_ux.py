@@ -122,7 +122,7 @@ def test_detail_invalid_dates_do_not_apply(editor,start,end):
 
 def test_unknown_type_not_given_guessed_green_guide(editor):
     editor.table.select_cell(0,4);dialog=editor.edit_row()
-    dialog.variables['경비유형'].set('주차비')
+    dialog.variables['경비유형'].set('조사되지 않은 테스트 유형')
     assert '미등록' in dialog.guide.cget('text')
     assert all('입력 안내' not in label.cget('text') for label in dialog.labels.values())
     dialog.finish()

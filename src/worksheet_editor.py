@@ -11,6 +11,7 @@ from .expense_policy import input_guide
 from .calendar_input import DateEntry
 from .worksheet import Worksheet, normalize
 from .attendee_defaults import AttendeeDefaults
+from .attendee_picker import AttendeesEntry, show_picker, show_manager
 
 
 class Editor(tk.Toplevel):
@@ -45,6 +46,7 @@ class Editor(tk.Toplevel):
                 ('한 건 상세 편집', self.edit_row), ('실행 취소', lambda: self.table.undo()),
                 ('숙박 날짜', self.pick_stay_dates), ('여러 행 입력', self.bulk), ('찾기·바꾸기', self.find_replace)]):
             ttk.Button(tools, text=label, command=command).grid(row=0, column=index, sticky='ew', padx=(0, 5), pady=3)
+        ttk.Button(tools, text='차량 마일리지 추가', command=self.add_mileage).grid(row=0, column=5, sticky='ew', padx=(0, 5), pady=3)
         more = ttk.Menubutton(tools, text='더 보기')
         menu = tk.Menu(more, tearoff=False)
         for label, command in [('복사', lambda: self.table.copy()), ('붙여넣기', lambda: self.table.paste()),
@@ -53,7 +55,10 @@ class Editor(tk.Toplevel):
                 ('가져오기', self.import_file), ('내보내기', self.export_file)]:
             menu.add_command(label=label, command=command)
         more.configure(menu=menu)
-        more.grid(row=0, column=5, sticky='ew', padx=3)
+        more.grid(row=0, column=6, sticky='ew', padx=3)
+        ttk.Button(tools, text='추가 참석자 선택', command=self.pick_extra_attendees).grid(row=1, column=0, sticky='ew', padx=(0, 5), pady=3)
+        ttk.Button(tools, text='자주 쓰는 참석자 관리', command=lambda: show_manager(self)).grid(row=1, column=1, columnspan=2, sticky='w', pady=3)
+        ttk.Label(tools, text='추가 참석자: 더블클릭/Enter 선택 · F2 직접 입력').grid(row=1, column=3, columnspan=3, sticky='w')
         filters = ttk.Frame(self, padding=(16, 0, 16, 10))
         filters.grid(row=2, column=0, sticky='ew')
         ttk.Label(filters, text='검색').pack(side='left')
@@ -74,14 +79,21 @@ class Editor(tk.Toplevel):
                      state='readonly', width=3).pack(side='left')
         ttk.Label(filters, text='pt').pack(side='left')
 
-        self.table = Sheet(self, headers=self.COLUMNS, theme='light blue',
+        self.tables = ttk.Panedwindow(self, orient='vertical')
+        self.tables.grid(row=3, column=0, sticky='nsew', padx=16)
+        cards = ttk.Frame(self.tables)
+        cards.columnconfigure(0, weight=1)
+        cards.rowconfigure(0, weight=1)
+        self.tables.add(cards, weight=3)
+        self.mileage_panel = None
+        self.table = Sheet(cards, headers=self.COLUMNS, theme='light blue',
                            font=('맑은 고딕', 11, 'normal'), header_font=('맑은 고딕', 11, 'bold'),
                            table_fg='#17212e', table_bg='#ffffff',
                            scrollbar_theme_inheritance='clam',
                            vertical_scroll_arrowsize=14, horizontal_scroll_arrowsize=14,
                            default_column_width=135, default_row_height=30,
                            paste_can_expand_x=False, paste_can_expand_y=False)
-        self.table.grid(row=3, column=0, sticky='nsew', padx=16)
+        self.table.grid(row=0, column=0, sticky='nsew')
         self.table.enable_bindings('single_select', 'drag_select', 'column_select', 'row_select',
                                    'column_width_resize', 'row_height_resize', 'double_click_column_resize',
                                    'arrowkeys', 'copy', 'cut', 'paste', 'delete', 'undo', 'edit_cell',
@@ -117,9 +129,28 @@ class Editor(tk.Toplevel):
             warning = str(exc)
         self.refresh()
         self.apply_view()
+        from .mileage import BOOK_NAME
+        if (self.model.target.parent / BOOK_NAME).exists():
+            self.show_mileage()
         self.status.configure(text=warning or ('임시 저장 내용을 복원했습니다. 확인 후 저장하세요.' if recovered else '거래일·금액·가맹점은 원본 보호를 위해 수정할 수 없습니다.'))
         self.deiconify()
         self.grab_set()
+
+    def show_mileage(self):
+        if self.mileage_panel is None:
+            from .mileage_ui import MileagePanel
+            try:
+                self.mileage_panel = MileagePanel(self.tables, self.model.target.parent)
+                self.tables.add(self.mileage_panel, weight=2)
+            except (ValueError, OSError) as exc:
+                messagebox.showerror('마일리지 데이터 확인', str(exc), parent=self)
+                return None
+        return self.mileage_panel
+
+    def add_mileage(self):
+        panel = self.show_mileage()
+        if panel is not None:
+            return panel.add()
 
     def toggle_maximize(self, event=None):
         self.state('normal' if self.state() == 'zoomed' else 'zoomed')
@@ -168,8 +199,32 @@ class Editor(tk.Toplevel):
         if date_column == '퇴실날짜':
             dialog.mode.set('퇴실')
 
+    def pick_extra_attendees(self, row_index=None):
+        self.table.close_text_editor(set_data=True)
+        self.sync()
+        if row_index is None:
+            selected = self.table.get_currently_selected()
+            if not selected:
+                messagebox.showinfo('행 선택', '추가 참석자를 입력할 경비 한 행을 선택하세요.', parent=self)
+                return
+            row_index = self.table.displayed_row_to_data(selected.row)
+        column = self.COLUMNS.index(sheet.EXTRA_ATTENDEE_COLUMN)
+        original = self.table.get_sheet_data()[row_index][column]
+        def apply(value):
+            if self.table.get_sheet_data()[row_index][column] != original:
+                messagebox.showerror('입력 변경', '참석자 값이 변경되었습니다. 닫고 다시 열어 주세요.', parent=self)
+                return False
+            if value != original:
+                self.table.set_data(row_index, column, data=value, undo=True, emit_event=True)
+            return True
+        return show_picker(self, original, apply)
+
     def begin_cell_edit(self, event):
         column = self.table.displayed_column_to_data(event.column)
+        if self.COLUMNS[column] == sheet.EXTRA_ATTENDEE_COLUMN and event.key in ('??', 'Return'):
+            row = self.table.displayed_row_to_data(event.row)
+            self.after_idle(lambda: self.pick_extra_attendees(row))
+            return None
         if self.COLUMNS[column] in sheet.DATE_COLUMNS:
             row = self.table.displayed_row_to_data(event.row)
             name = self.COLUMNS[column]
@@ -371,11 +426,15 @@ class Editor(tk.Toplevel):
         entry = ttk.Combobox(value_box, textvariable=value, width=60)
         entry.pack(fill='x')
         date_entry = DateEntry(value_box, value, '선택 행에 입력할 날짜', separator='-')
+        people_entry = AttendeesEntry(value_box, value)
         def change_field(*args):
             value.set('')
             entry.pack_forget()
             date_entry.pack_forget()
-            if name.get() in sheet.DATE_COLUMNS:
+            people_entry.pack_forget()
+            if name.get() == sheet.EXTRA_ATTENDEE_COLUMN:
+                people_entry.pack(fill='x')
+            elif name.get() in sheet.DATE_COLUMNS:
                 date_entry.pack(fill='x')
             else:
                 entry.configure(values=['', *settings.choices(self.cfg).get(name.get(), [])])
@@ -436,7 +495,12 @@ class Editor(tk.Toplevel):
                 '첫 화면의 앞 N건 제한은 각 작업 종류별로 따로 적용됩니다.\n'
                 '영수증만 첨부되는 거래도 있을 수 있으며 실제 대상 건수는 다음 리포트 확인창에서 결정됩니다.\n\n'
                 '입력을 저장한 뒤 Concur 대상 확인 단계로 이동할까요?')
+        if self.mileage_panel is not None:
+            text += (f'\n\n별도 마일리지 {len(self.mileage_panel.book.rows)}건은 이 실행에 포함되지 않습니다.'
+                     '\n현재는 마일리지 입력·로컬 보관만 지원합니다.')
         if not messagebox.askokcancel('실제 처리 범위 확인', text, parent=self):
+            return
+        if self.mileage_panel is not None and not self.mileage_panel.confirm_close():
             return
         if self.save():
             callback = self.on_run
@@ -497,6 +561,8 @@ class Editor(tk.Toplevel):
                 messagebox.showerror('내보내기 실패', str(exc), parent=self)
 
     def close(self):
+        if self.mileage_panel is not None and not self.mileage_panel.confirm_close():
+            return
         self.table.close_text_editor(set_data=True)
         self.sync()
         if self.model.dirty:

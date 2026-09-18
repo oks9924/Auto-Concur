@@ -9,6 +9,7 @@ from .expense_policy import input_guide
 from .calendar_input import DateEntry
 from .stay_calendar import StayCalendar
 from .ui_scroll import ScrollArea
+from .attendee_picker import AttendeesEntry
 
 
 class RowEditor(tk.Toplevel):
@@ -57,6 +58,8 @@ class RowEditor(tk.Toplevel):
                     self.variables[name] = var
                     if name in sheet.DATE_COLUMNS:
                         widget = DateEntry(group, var, name, separator='-')
+                    elif name == sheet.EXTRA_ATTENDEE_COLUMN:
+                        widget = AttendeesEntry(group, var)
                     elif name in choices:
                         widget = ttk.Combobox(group, textvariable=var, values=['', *choices[name]], state='readonly')
                     else:
