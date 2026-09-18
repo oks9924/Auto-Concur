@@ -32,15 +32,16 @@ class Editor(tk.Toplevel):
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(3, weight=1)
-        head = ttk.Frame(self, padding=(16, 14))
+        head = ttk.Frame(self, padding=(16, 8, 16, 4))
         head.grid(row=0, column=0, sticky='ew')
+        head.columnconfigure(0, weight=1)
         title = ttk.Label(head, text='경비 입력', font=('맑은 고딕', 17, 'bold'))
-        title.pack(anchor='w')
+        title.grid(row=0, column=0, sticky='w')
         title.bind('<Double-Button-1>', self.toggle_maximize)
-        ttk.Label(head, text='빈칸은 기존 Concur 값을 유지합니다. 초록색은 입력 안내이며, Concur 필수값 확인은 별도입니다.', wraplength=760).pack(anchor='w', pady=(5, 0))
-        ttk.Label(head, text='입실·퇴실 칸 더블클릭/Enter: 달력 · Ctrl+C/V: 복사/붙여넣기 · Ctrl+Z/Y: 실행 취소/다시 실행 · Ctrl+S: 저장', wraplength=760).pack(anchor='w', pady=(3, 0))
+        self.guide_summary = tk.StringVar(self, '')
+        ttk.Button(head, text='도움말', command=self.show_help).grid(row=0, column=1, sticky='e')
 
-        tools = ttk.Frame(self, padding=(16, 0, 16, 10))
+        tools = ttk.Frame(self, padding=(16, 0, 16, 4))
         tools.grid(row=1, column=0, sticky='ew')
         for index, (label, command) in enumerate([
                 ('한 건 상세 편집', self.edit_row), ('실행 취소', lambda: self.table.undo()),
@@ -58,8 +59,7 @@ class Editor(tk.Toplevel):
         more.grid(row=0, column=6, sticky='ew', padx=3)
         ttk.Button(tools, text='추가 참석자 선택', command=self.pick_extra_attendees).grid(row=1, column=0, sticky='ew', padx=(0, 5), pady=3)
         ttk.Button(tools, text='자주 쓰는 참석자 관리', command=lambda: show_manager(self)).grid(row=1, column=1, columnspan=2, sticky='w', pady=3)
-        ttk.Label(tools, text='추가 참석자: 셀 더블클릭/Enter/F4 → 체크박스 LOV · 직접 입력은 LOV 안에서').grid(row=1, column=3, columnspan=3, sticky='w')
-        filters = ttk.Frame(self, padding=(16, 0, 16, 10))
+        filters = ttk.Frame(self, padding=(16, 0, 16, 5))
         filters.grid(row=2, column=0, sticky='ew')
         ttk.Label(filters, text='검색').pack(side='left')
         self.query = tk.StringVar()
@@ -70,10 +70,6 @@ class Editor(tk.Toplevel):
         self.count = ttk.Label(filters)
         self.count.pack(side='right')
 
-        self.guide_count = ttk.Label(head, text='')
-        self.guide_count.pack(anchor='w', pady=(3, 0))
-        self.scope_note = ttk.Label(head, text='Concur 반영은 저장된 전체 작업지 기준입니다. 필터·선택 행은 실행 범위를 제한하지 않습니다.', wraplength=760, foreground='#87551a')
-        self.scope_note.pack(anchor='w', pady=(4, 0))
         self.text_size = tk.StringVar(value='11')
         ttk.Combobox(filters, textvariable=self.text_size, values=['10', '11', '12', '14'],
                      state='readonly', width=3).pack(side='left')
@@ -108,7 +104,7 @@ class Editor(tk.Toplevel):
         self.text_size.trace_add('write', lambda *a: self.resize_text())
         self.query.trace_add('write', lambda *a: self.apply_filter())
         self.filter.trace_add('write', lambda *a: self.apply_filter())
-        foot = ttk.Frame(self, padding=12)
+        foot = ttk.Frame(self, padding=(12, 6))
         foot.grid(row=4, column=0, sticky='ew')
         self.status = ttk.Label(foot, wraplength=900)
         self.status.pack(fill='x', pady=(0, 8))
@@ -374,8 +370,23 @@ class Editor(tk.Toplevel):
         unregistered = sum(bool(row.get('경비유형', '').strip()) and not input_guide(
             row.get('경비유형'), self.cfg.get('expense_type_codes', {}).get(row.get('경비유형', '').strip()))[1]
             for row in self.model.rows)
-        self.guide_count.configure(text=f'초록: 입력 안내 · 노랑: 안내 미등록 {unregistered}건 (필수 여부 미확인) · 유형 입력 안내 버튼으로 확인')
+        self.guide_summary.set(f'초록: 입력 안내 · 노랑: 안내 미등록 {unregistered}건 (필수 여부 미확인)')
         self.table.refresh()
+
+    def show_help(self):
+        text = (
+            '작업지 사용 안내\n\n'
+            '• 빈칸은 기존 Concur 값을 유지합니다.\n'
+            '• 초록색은 입력 안내이며 Concur 필수값 확정을 뜻하지 않습니다.\n'
+            f'• {self.guide_summary.get()}\n'
+            '• 입실·퇴실: 셀 더블클릭/Enter → 달력\n'
+            '• 추가 참석자: 셀 더블클릭/Enter/F4/Alt+↓ → 체크박스 LOV\n'
+            '  여러 명 선택 가능 · 직접 입력은 LOV 안에서 쉼표로 추가\n'
+            '• Ctrl+C/V: 복사/붙여넣기 · Ctrl+Z/Y: 실행 취소/다시 실행 · Ctrl+S: 저장\n\n'
+            'Concur 반영은 저장된 전체 작업지를 기준으로 합니다.\n'
+            '현재 필터나 선택 행은 실행 범위를 제한하지 않습니다.'
+        )
+        messagebox.showinfo('경비 입력 도움말', text, parent=self)
 
     def show_input_guide(self):
         self.table.close_text_editor(set_data=True)

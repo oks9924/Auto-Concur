@@ -139,3 +139,46 @@ def test_vehicle_manager_save_and_cancel(editor,monkeypatch):
     dialog=VehicleManager(editor);dialog.vehicle.set('Discarded')
     monkeypatch.setattr('src.mileage_ui.messagebox.askyesno',lambda *a,**k:True)
     dialog.close();assert len(vehicles_store().rows)==1
+
+
+def test_copy_mileage_changes_date_only_and_clears_concur_state(editor):
+    panel=editor.show_mileage()
+    source=ready(panel.book,editor.model.target.parent)
+    source.update({
+        'concur_state':'verified',
+        'concur_stage':'verified',
+        'concur_expense_id':'EXP-OLD',
+        'concur_receipt_verified':True,
+        'concur_note':'old result',
+    })
+    panel.book.commit_rows([source]);panel.render()
+    panel.table.selection_set(source['id'])
+
+    form=panel.copy()
+    assert form is not None and form.copying
+    assert form.original['id']!=source['id']
+    assert not [key for key in form.original if key.startswith('concur_')]
+    for key in ('origin','destination','vehicle','kind','rate','distance','passengers',
+                'description','map','map_sha256','map_name'):
+        assert form.original[key]==source[key]
+
+    form.vars['date'].set('2026-09-19')
+    assert form.apply()
+    assert len(panel.book.rows)==2
+    copied=panel.book.rows[1]
+    assert copied['date']=='2026-09-19'
+    assert copied['id']!=source['id']
+    assert not [key for key in copied if key.startswith('concur_')]
+    for key in ('origin','destination','vehicle','kind','rate','distance','passengers',
+                'description','map','map_sha256','map_name'):
+        assert copied[key]==source[key]
+
+
+def test_copy_mileage_cancel_creates_nothing(editor):
+    panel=editor.show_mileage()
+    source=ready(panel.book,editor.model.target.parent)
+    panel.book.commit_rows([source]);panel.render()
+    panel.table.selection_set(source['id'])
+    form=panel.copy()
+    form.close()
+    assert len(panel.book.rows)==1 and panel.book.rows[0]['id']==source['id']

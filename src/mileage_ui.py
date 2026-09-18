@@ -79,10 +79,20 @@ class VehicleManager(Dialog):
 
 
 class MileageForm(Dialog):
-    def __init__(self, panel, index=None):
-        super().__init__(panel,'차량 마일리지 추가' if index is None else '차량 마일리지 수정')
+    def __init__(self, panel, index=None, template=None):
+        self.copying = template is not None
+        title = ('차량 마일리지 복사 · 날짜 변경' if self.copying
+                 else '차량 마일리지 추가' if index is None else '차량 마일리지 수정')
+        super().__init__(panel,title)
         self.panel,self.index=panel,index
-        self.original=deepcopy(panel.book.rows[index]) if index is not None else new_row()
+        if self.copying:
+            self.original=deepcopy(template)
+            self.original['id']=new_row()['id']
+            for key in list(self.original):
+                if key.startswith('concur_'):
+                    self.original.pop(key, None)
+        else:
+            self.original=deepcopy(panel.book.rows[index]) if index is not None else new_row()
         self.snapshot=deepcopy(panel.book.rows)
         self.map_fields={k:v for k,v in self.original.items() if k.startswith('map')}
         self.chosen_image=None
@@ -96,7 +106,9 @@ class MileageForm(Dialog):
         fields=[('거래 날짜','date'),('출발지','origin'),('도착지','destination'),('차량 ID','vehicle'),('거리 (km)','distance'),('탑승자 수','passengers')]
         for i,(label,key) in enumerate(fields):
             ttk.Label(box,text=label).grid(row=i,column=0,sticky='w',padx=(0,10),pady=6)
-            if key=='date': widget=DateEntry(box,self.vars[key],'마일리지 거래 날짜',separator='-')
+            if key=='date':
+                widget=DateEntry(box,self.vars[key],'마일리지 거래 날짜',separator='-')
+                self.date_input=widget
             elif key=='vehicle':
                 frame=ttk.Frame(box);frame.columnconfigure(0,weight=1)
                 self.vehicles=ttk.Combobox(frame,textvariable=self.vars[key],state='readonly')
@@ -115,11 +127,15 @@ class MileageForm(Dialog):
         ttk.Label(box,text='지도는 실제 경로 이미지 파일을 선택하세요. 도구가 경로나 증빙을 생성하지 않습니다.\n저장 후 [저장 후 반영 대상 확인]을 누르면 카드 경비와 같은 실행에서 Concur 신규 생성됩니다.',wraplength=520).grid(row=10,column=0,columnspan=2,sticky='w',pady=6)
         foot=ttk.Frame(self,padding=12);foot.grid(row=1,column=0,sticky='ew')
         self.error=ttk.Label(foot,wraplength=540);self.error.pack(anchor='w')
+        if self.copying:
+            self.error.configure(text='복사본입니다. 날짜만 바꾸고 적용해도 됩니다. 기존 Concur 경비 ID·완료 상태는 복사하지 않습니다.')
         ttk.Button(foot,text='취소',command=self.close).pack(side='right')
         ttk.Button(foot,text='마일리지 표에 적용',command=self.apply).pack(side='right',padx=6)
         self.vars['vehicle'].trace_add('write',lambda *a:self.update_estimate())
         self.vars['distance'].trace_add('write',lambda *a:self.update_estimate())
         self.reload_vehicles();area.enable_children();self.present()
+        if self.copying:
+            self.after_idle(lambda: (self.date_input.entry.focus_set(), self.date_input.entry.selection_range(0, 'end')))
 
     def reload_vehicles(self):
         self.vehicle_records=vehicles_store().rows
@@ -183,7 +199,7 @@ class MileagePanel(ttk.LabelFrame):
         self.columnconfigure(0,weight=1);self.rowconfigure(2,weight=1)
         ttk.Label(self,text='카드 경비와 별도 표 · 저장 후 반영 대상 확인 시 카드 경비 다음에 같은 Concur 세션에서 신규 생성합니다.',wraplength=800).grid(row=0,column=0,sticky='w')
         actions=ttk.Frame(self);actions.grid(row=1,column=0,sticky='ew',pady=4)
-        for text,cmd in [('추가',self.add),('선택 수정',self.edit),('선택 삭제',self.remove),('지도 보기',self.preview),
+        for text,cmd in [('추가',self.add),('선택 수정',self.edit),('선택 복사',self.copy),('선택 삭제',self.remove),('지도 보기',self.preview),
                          ('되돌리기',self.undo),('다시 실행',self.redo),('마일리지 저장',self.save)]:
             ttk.Button(actions,text=text,command=cmd).pack(side='left',padx=2)
         area=ttk.Frame(self);area.grid(row=2,column=0,sticky='nsew');area.columnconfigure(0,weight=1);area.rowconfigure(0,weight=1)
@@ -223,6 +239,16 @@ class MileagePanel(ttk.LabelFrame):
         if index is None: messagebox.showinfo('행 선택','마일리지 행을 먼저 선택하세요.',parent=self);return
         try: return MileageForm(self,index)
         except (OSError,ValueError) as exc: messagebox.showerror('마일리지 입력',str(exc),parent=self)
+
+    def copy(self):
+        index=self.index()
+        if index is None:
+            messagebox.showinfo('행 선택','복사할 마일리지 행을 먼저 선택하세요.',parent=self)
+            return
+        try:
+            return MileageForm(self,template=self.book.rows[index])
+        except (OSError,ValueError) as exc:
+            messagebox.showerror('마일리지 복사',str(exc),parent=self)
 
     def remove(self):
         index=self.index()

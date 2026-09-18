@@ -344,3 +344,26 @@ def test_extra_attendee_f4_uses_selected_cell(editor, monkeypatch):
     editor.table.select_cell(0,column)
     editor.pick_extra_attendees_if_selected()
     assert called==[0]
+
+
+
+def test_compact_header_moves_long_guidance_into_help(editor, monkeypatch):
+    import tkinter as tk
+    from tkinter import ttk
+    def descendants(widget):
+        return [child for direct in widget.winfo_children()
+                for child in [direct, *descendants(direct)]]
+    widgets=descendants(editor)
+    labels=[w.cget('text') for w in widgets if isinstance(w,ttk.Label)]
+    buttons=[w for w in widgets if isinstance(w,ttk.Button)]
+    assert not any('빈칸은 기존 Concur 값을 유지합니다.' in text for text in labels)
+    assert not any('추가 참석자: 셀 더블클릭' in text for text in labels)
+    help_button=next(w for w in buttons if w.cget('text')=='도움말')
+    seen=[]
+    monkeypatch.setattr('src.worksheet_editor.messagebox.showinfo',
+                        lambda title,text,**kwargs:seen.append((title,text)))
+    help_button.invoke()
+    assert seen and seen[0][0]=='경비 입력 도움말'
+    assert '빈칸은 기존 Concur 값을 유지합니다.' in seen[0][1]
+    assert '추가 참석자' in seen[0][1]
+    assert '필터나 선택 행은 실행 범위를 제한하지 않습니다.' in seen[0][1]
