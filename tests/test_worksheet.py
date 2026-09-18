@@ -367,3 +367,26 @@ def test_compact_header_moves_long_guidance_into_help(editor, monkeypatch):
     assert '빈칸은 기존 Concur 값을 유지합니다.' in seen[0][1]
     assert '추가 참석자' in seen[0][1]
     assert '필터나 선택 행은 실행 범위를 제한하지 않습니다.' in seen[0][1]
+
+
+
+def test_opening_calendar_and_attendee_lov_does_not_full_sync_table(editor,monkeypatch):
+    monkeypatch.setattr(editor,'sync',lambda:(_ for _ in ()).throw(AssertionError('full sync should not run')))
+    editor.table.select_cell(0,editor.COLUMNS.index('입실날짜'))
+    editor.pick_stay_dates()
+    from src.stay_calendar import StayCalendar
+    cal=next(w for w in editor.winfo_children() if isinstance(w,StayCalendar))
+    cal.close()
+
+    editor.table.select_cell(0,editor.COLUMNS.index('추가 참석자'))
+    picker=editor.pick_extra_attendees()
+    assert picker is not None
+    picker.close()
+
+
+def test_opening_row_editor_syncs_only_selected_row(editor,monkeypatch):
+    monkeypatch.setattr(editor,'sync',lambda:(_ for _ in ()).throw(AssertionError('full sync should not run')))
+    editor.table.select_row(1)
+    row=editor.edit_row()
+    assert row is not None and row.row_index==1
+    row.cancel()

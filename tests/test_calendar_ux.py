@@ -149,3 +149,13 @@ def test_editor_unknown_guide_and_bulk_calendar(root,tmp_path):
     popup.destroy()
     if editor.pending:editor.after_cancel(editor.pending)
     editor.destroy()
+
+
+
+def test_selection_change_reuses_existing_calendar_buttons(root):
+    panel=CalendarPanel(root,date(2026,9,17),lambda value:None)
+    before={day:id(button) for day,button in panel.buttons.items()}
+    panel.set_selection(date(2026,9,10),date(2026,9,12))
+    after={day:id(button) for day,button in panel.buttons.items()}
+    assert after==before
+    assert panel.buttons[date(2026,9,10)].cget('bg')=='#14634b'

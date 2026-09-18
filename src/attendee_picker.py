@@ -7,20 +7,37 @@ from .ui_scroll import ScrollArea
 
 
 class Dialog(tk.Toplevel):
-    def __init__(self, parent, title):
+    def __init__(self, parent, title, popover_anchor=None):
         self.previous_grab, self.previous_focus = parent.grab_current(), parent.focus_get()
+        self.popover_anchor = popover_anchor
         super().__init__(parent)
         self.withdraw()
         self.title(title)
         self.transient(parent.winfo_toplevel())
-        w, h = min(650, self.winfo_screenwidth()-40), min(620, self.winfo_screenheight()-90)
-        self.geometry(f'{w}x{h}')
-        self.minsize(min(w, 480), min(h, 380))
+        if popover_anchor is None:
+            w, h = min(650, self.winfo_screenwidth()-40), min(620, self.winfo_screenheight()-90)
+            self.geometry(f'{w}x{h}')
+            self.minsize(min(w, 480), min(h, 380))
+        else:
+            self.overrideredirect(True)
+            self.resizable(False, False)
+            self.configure(borderwidth=1, relief='solid')
         self.columnconfigure(0, weight=1)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.bind('<Escape>', lambda event: (self.close(), 'break')[1])
 
     def present(self):
+        if self.popover_anchor is not None:
+            self.update_idletasks()
+            x, top, bottom, cell_width = self.popover_anchor
+            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+            width = min(470, sw - 24)
+            height = min(430, sh - 70)
+            x = max(8, min(int(x), sw - width - 8))
+            y = int(bottom) + 3
+            if y + height > sh - 35:
+                y = max(8, int(top) - height - 3)
+            self.geometry(f'{width}x{height}+{x}+{y}')
         self.deiconify()
         self.grab_set()
         self.focus_set()
@@ -125,9 +142,9 @@ class FavoritesManager(Dialog):
 
 
 class AttendeePicker(Dialog):
-    def __init__(self,parent,current,on_apply,store=None):
+    def __init__(self,parent,current,on_apply,store=None,anchor=None):
         self.store=store if store is not None else FavoriteStore()
-        super().__init__(parent,'추가 참석자 선택 · 여러 명 체크')
+        super().__init__(parent,'추가 참석자 선택 · 여러 명 체크', popover_anchor=anchor)
         self.original, self.on_apply = current or '', on_apply
         self.options, self.checked = {}, {}
         selected=split_people(current)
@@ -223,8 +240,8 @@ def show_manager(parent):
         messagebox.showerror('참석자 목록 확인',f'목록을 열지 못했습니다. 원본 파일은 바꾸지 않았습니다.\n{exc}',parent=parent)
 
 
-def show_picker(parent,current,on_apply):
-    try: return AttendeePicker(parent,current,on_apply)
+def show_picker(parent,current,on_apply,anchor=None):
+    try: return AttendeePicker(parent,current,on_apply,anchor=anchor)
     except (OSError,ValueError) as exc:
         messagebox.showerror('참석자 목록 확인',f'목록을 열지 못했습니다. 직접 입력은 계속 사용할 수 있습니다.\n{exc}',parent=parent)
 

@@ -14,7 +14,7 @@ from uuid import uuid4
 from . import paths
 from .date_input import parse_date
 
-RATES = {'long': '470', 'short': '280'}  # User-provided rates, not a company policy assertion.
+RATES = {'long': '280', 'short': '470'}  # User-provided rates, not a company policy assertion.
 BOOK_NAME = 'mileage-workbook.json'
 IMAGE_TYPES = {'PNG': '.png', 'JPEG': '.jpg'}
 MAX_IMAGE = 20 * 1024 * 1024
@@ -82,8 +82,11 @@ def checked_row(raw):
     for key, label in [('origin', '출발지'), ('destination', '도착지'), ('vehicle', '차량 ID')]:
         result[key] = clean_label(result.get(key), label)
     kind = text(result.get('kind'))
-    if kind not in RATES or text(result.get('rate')) != RATES[kind]:
-        raise ValueError('차량의 long/short 구분과 환급률을 다시 확인하세요.')
+    if kind not in RATES:
+        raise ValueError('차량 구분은 long 또는 short를 선택하세요.')
+    # The rate is derived from the vehicle kind. This also migrates rows saved
+    # before the long/short rate correction instead of making the workbook unreadable.
+    result['rate'] = RATES[kind]
     result['distance'] = number(result.get('distance'), '거리(km)', minimum=Decimal('0.000001'))
     result['passengers'] = number(result.get('passengers'), '탑승자 수', integer=True)
     result['description'] = text(result.get('description'))

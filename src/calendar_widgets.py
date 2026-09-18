@@ -90,8 +90,23 @@ class CalendarPanel(ttk.Frame):
             calendar.monthrange(self.year, self.month)[1])), delta))
 
     def set_selection(self, start, end=None):
+        if (self.start, self.end) == (start, end):
+            return
         self.start, self.end = start, end
-        self.draw()
+        self.paint_selection()
+
+    def day_colors(self, value, col=None):
+        col = value.weekday() if col is None else col
+        edge = value in (self.start, self.end)
+        inside = self.start and self.end and self.start < value < self.end
+        bg = '#14634b' if edge else '#e2f1eb' if inside else '#ffffff'
+        fg = '#ffffff' if edge else '#a52834' if col == 6 else '#1f2937'
+        return bg, fg
+
+    def paint_selection(self):
+        for value, button in self.buttons.items():
+            bg, fg = self.day_colors(value)
+            button.configure(bg=bg, fg=fg, highlightbackground=bg)
 
     def focus_day(self):
         button = self.buttons.get(self.cursor)
@@ -151,10 +166,7 @@ class CalendarPanel(ttk.Frame):
                         ttk.Label(box, text='', width=5, style='Calendar.TLabel').grid(row=row, column=col, pady=4)
                         continue
                     value = date(shown.year, shown.month, day)
-                    edge = value in (self.start, self.end)
-                    inside = self.start and self.end and self.start < value < self.end
-                    bg = '#14634b' if edge else '#e2f1eb' if inside else '#ffffff'
-                    fg = '#ffffff' if edge else '#a52834' if col == 6 else '#1f2937'
+                    bg, fg = self.day_colors(value, col)
                     button = tk.Button(box, text=f'{day}·' if value == date.today() else str(day),
                         width=4, pady=3, font=('맑은 고딕', 10), bg=bg, fg=fg,
                         activebackground='#d7e8f2', activeforeground='#14212e', relief='flat',
