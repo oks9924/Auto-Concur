@@ -116,7 +116,9 @@ class RangePicker(CalendarDialog):
         choices = ('1박', '2박', '3박', '거래일로 이동') if stay else ('오늘', '최근 7일', '이번 달', '지난달')
         for name in choices:
             ttk.Button(shortcuts, text=name, command=lambda n=name: self.preset(n)).pack(side='left', padx=(0, 4))
-        months = 2 if self.winfo_screenwidth() >= 1000 else 1
+        # One month keeps first-open latency low on Windows/dual-monitor setups.
+        # Previous/next month buttons still cover cross-month ranges.
+        months = 1
         self.panel = CalendarPanel(box, start or self.anchor, self.choose_date, months=months)
         self.panel.pack()
         self.selection = ttk.Label(box, anchor='center', font=('맑은 고딕', 10, 'bold'))
