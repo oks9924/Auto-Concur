@@ -88,7 +88,7 @@ def main() -> int:
     try:
         return run(folder, args.apply, tolerance, args.limit,
                    pick_sheet(folder, args.sheet), args.again)
-    except (AttachError, sheet.SheetError) as exc:
+    except (AttachError, sheet.SheetError, ValueError, OSError) as exc:
         print(f"\n작업을 중단했습니다: {exc}")
         return 1
 
