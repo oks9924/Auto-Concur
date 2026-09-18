@@ -64,13 +64,13 @@ TYPE_OPTION_JS = "(names) => {" + concur_ui.DOM_HELPERS + MARK + """
 
 FIELD_SELECTOR_JS = "(arg) => {" + concur_ui.DOM_HELPERS + MARK + r"""
   const root = surface();
-  const norm = s => (s || '').replace(/s+/g, ' ').replace(/s*[:：]s*$/, '').trim().toLowerCase();
+  const norm = s => (s || '').replace(/\s+/g, ' ').replace(/s*[:：]s*$/, '').trim().toLowerCase();
   const labelOf = el => {
     const aria = el.getAttribute('aria-label');
     if (aria) return aria;
     const by = el.getAttribute('aria-labelledby');
     if (by) {
-      const value = by.split(/s+/).map(id => (document.getElementById(id) || {}).innerText || '').join(' ').trim();
+      const value = by.split(/\s+/).map(id => (document.getElementById(id) || {}).innerText || '').join(' ').trim();
       if (value) return value;
     }
     if (el.id) {
@@ -103,11 +103,11 @@ FIELD_VALUE_JS = "(selector) => {" + concur_ui.DOM_HELPERS + r"""
   if ('value' in el && String(el.value || '').trim()) return String(el.value).trim();
   const input = el.querySelector && el.querySelector('input');
   if (input && String(input.value || '').trim()) return String(input.value).trim();
-  return (el.innerText || el.textContent || '').replace(/s+/g, ' ').trim();
+  return (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
 }"""
 
 OPTION_JS = "(want) => {" + concur_ui.DOM_HELPERS + MARK + r"""
-  const norm = s => (s || '').replace(/s+/g, ' ').trim().toLowerCase();
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const root = surface(), target = norm(want);
   const options = [...root.querySelectorAll('[role="option"],li[role="option"]')]
     .filter(o => visible(o) && o.getAttribute('aria-disabled') !== 'true');
@@ -119,6 +119,30 @@ EXPENSE_ID_JS = """() => {
   const m = location.pathname.match(/\/expenses\/([^/?#]+)\/?$/);
   return m ? m[1] : null;
 }"""
+
+
+INTERMEDIATE_JS = "(names) => {" + concur_ui.DOM_HELPERS + MARK + r"""
+  const norm = s => (s || '').replace(/\s+/g, ' ').trim();
+  const wants = new Set(names.map(norm));
+  const root = surface();
+  const nodes = [...root.querySelectorAll('button,[role="menuitem"],a')].filter(visible);
+  const exact = nodes.filter(n => wants.has(norm(n.innerText || n.textContent)));
+  return exact.length === 1 ? mark(exact[0], 'intermediate') : exact.length > 1 ? '!AMBIGUOUS' : null;
+}"""
+
+CREATE_NAMES = ('새 경비 만들기', '새 경비', 'Create New Expense', 'New Expense')
+
+
+def _maybe_target(page, script, arg=None, loops=12, wait_ms=200):
+    for _ in range(loops):
+        try:
+            result = page.evaluate(script, arg)
+            if result:
+                return result
+        except Exception:
+            pass
+        page.wait_for_timeout(wait_ms)
+    return None
 
 
 def row_fingerprint(row):
@@ -265,7 +289,26 @@ def _open_new(page, report, store, row):
     page.goto(report.url, wait_until='domcontentloaded')
     check_context(page, report.url)
     concur_ui.click_target(page, ADD_EXPENSE_JS, '경비 추가')
-    option = concur_ui.wait_condition(page, TYPE_OPTION_JS, '자동차 마일리지 경비 유형', list(TYPE_NAMES), timeout=30000)
+
+    # Tenants differ: some show types immediately, some show "Create New
+    # Expense" first, and some open a blank detail whose Expense Type LOV must
+    # be opened. Use only exact labels and stop on ambiguity.
+    option = _maybe_target(page, TYPE_OPTION_JS, list(TYPE_NAMES))
+    if not option:
+        intermediate = _maybe_target(page, INTERMEDIATE_JS, list(CREATE_NAMES), loops=8)
+        if intermediate == '!AMBIGUOUS':
+            raise ar.AttachError('새 경비 만들기 메뉴가 여러 개 보여 자동으로 고르지 않았습니다.')
+        if intermediate:
+            page.locator(intermediate).click()
+            option = _maybe_target(page, TYPE_OPTION_JS, list(TYPE_NAMES), loops=15)
+    if not option:
+        combo = _maybe_target(page, fx.SELECT_TYPE_COMBO_JS, loops=8)
+        if combo:
+            page.locator(combo).click()
+            option = _maybe_target(page, TYPE_OPTION_JS, list(TYPE_NAMES), loops=20)
+    if not option:
+        raise ar.AttachError('자동차 마일리지 경비 유형을 찾지 못했습니다.'
+                             + concur_ui.diagnose(page, '자동차 마일리지 유형 선택'))
     if option == '!AMBIGUOUS':
         raise ar.AttachError('자동차 마일리지 경비 유형이 여러 개 보여 자동으로 고르지 않았습니다.')
     page.locator(option).click()
