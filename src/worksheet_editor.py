@@ -58,7 +58,7 @@ class Editor(tk.Toplevel):
         more.grid(row=0, column=6, sticky='ew', padx=3)
         ttk.Button(tools, text='추가 참석자 선택', command=self.pick_extra_attendees).grid(row=1, column=0, sticky='ew', padx=(0, 5), pady=3)
         ttk.Button(tools, text='자주 쓰는 참석자 관리', command=lambda: show_manager(self)).grid(row=1, column=1, columnspan=2, sticky='w', pady=3)
-        ttk.Label(tools, text='추가 참석자: 더블클릭/Enter 선택 · F2 직접 입력').grid(row=1, column=3, columnspan=3, sticky='w')
+        ttk.Label(tools, text='추가 참석자: 셀 더블클릭/Enter/F4 → 체크박스 LOV · 직접 입력은 LOV 안에서').grid(row=1, column=3, columnspan=3, sticky='w')
         filters = ttk.Frame(self, padding=(16, 0, 16, 10))
         filters.grid(row=2, column=0, sticky='ew')
         ttk.Label(filters, text='검색').pack(side='left')
@@ -103,6 +103,8 @@ class Editor(tk.Toplevel):
         self.attendee_defaults = AttendeeDefaults(self)
         self.table.bind('<<SheetModified>>', self.modified)
         self.table.extra_bindings('begin_edit_cell', self.begin_cell_edit)
+        self.table.bind('<F4>', lambda event: (self.pick_extra_attendees_if_selected(), 'break')[1])
+        self.table.bind('<Alt-Down>', lambda event: (self.pick_extra_attendees_if_selected(), 'break')[1])
         self.text_size.trace_add('write', lambda *a: self.resize_text())
         self.query.trace_add('write', lambda *a: self.apply_filter())
         self.filter.trace_add('write', lambda *a: self.apply_filter())
@@ -219,9 +221,21 @@ class Editor(tk.Toplevel):
             return True
         return show_picker(self, original, apply)
 
+    def pick_extra_attendees_if_selected(self):
+        selected = self.table.get_currently_selected()
+        if not selected:
+            return
+        column = self.table.displayed_column_to_data(selected.column)
+        if self.COLUMNS[column] != sheet.EXTRA_ATTENDEE_COLUMN:
+            return
+        self.pick_extra_attendees(self.table.displayed_row_to_data(selected.row))
+
     def begin_cell_edit(self, event):
         column = self.table.displayed_column_to_data(event.column)
-        if self.COLUMNS[column] == sheet.EXTRA_ATTENDEE_COLUMN and event.key in ('??', 'Return'):
+        if self.COLUMNS[column] == sheet.EXTRA_ATTENDEE_COLUMN:
+            # Never open tksheet's transient text editor here. On Windows/Korean IME
+            # it could appear as a detached white composition box. The checkbox LOV
+            # owns all edits; its standard ttk.Entry still supports manual comma input.
             row = self.table.displayed_row_to_data(event.row)
             self.after_idle(lambda: self.pick_extra_attendees(row))
             return None
