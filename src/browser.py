@@ -13,9 +13,9 @@ Windows에 늘 있는 Edge로 넘어간다.
 특정 브라우저를 쓰고 싶으면 CONCUR_BROWSER 환경변수에 chromium / msedge /
 chrome 중 하나를 적는다.
 
-브라우저를 바꾸면 프로필(로그인 상태)이 그 브라우저 것으로 새로 시작한다.
-바꾼 뒤 브라우저가 뜨자마자 닫히면 browser-profile 폴더를 지우고 다시
-해본다 - 새 브라우저가 만든 프로필을 옛 브라우저가 못 여는 경우가 있다.
+브라우저별 프로필은 분리한다. Chromium은 기존 프로필 경로를 그대로 써서
+기존 로그인을 보존하고, Edge/Chrome은 각각 별도 경로를 쓴다. 서로 다른
+브라우저가 같은 user-data-dir을 재사용하지 않게 한다.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 
@@ -68,6 +69,19 @@ def channels() -> list[str | None]:
 MISSING = "Executable doesn't exist"
 
 
+def profile_for(profile_dir, channel):
+    """Use a distinct persistent profile for each browser engine/channel.
+
+    Chromium keeps the historical path so existing login state is preserved.
+    Installed Edge/Chrome get sibling directories and never reuse Chromium data.
+    """
+    root = Path(profile_dir)
+    if channel is None:
+        return root
+    safe = str(channel).replace("/", "_").replace("\\", "_")
+    return root.with_name(f"{root.name}-{safe}")
+
+
 def install_chromium() -> str | None:
     """Chromium을 지금 내려받는다. 받았으면 None, 못 받았으면 이유를 준다.
 
@@ -111,8 +125,9 @@ def launch(pw, profile_dir, only: str | None = None, **kwargs):
     tried, installed = [], False
 
     def start(channel):
+        chosen_profile = profile_for(profile_dir, channel)
         return pw.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir),
+            user_data_dir=str(chosen_profile),
             headless=False,
             **({"channel": channel} if channel else {}),
             **kwargs,
@@ -149,6 +164,7 @@ def _opened(channel, tried: list[str], ctx):
     왜 실패했는지는 아무 데도 안 남아서 알 길이 없었다. 뒤로 넘어간 이유는
     반드시 보여야 한다 - 조용히 다른 브라우저를 쓰면 원인을 못 찾는다.
     """
+    print(f"  (Python {sys.version.split()[0]} · Playwright {package_version('playwright')})")
     print(f"  (브라우저: {channel or 'chromium'})")
     for line in tried:
         print(f"    앞서 실패: {line}")
