@@ -148,7 +148,7 @@ class App(tk.Tk):
             return
         try:
             cfg = {**self.cfg, 'attendee_default': self.attendee.get().strip()}
-            Editor(self, source, cfg, on_run=self.step_update, on_mileage=self.step_mileage)
+            Editor(self, source, cfg, on_run=self.step_update)
         except Exception as exc:
             messagebox.showerror('작업지를 열지 못했습니다', str(exc), parent=self)
 
@@ -309,7 +309,7 @@ class App(tk.Tk):
         )
 
     def step_update(self) -> None:
-        """첨부와 입력을 한 세션에서 한다. 로그인을 두 번 하지 않아도 된다."""
+        """카드 경비와 저장된 마일리지를 한 Concur 세션에서 이어 처리한다."""
         limit = self._limit()
         def work() -> None:
             update_concur = _module("update_concur")
@@ -329,17 +329,6 @@ class App(tk.Tk):
             "Concur 화면에서 결과를 확인해 주세요. 실패한 건이 있으면 위 기록에 남아 있습니다.",
         )
 
-    def step_mileage(self) -> None:
-        limit = self._limit()
-        def work() -> None:
-            mileage_concur = _module('mileage_concur')
-            return mileage_concur.run(paths.folder(self.cfg['downloads_dir']), True, limit)
-
-        self._start(
-            '마일리지 Concur 신규 생성',
-            work,
-            'Concur 화면에서 새 마일리지 경비를 확인해 주세요. 확인 필요 행은 자동 재시도하지 않습니다.',
-        )
     def step_list_types(self) -> None:
         self._start(
             "경비유형 코드 확인", lambda: _module("fix_expenses").run(False, None, True)
