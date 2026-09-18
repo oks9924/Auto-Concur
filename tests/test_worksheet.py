@@ -324,3 +324,23 @@ def test_replace_dialog_all_is_one_undo_and_respects_filter(editor, monkeypatch)
     editor.table.undo()
     editor.sync()
     assert editor.model.rows[1]['코멘트'] == 'old old'
+
+
+def test_extra_attendee_cell_always_opens_lov_instead_of_text_editor(editor, monkeypatch):
+    from types import SimpleNamespace
+    called=[]
+    monkeypatch.setattr(editor,'pick_extra_attendees',lambda row:called.append(row))
+    column=editor.COLUMNS.index('추가 참석자')
+    event=SimpleNamespace(column=column,row=0,key='a',value='기존값')
+    assert editor.begin_cell_edit(event) is None
+    editor.update()
+    assert called==[0]
+
+
+def test_extra_attendee_f4_uses_selected_cell(editor, monkeypatch):
+    called=[]
+    monkeypatch.setattr(editor,'pick_extra_attendees',lambda row:called.append(row))
+    column=editor.COLUMNS.index('추가 참석자')
+    editor.table.select_cell(0,column)
+    editor.pick_extra_attendees_if_selected()
+    assert called==[0]

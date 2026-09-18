@@ -30,7 +30,7 @@ from .date_input import parse_date
 
 
 # 버튼이 부르는 단계들. 창이 뜨자마자 미리 불러둔다.
-STEP_MODULES = ("download_slips", "organize", "update_concur", "fix_expenses")
+STEP_MODULES = ("download_slips", "organize", "update_concur", "fix_expenses", "mileage_concur")
 
 
 def _module(name: str, quiet: bool = False):
@@ -148,7 +148,7 @@ class App(tk.Tk):
             return
         try:
             cfg = {**self.cfg, 'attendee_default': self.attendee.get().strip()}
-            Editor(self, source, cfg, on_run=self.step_update)
+            Editor(self, source, cfg, on_run=self.step_update, on_mileage=self.step_mileage)
         except Exception as exc:
             messagebox.showerror('작업지를 열지 못했습니다', str(exc), parent=self)
 
@@ -329,6 +329,17 @@ class App(tk.Tk):
             "Concur 화면에서 결과를 확인해 주세요. 실패한 건이 있으면 위 기록에 남아 있습니다.",
         )
 
+    def step_mileage(self) -> None:
+        limit = self._limit()
+        def work() -> None:
+            mileage_concur = _module('mileage_concur')
+            return mileage_concur.run(paths.folder(self.cfg['downloads_dir']), True, limit)
+
+        self._start(
+            '마일리지 Concur 신규 생성',
+            work,
+            'Concur 화면에서 새 마일리지 경비를 확인해 주세요. 확인 필요 행은 자동 재시도하지 않습니다.',
+        )
     def step_list_types(self) -> None:
         self._start(
             "경비유형 코드 확인", lambda: _module("fix_expenses").run(False, None, True)

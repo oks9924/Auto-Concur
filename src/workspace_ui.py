@@ -106,7 +106,7 @@ def build_workspace(app):
     specs = [
         ('① 전표 준비', '카드 전표를 받아 작업지를 만듭니다.', [('전표 다운로드', app.step_download), ('작업지 생성', app.step_organize)]),
         ('② 경비 입력', '기존 작업지는 이 단계에서 바로 이어갑니다.', [('작업지 열기', app.edit_worksheet)]),
-        ('③ Concur 반영', '카드 경비 반영 · 마일리지 신규 생성은 아직 미연결입니다.', [('Concur 반영', app.step_update)]),
+        ('③ Concur 반영', '카드 경비는 기존 반영, 마일리지는 작업지의 별도 버튼에서 신규 생성합니다.', [('카드 경비 Concur 반영', app.step_update)]),
         ('④ 결과 확인', '과거 검증 기록과 이번 실행의 로그를 구분합니다.', [('검증 기록 보기', app.show_results), ('상세 로그', lambda: app.tabs.select(app.log_tab))]),
     ]
     for i, (title, description, actions) in enumerate(specs):
