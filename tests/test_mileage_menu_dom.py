@@ -139,3 +139,29 @@ def test_vehicle_combo_found_from_div_caption_and_sibling_button(browser):
     selector=page.evaluate(COMBO_JS,['차량 ID','Vehicle ID','Vehicle'])
     assert selector and page.locator(selector).get_attribute('id')=='vehicle-combo'
     page.close()
+
+
+def test_actual_mileage_labels_can_resolve_all_text_fields(browser):
+    page=browser.new_page()
+    page.set_content("""
+    <div class='sapcnqr-dialog__body'>
+      <div><span>거래 날짜</span><div><input id='date'></div></div>
+      <div><span>출발지</span><div><input id='from'></div></div>
+      <div><span>도착지</span><div><input id='to'></div></div>
+      <div><span>거리</span><div><input id='km'></div></div>
+      <div><span>탑승자 수</span><div><input id='passengers'></div></div>
+      <div><span>설명</span><div><textarea id='description'></textarea></div></div>
+    </div>
+    """)
+    cases=[
+      (['거래 날짜','Transaction Date','Date'],'date'),
+      (['출발지','출발 위치','Origin','From'],'from'),
+      (['도착지','도착 위치','Destination','To'],'to'),
+      (['거리','Distance'],'km'),
+      (['탑승자 수','Passengers','Passenger Count'],'passengers'),
+      (['설명','Description','Business Purpose'],'description'),
+    ]
+    for names,wanted in cases:
+        selector=page.evaluate(FIELD_JS,names)
+        assert selector and page.locator(selector).get_attribute('id')==wanted
+    page.close()
