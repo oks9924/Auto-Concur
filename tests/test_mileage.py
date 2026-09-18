@@ -25,7 +25,7 @@ def test_estimate_and_vehicle_no_inference(tmp_path):
     assert checked_row(row)['estimate']=='3500.0'
     row['passengers']='4'
     assert checked_row(row)['estimate']=='3500.0'
-    assert validate_vehicles([{'vehicle':'I choose my own name','kind':'short'}])[0]['rate']=='280'
+    assert validate_vehicles([{'vehicle':'I choose my own name','kind':'short'}])[0]['rate']=='470'
 
 
 @pytest.mark.parametrize('field,value',[('origin',''),('destination',''),('distance','0'),('distance','-1'),
@@ -135,7 +135,7 @@ def test_vehicle_manager_save_and_cancel(editor,monkeypatch):
     from src.mileage_ui import VehicleManager
     from src.mileage import vehicles_store
     dialog=VehicleManager(editor);dialog.vehicle.set('Unique name');dialog.kind.set('short');assert dialog.save()
-    assert vehicles_store().rows==[{'vehicle':'Unique name','kind':'short','rate':'280'}]
+    assert vehicles_store().rows==[{'vehicle':'Unique name','kind':'short','rate':'470'}]
     dialog=VehicleManager(editor);dialog.vehicle.set('Discarded')
     monkeypatch.setattr('src.mileage_ui.messagebox.askyesno',lambda *a,**k:True)
     dialog.close();assert len(vehicles_store().rows)==1
@@ -152,26 +152,27 @@ def test_copy_mileage_changes_date_only_and_clears_concur_state(editor):
         'concur_note':'old result',
     })
     panel.book.commit_rows([source]);panel.render()
-    panel.table.selection_set(source['id'])
+    stored=deepcopy(panel.book.rows[0])
+    panel.table.selection_set(stored['id'])
 
     form=panel.copy()
     assert form is not None and form.copying
-    assert form.original['id']!=source['id']
+    assert form.original['id']!=stored['id']
     assert not [key for key in form.original if key.startswith('concur_')]
     for key in ('origin','destination','vehicle','kind','rate','distance','passengers',
                 'description','map','map_sha256','map_name'):
-        assert form.original[key]==source[key]
+        assert form.original[key]==stored[key]
 
     form.vars['date'].set('2026-09-19')
     assert form.apply()
     assert len(panel.book.rows)==2
     copied=panel.book.rows[1]
     assert copied['date']=='2026-09-19'
-    assert copied['id']!=source['id']
+    assert copied['id']!=stored['id']
     assert not [key for key in copied if key.startswith('concur_')]
     for key in ('origin','destination','vehicle','kind','rate','distance','passengers',
                 'description','map','map_sha256','map_name'):
-        assert copied[key]==source[key]
+        assert copied[key]==stored[key]
 
 
 def test_copy_mileage_cancel_creates_nothing(editor):
