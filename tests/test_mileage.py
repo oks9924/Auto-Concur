@@ -22,16 +22,16 @@ def ready(book,tmp_path):
 
 def test_estimate_and_vehicle_no_inference(tmp_path):
     book=MileageBook(tmp_path);row=ready(book,tmp_path)
-    assert checked_row(row)['estimate']=='5875.0'
+    assert checked_row(row)['estimate']=='3500.0'
     row['passengers']='4'
-    assert checked_row(row)['estimate']=='5875.0'
+    assert checked_row(row)['estimate']=='3500.0'
     assert validate_vehicles([{'vehicle':'I choose my own name','kind':'short'}])[0]['rate']=='280'
 
 
 @pytest.mark.parametrize('field,value',[('origin',''),('destination',''),('distance','0'),('distance','-1'),
     ('distance','1,200'),('distance','NaN'),('distance','Infinity'),('distance','1e4'),
     ('passengers','1.5'),('passengers','-1'),('date','bad'),('date','2026-02-30'),('description',''),
-    ('kind','auto'),('rate','280'),('map','')])
+    ('kind','auto'),('rate','999'),('map','')])
 def test_invalid_row(field,value,tmp_path):
     book=MileageBook(tmp_path);row=ready(book,tmp_path);row[field]=value
     with pytest.raises(ValueError): checked_row(row)
@@ -111,7 +111,7 @@ def test_add_panel_form_separate_rows_and_image(editor):
     assert form.apply()
     panel=editor.mileage_panel
     assert len(panel.book.rows)==1 and len(editor.tables.panes())==2
-    assert panel.book.rows[0]['estimate']=='4935.0'
+    assert panel.book.rows[0]['estimate']=='2940.0'
     assert panel.save() and editor.model.rows==original
     assert editor.model.target.read_bytes()==original_disk
     panel.undo();assert not panel.book.rows
@@ -182,3 +182,15 @@ def test_copy_mileage_cancel_creates_nothing(editor):
     form=panel.copy()
     form.close()
     assert len(panel.book.rows)==1 and panel.book.rows[0]['id']==source['id']
+
+
+
+def test_corrected_long_short_rates_and_old_rows_migrate(tmp_path):
+    assert validate_vehicles([{'vehicle':'long-car','kind':'long'}])[0]['rate']=='280'
+    assert validate_vehicles([{'vehicle':'short-car','kind':'short'}])[0]['rate']=='470'
+    book=MileageBook(tmp_path)
+    row=ready(book,tmp_path)
+    row['kind']='long';row['rate']='470'
+    migrated=checked_row(row)
+    assert migrated['rate']=='280'
+    assert migrated['estimate']=='3500.0'
