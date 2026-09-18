@@ -373,6 +373,21 @@ class Editor(tk.Toplevel):
         self.guide_summary.set(f'초록: 입력 안내 · 노랑: 안내 미등록 {unregistered}건 (필수 여부 미확인)')
         self.table.refresh()
 
+    def show_help(self):
+        text = (
+            '작업지 사용 안내\n\n'
+            '• 빈칸은 기존 Concur 값을 유지합니다.\n'
+            '• 초록색은 입력 안내이며 Concur 필수값 확정을 뜻하지 않습니다.\n'
+            f'• {self.guide_summary.get()}\n'
+            '• 입실·퇴실: 셀 더블클릭/Enter → 달력\n'
+            '• 추가 참석자: 셀 더블클릭/Enter/F4/Alt+↓ → 체크박스 LOV\n'
+            '  여러 명 선택 가능 · 직접 입력은 LOV 안에서 쉼표로 추가\n'
+            '• Ctrl+C/V: 복사/붙여넣기 · Ctrl+Z/Y: 실행 취소/다시 실행 · Ctrl+S: 저장\n\n'
+            'Concur 반영은 저장된 전체 작업지를 기준으로 합니다.\n'
+            '현재 필터나 선택 행은 실행 범위를 제한하지 않습니다.'
+        )
+        messagebox.showinfo('경비 입력 도움말', text, parent=self)
+
     def show_input_guide(self):
         self.table.close_text_editor(set_data=True)
         self.sync()
