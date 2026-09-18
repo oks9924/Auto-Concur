@@ -1,4 +1,4 @@
-"""Concur 반영을 한 번에: 영수증 첨부 + 유형·목적·코멘트·참석자.
+"""Concur 반영을 한 번에: 카드 경비 입력/영수증 + 저장된 차량 마일리지 신규 생성.
 
     python -m src.update_concur            # 계획만 (아무것도 안 바꿈)
     python -m src.update_concur --apply    # 반영
@@ -30,7 +30,7 @@ def pick_sheet(folder: Path, given: str | None) -> Path | None:
     return None
 
 
-def precheck(folder: Path, sheet_path: Path | None) -> None:
+def precheck(folder: Path, sheet_path: Path | None, limit: int | None = None) -> None:
     """브라우저를 띄우기 전에 읽을 파일부터 확인한다.
 
     로그인하고 리포트까지 연 다음에 '작업지가 없다'로 멈추면 그 수고가 헛일이
@@ -40,6 +40,10 @@ def precheck(folder: Path, sheet_path: Path | None) -> None:
     print(f"전표 {len(slips)}건을 읽었습니다: {folder / 'manifest.csv'}")
     if sheet_path:
         print(f"작업지 {len(sheet.load(sheet_path))}행을 읽었습니다: {sheet_path}")
+    from . import mileage_concur
+    mileage = mileage_concur.status(folder, limit)
+    print(f"마일리지 {mileage['total']}건 · 신규 생성 대상 {mileage['pending']}건 · "
+          f"기존 확인 {mileage['verified']}건 · 확인 필요 {mileage['needs_review']}건")
 
 
 @configured_run
@@ -47,11 +51,36 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None,
         sheet_path: Path | None, again: bool = False, cfg: dict | None = None) -> int:
     cfg = dict(settings.load() if cfg is None else cfg)
     cfg['date_tolerance_days'] = tolerance
-    precheck(folder, sheet_path)
-    from . import sequential_workflow
+    precheck(folder, sheet_path, limit)
+    from . import sequential_workflow, mileage_concur
+    from .concur_workflow import RunResult
+
+    mileage = mileage_concur.status(folder, limit)
     pw, ctx, page, report = open_report(automatic=True)
     try:
-        return sequential_workflow.run(page, report, folder, cfg, sheet_path, apply, limit, again)
+        message = (
+            f'{report.title}\n리포트 ID: {report.key[1]}\n'
+            f'현재 리포트 경비 {len(report.rows)}건을 카드 작업지와 비교한 뒤, '
+            f'저장된 마일리지 신규 생성 대상 {mileage["pending"]}건을 같은 세션에서 이어 처리합니다.\n'
+            f'이미 생성 확인된 마일리지 {mileage["verified"]}건은 건너뛰고, '
+            f'이전 확인 필요 {mileage["needs_review"]}건은 자동 재생성하지 않습니다.\n'
+            '처리 순서: 카드 경비 → 차량 마일리지'
+        )
+        print(message)
+        if apply and not console.confirm_action(message, '카드 경비와 마일리지 함께 반영 시작'):
+            return RunResult(0, '사용자가 반영을 취소했습니다. Concur는 변경하지 않았습니다.')
+
+        card = sequential_workflow.run(
+            page, report, folder, cfg, sheet_path, apply, limit, again, confirm=False)
+        mileage_result = mileage_concur.run_in_session(
+            page, report.url, folder, apply, limit)
+
+        summary = f'카드 경비: {getattr(card, "summary", str(card))} / 마일리지: {mileage_result.summary}'
+        print('통합 실행 결과: ' + summary)
+        result = RunResult(int(bool(int(card) or int(mileage_result))), summary)
+        result.card_result = card
+        result.mileage_result = mileage_result
+        return result
     finally:
         ctx.close()
         pw.stop()
