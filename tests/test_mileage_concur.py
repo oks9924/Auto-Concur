@@ -118,21 +118,42 @@ def test_multiple_mileage_rows_each_persist_verified_id(tmp_path,monkeypatch):
     assert len(calls)==2
 
 
-def test_known_prewrite_ui_failure_is_retryable(tmp_path,monkeypatch):
+def test_known_prewrite_ui_failure_is_reconciled_then_retried(tmp_path,monkeypatch):
     book=prepared(tmp_path)
     book.rows[0]['concur_state']='needs_review'
     book.rows[0]['concur_note']='Locator.click timeout [data-auto-mileage-combo="1"]'
     book.save()
     info=mileage_concur.status(tmp_path)
-    assert info['pending']==1 and info['needs_review']==0 and info['retryable_prewrite']==1
+    assert info['pending']==0 and info['needs_review']==0 and info['reconcile']==1
 
+    page=FakePage()
+    monkeypatch.setattr(mileage_concur,'check_context',lambda *a:None)
+    monkeypatch.setattr(mileage_concur,'_report_ids',lambda *a:{'OLD'})
     called=[]
     monkeypatch.setattr(mileage_concur,'create_one',
         lambda page,url,row,image:(called.append(row['id']) or 'EXP-RETRY'))
-    result=mileage_concur.run_in_session(object(),'https://example/reports/R',tmp_path,True,None)
+    result=mileage_concur.run_in_session(page,'https://example/reports/R',tmp_path,True,None)
     assert result==0 and len(called)==1
     saved=MileageBook(tmp_path).rows[0]
     assert saved['concur_state']=='verified' and saved['concur_expense_id']=='EXP-RETRY'
+
+
+def test_prewrite_review_with_existing_report_id_is_not_recreated(tmp_path,monkeypatch):
+    book=prepared(tmp_path)
+    book.rows[0]['concur_state']='needs_review'
+    book.rows[0]['concur_note']='거래 날짜 입력칸을 하나로 확인하지 못했습니다.'
+    book.rows[0]['concur_expense_id']='EXP-EXISTS'
+    book.save()
+    page=FakePage()
+    monkeypatch.setattr(mileage_concur,'check_context',lambda *a:None)
+    monkeypatch.setattr(mileage_concur,'_report_ids',lambda *a:{'EXP-EXISTS'})
+    monkeypatch.setattr(mileage_concur,'create_one',
+        lambda *a,**k:(_ for _ in ()).throw(AssertionError('must not recreate')))
+    result=mileage_concur.run_in_session(page,'https://example/reports/R',tmp_path,True,None)
+    assert result==1
+    saved=MileageBook(tmp_path).rows[0]
+    assert saved['concur_state']=='needs_review'
+    assert saved['concur_expense_id']=='EXP-EXISTS'
 
 
 def test_safe_pre_save_screen_failure_stays_retryable(tmp_path,monkeypatch):

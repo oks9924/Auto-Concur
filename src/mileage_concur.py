@@ -108,23 +108,42 @@ MILEAGE_FORM_READY_JS = "() => {" + SURFACE_HELPERS + r"""
 }"""
 
 FIELD_JS = "(names) => {" + SURFACE_HELPERS + r"""
-  const root=surface();
-  const wants=names.map(x=>norm(x).toLowerCase());
-  const controls=[...root.querySelectorAll('input,textarea')].filter(e => visible(e) && !e.disabled && e.type!=='file');
+  const root=surface(), wants=names.map(x=>norm(x).toLowerCase());
+  const controls=[...root.querySelectorAll('input,textarea,[contenteditable="true"]')]
+    .filter(e => visible(e) && !e.disabled && e.type!=='file');
   const byAttr=controls.filter(e => {
-    const hay=[e.getAttribute('aria-label'),e.name,e.id,e.placeholder].map(x=>norm(x).toLowerCase()).join(' ');
+    const hay=[e.getAttribute('aria-label'),e.name,e.id,e.placeholder]
+      .map(x=>norm(x).toLowerCase()).join(' ');
     return wants.some(w => w && hay.includes(w));
   });
   const byLabel=[];
   for (const l of root.querySelectorAll('label')) {
     const t=norm(l.innerText).toLowerCase();
-    if (!wants.some(w => w && t.includes(w))) continue;
+    if (!wants.some(w => w && (t===w || t.includes(w)))) continue;
     let e=l.control;
     if (!e && l.htmlFor) e=document.getElementById(l.htmlFor);
-    if (!e) e=l.querySelector('input,textarea');
+    if (!e) e=l.querySelector('input,textarea,[contenteditable="true"]');
     if (e && root.contains(e) && visible(e) && !e.disabled && e.type!=='file') byLabel.push(e);
   }
-  const hits=[...new Set([...byLabel,...byAttr])];
+  // Concur often renders the caption in one div and the input in a sibling div.
+  // Walk upward from an exact caption until one nearby editable control is found.
+  const byCaption=[];
+  const captions=[...root.querySelectorAll('*')].filter(e => {
+    if (!visible(e)) return false;
+    const t=norm(e.innerText).toLowerCase();
+    if (!wants.some(w => w && t===w)) return false;
+    return ![...e.children].some(c => visible(c) && norm(c.innerText).toLowerCase()===t);
+  });
+  for (const caption of captions) {
+    let box=caption;
+    for (let depth=0; box && box!==root && depth<6; depth++,box=box.parentElement) {
+      const nearby=[...box.querySelectorAll('input,textarea,[contenteditable="true"]')]
+        .filter(e=>visible(e)&&!e.disabled&&e.type!=='file');
+      if (nearby.length===1) { byCaption.push(nearby[0]); break; }
+      if (nearby.length>1) break;
+    }
+  }
+  const hits=[...new Set([...byLabel,...byAttr,...byCaption])];
   if (hits.length!==1) return null;
   document.querySelectorAll('[data-auto-mileage-field]').forEach(e=>e.removeAttribute('data-auto-mileage-field'));
   hits[0].setAttribute('data-auto-mileage-field','1');
@@ -133,22 +152,37 @@ FIELD_JS = "(names) => {" + SURFACE_HELPERS + r"""
 
 COMBO_JS = "(names) => {" + SURFACE_HELPERS + r"""
   const root=surface(), wants=names.map(x=>norm(x).toLowerCase());
-  const candidates=[...root.querySelectorAll('[role="combobox"],button')].filter(e =>
-    visible(e) && !e.disabled && e.getAttribute('data-testid')!=='column-sort');
+  const candidates=[...root.querySelectorAll('[role="combobox"],button,input')]
+    .filter(e => visible(e) && !e.disabled && e.getAttribute('data-testid')!=='column-sort');
   const byOwn=candidates.filter(e=>{
-    const hay=norm([e.innerText,e.getAttribute('aria-label'),e.getAttribute('data-nuiexp'),e.id].join(' ')).toLowerCase();
+    const hay=norm([e.innerText,e.getAttribute('aria-label'),e.getAttribute('data-nuiexp'),e.id,e.name,e.placeholder].join(' ')).toLowerCase();
     return wants.some(w=>w && hay.includes(w));
   });
-  const byLabel=[];
+  const byLabel=[], byCaption=[];
   for (const l of root.querySelectorAll('label')) {
     const t=norm(l.innerText).toLowerCase();
-    if (!wants.some(w=>w && t.includes(w))) continue;
+    if (!wants.some(w=>w && (t===w || t.includes(w)))) continue;
     let e=l.control;
     if (!e && l.htmlFor) e=document.getElementById(l.htmlFor);
-    if (!e) e=l.parentElement?.querySelector('[role="combobox"],button');
+    if (!e) e=l.parentElement?.querySelector('[role="combobox"],button,input');
     if (e && root.contains(e) && visible(e) && e.getAttribute('data-testid')!=='column-sort') byLabel.push(e);
   }
-  const hits=[...new Set([...byLabel,...byOwn])];
+  const captions=[...root.querySelectorAll('*')].filter(e => {
+    if (!visible(e)) return false;
+    const t=norm(e.innerText).toLowerCase();
+    if (!wants.some(w => w && t===w)) return false;
+    return ![...e.children].some(c => visible(c) && norm(c.innerText).toLowerCase()===t);
+  });
+  for (const caption of captions) {
+    let box=caption;
+    for (let depth=0; box && box!==root && depth<6; depth++,box=box.parentElement) {
+      const nearby=[...box.querySelectorAll('[role="combobox"],button,input')]
+        .filter(e=>visible(e)&&!e.disabled&&e.getAttribute('data-testid')!=='column-sort');
+      if (nearby.length===1) { byCaption.push(nearby[0]); break; }
+      if (nearby.length>1) break;
+    }
+  }
+  const hits=[...new Set([...byLabel,...byOwn,...byCaption])];
   if(hits.length!==1)return null;
   document.querySelectorAll('[data-auto-mileage-combo]').forEach(e=>e.removeAttribute('data-auto-mileage-combo'));
   hits[0].setAttribute('data-auto-mileage-combo','1');
@@ -177,24 +211,25 @@ FILE_INPUT_JS = "() => {" + SURFACE_HELPERS + r"""
 
 
 
-KNOWN_PREWRITE_MARKERS = (
+PRE_SAVE_UI_MARKERS = (
     'data-auto-mileage-combo',
     '수동으로 경비 생성 표시',
     '자동차 마일리지 유형 표시',
+    '마일리지 상세 입력 화면',
+    '입력칸을 하나로 확인하지 못했습니다',
+    '차량 ID 선택칸을 확인하지 못했습니다',
+    '지도 이미지 업로드',
 )
 
 
-def _known_prewrite_failure(row):
+def _pre_save_review(row):
     return (row.get('concur_state') == 'needs_review'
-            and not row.get('concur_expense_id')
-            and any(marker in str(row.get('concur_note') or '') for marker in KNOWN_PREWRITE_MARKERS))
+            and any(marker in str(row.get('concur_note') or '') for marker in PRE_SAVE_UI_MARKERS))
 
 
 def status(folder: Path, limit=None):
     book = MileageBook(folder)
-    retryable = [r['id'] for r in book.rows if _known_prewrite_failure(r)]
-    pending = [r['id'] for r in book.rows
-               if r.get('concur_state') not in ('verified','needs_review') or _known_prewrite_failure(r)]
+    pending = [r['id'] for r in book.rows if r.get('concur_state') not in ('verified','needs_review')]
     if limit is not None:
         pending = pending[:limit]
     return {
@@ -202,10 +237,38 @@ def status(folder: Path, limit=None):
         'pending_ids': pending,
         'pending': len(pending),
         'verified': sum(r.get('concur_state') == 'verified' for r in book.rows),
-        'needs_review': sum(r.get('concur_state') == 'needs_review' and not _known_prewrite_failure(r)
+        'needs_review': sum(r.get('concur_state') == 'needs_review' and not _pre_save_review(r)
                             for r in book.rows),
-        'retryable_prewrite': len(retryable),
+        'reconcile': sum(_pre_save_review(r) for r in book.rows),
     }
+
+
+def _reconcile_pre_save_reviews(page, report_url, book):
+    """Retry old UI failures only after proving no expense ID exists in the report."""
+    candidates=[r for r in book.rows if _pre_save_review(r)]
+    if not candidates:
+        return 0, 0
+    page.goto(report_url, wait_until='domcontentloaded')
+    check_context(page, report_url)
+    ids=_report_ids(page)
+    retryable=blocked=0
+    changed=False
+    for row in candidates:
+        ident=str(row.get('concur_expense_id') or '').strip()
+        if ident and ident in ids:
+            blocked += 1
+            row['concur_note'] = '저장 전 오류 뒤 Concur 리포트에 경비 ID가 존재하여 자동 재생성하지 않음'
+            changed=True
+        else:
+            row.pop('concur_expense_id', None)
+            row['concur_state']='retryable'
+            row['concur_note']='저장 전 UI 오류였고 현재 리포트에 해당 신규 경비 ID가 없어 재시도 가능'
+            retryable += 1
+            changed=True
+    if changed:
+        book.rows=book.validate_rows(book.rows)
+        book.save()
+    return retryable, blocked
 
 
 def _click_unique_text(page, labels, what, timeout=10000):
@@ -257,6 +320,26 @@ def _report_ids(page):
     return {r.expense_id for r in ar.rows_when_ready(page, allow_incomplete=True) if r.expense_id}
 
 
+def _raise_pre_save(page, report_url, before, draft_id, exc):
+    """Classify a failure before Save by comparing the report before/after."""
+    try:
+        page.goto(report_url, wait_until='domcontentloaded')
+        check_context(page, report_url)
+        after=_report_ids(page)
+    except Exception as verify_exc:
+        raise UncertainMileageCreate(
+            f'{exc} / 저장 전 실패 후 리포트 상태도 확인하지 못했습니다: {verify_exc}', draft_id) from exc
+    added=after-set(before)
+    if draft_id and draft_id in after:
+        raise UncertainMileageCreate(str(exc), draft_id) from exc
+    if len(added)==1:
+        raise UncertainMileageCreate(str(exc), next(iter(added))) from exc
+    if not added:
+        raise MileageConcurError(str(exc)) from exc
+    raise UncertainMileageCreate(
+        f'{exc} / 저장 전 실패 후 신규 경비가 {len(added)}건 보여 자동 재시도하지 않습니다.') from exc
+
+
 def create_one(page, report_url, row, map_path, before_ids=None):
     """Create exactly one mileage expense and prove one new report id appeared."""
     page.goto(report_url, wait_until='domcontentloaded')
@@ -276,10 +359,7 @@ def create_one(page, report_url, row, map_path, before_ids=None):
     try:
         _select_mileage_type(page)
     except Exception as exc:
-        draft = _expense_id(page.url)
-        if draft:
-            raise UncertainMileageCreate(str(exc), draft) from exc
-        raise MileageConcurError(str(exc)) from exc
+        _raise_pre_save(page, report_url, before, _expense_id(page.url), exc)
 
     draft_id = _expense_id(page.url)
     try:
@@ -292,9 +372,7 @@ def create_one(page, report_url, row, map_path, before_ids=None):
         _fill(page, ['설명','Description','Business Purpose'], row['description'], '설명')
         _upload_map(page, map_path)
     except Exception as exc:
-        if draft_id:
-            raise UncertainMileageCreate(str(exc), draft_id) from exc
-        raise MileageConcurError(str(exc)) from exc
+        _raise_pre_save(page, report_url, before, draft_id, exc)
 
     # From the save click onward the server may have accepted the expense even if
     # the response/navigation is lost. Never retry automatically after this point.
@@ -332,13 +410,21 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
         raise MileageConcurError('마일리지 표에 저장하지 않은 변경이 있습니다. 먼저 저장하세요.')
 
     info = status(folder, limit)
+    if apply and info.get('reconcile'):
+        retryable, blocked = _reconcile_pre_save_reviews(page, report_url, book)
+        if retryable:
+            print(f'이전 저장 전 UI 실패 {retryable}건: 현재 리포트에 신규 경비 ID가 없어 안전하게 다시 시도합니다.')
+        if blocked:
+            print(f'이전 저장 전 UI 실패 {blocked}건: Concur 리포트에 경비 ID가 있어 자동 재생성하지 않습니다.')
+        info = status(folder, limit)
+
     pending_ids = list(info['pending_ids'])
     if info['verified']:
         print(f"이미 Concur 생성 확인된 마일리지 {info['verified']}건은 건너뜁니다.")
     if info['needs_review']:
         print(f"이전 실행에서 확인이 필요한 마일리지 {info['needs_review']}건은 자동 재시도하지 않습니다.")
-    if info.get('retryable_prewrite'):
-        print(f"이전 버전의 저장 전 UI 탐색 실패 {info['retryable_prewrite']}건은 안전하게 다시 시도합니다.")
+    if not apply and info.get('reconcile'):
+        print(f"저장 전 UI 실패 {info['reconcile']}건은 실제 리포트 확인 후 재시도 가능 여부를 결정합니다.")
 
     if not pending_ids:
         summary = (f"마일리지 신규 생성 대상 없음 · 기존 확인 {info['verified']}건"
@@ -357,12 +443,6 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
         current = next((r for r in book.rows if r.get('id') == local_id), None)
         if current is None:
             raise MileageConcurError('마일리지 내부 식별자가 실행 중 사라졌습니다.')
-        if _known_prewrite_failure(current):
-            current['concur_state'] = 'retryable'
-            current['concur_note'] = '이전 버전에서 저장 전에 UI 탐색이 실패하여 재시도'
-            book.rows = book.validate_rows(book.rows)
-            book.save()
-            current = next(r for r in book.rows if r.get('id') == local_id)
         row = checked_row(current)
         image = book.check_image(row)
         print(f'[{n}/{len(pending_ids)}] 마일리지 신규 생성: '
@@ -407,7 +487,7 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
 
 def run(folder: Path, apply=True, limit=None):
     info = status(folder, limit)
-    if not info['pending']:
+    if not info['pending'] and not (apply and info.get('reconcile')):
         # No browser is needed merely to report verified/review states.
         return run_in_session(None, '', folder, apply, limit)
     if not apply:

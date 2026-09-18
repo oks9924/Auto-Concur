@@ -105,3 +105,63 @@ def test_mileage_type_prefers_button_inside_active_modal(browser):
     page.locator(selector).click()
     assert page.get_attribute('body','data-clicked')=='modal'
     page.close()
+
+
+def test_field_found_from_div_caption_and_sibling_input(browser):
+    page=browser.new_page()
+    page.set_content("""
+    <div class='sapcnqr-dialog__body add-modal__body modal-body--no-padding'>
+      <div class='field'>
+        <div class='caption'><span>거래 날짜</span></div>
+        <div class='control'><input id='transaction-date' value=''></div>
+      </div>
+      <div class='field'><div><span>출발지</span></div><div><input id='origin'></div></div>
+      <div class='field'><div><span>도착지</span></div><div><input id='destination'></div></div>
+    </div>
+    """)
+    selector=page.evaluate(FIELD_JS,['거래 날짜','Transaction Date','Date'])
+    assert selector and page.locator(selector).get_attribute('id')=='transaction-date'
+    page.close()
+
+
+def test_vehicle_combo_found_from_div_caption_and_sibling_button(browser):
+    page=browser.new_page()
+    page.set_content("""
+    <button data-testid='column-sort' aria-label='Vehicle'>background vehicle</button>
+    <div class='sapcnqr-dialog__body add-modal__body modal-body--no-padding'>
+      <div class='field'>
+        <div><span>차량 ID</span></div>
+        <div><button id='vehicle-combo' role='combobox'>05두2956</button></div>
+      </div>
+      <div><span>거리</span><input id='distance'></div>
+    </div>
+    """)
+    selector=page.evaluate(COMBO_JS,['차량 ID','Vehicle ID','Vehicle'])
+    assert selector and page.locator(selector).get_attribute('id')=='vehicle-combo'
+    page.close()
+
+
+def test_actual_mileage_labels_can_resolve_all_text_fields(browser):
+    page=browser.new_page()
+    page.set_content("""
+    <div class='sapcnqr-dialog__body'>
+      <div><span>거래 날짜</span><div><input id='date'></div></div>
+      <div><span>출발지</span><div><input id='from'></div></div>
+      <div><span>도착지</span><div><input id='to'></div></div>
+      <div><span>거리</span><div><input id='km'></div></div>
+      <div><span>탑승자 수</span><div><input id='passengers'></div></div>
+      <div><span>설명</span><div><textarea id='description'></textarea></div></div>
+    </div>
+    """)
+    cases=[
+      (['거래 날짜','Transaction Date','Date'],'date'),
+      (['출발지','출발 위치','Origin','From'],'from'),
+      (['도착지','도착 위치','Destination','To'],'to'),
+      (['거리','Distance'],'km'),
+      (['탑승자 수','Passengers','Passenger Count'],'passengers'),
+      (['설명','Description','Business Purpose'],'description'),
+    ]
+    for names,wanted in cases:
+        selector=page.evaluate(FIELD_JS,names)
+        assert selector and page.locator(selector).get_attribute('id')==wanted
+    page.close()
