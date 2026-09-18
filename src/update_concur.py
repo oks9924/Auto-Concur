@@ -43,7 +43,8 @@ def precheck(folder: Path, sheet_path: Path | None, limit: int | None = None) ->
     from . import mileage_concur
     mileage = mileage_concur.status(folder, limit)
     print(f"마일리지 {mileage['total']}건 · 신규 생성 대상 {mileage['pending']}건 · "
-          f"기존 확인 {mileage['verified']}건 · 확인 필요 {mileage['needs_review']}건")
+          f"기존 확인 {mileage['verified']}건 · 확인 필요 {mileage['needs_review']}건"
+          + (f" · 저장 전 오류 재확인 {mileage.get('reconcile', 0)}건" if mileage.get('reconcile') else ""))
 
 
 @configured_run
@@ -64,7 +65,9 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None,
             f'저장된 마일리지 신규 생성 대상 {mileage["pending"]}건을 같은 세션에서 이어 처리합니다.\n'
             f'이미 생성 확인된 마일리지 {mileage["verified"]}건은 건너뛰고, '
             f'이전 확인 필요 {mileage["needs_review"]}건은 자동 재생성하지 않습니다.\n'
-            '처리 순서: 카드 경비 → 차량 마일리지'
+            + (f'저장 전 UI 오류 {mileage.get("reconcile", 0)}건은 리포트의 실제 경비 ID를 확인한 뒤 '
+               '없을 때만 재시도합니다.\n' if mileage.get('reconcile') else '')
+            + '처리 순서: 카드 경비 → 차량 마일리지'
         )
         print(message)
         if apply and not console.confirm_action(message, '카드 경비와 마일리지 함께 반영 시작'):
