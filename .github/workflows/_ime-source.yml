@@ -1,0 +1,21 @@
+name: Table input source snapshot
+on:
+  push:
+    branches: [fix/table-ime-lov-20260918]
+    paths: [.github/workflows/_ime-source.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: table-input-source
+          path: |
+            src/
+            tests/
+            docs/
+            requirements.txt
+          retention-days: 1
