@@ -38,12 +38,16 @@ def period_preset(name, today=None):
 
 
 class CalendarPanel(ttk.Frame):
-    """One tab stop in the date grid. Arrows move focus; Enter selects a date."""
+    """Calendar grid with persistent day widgets.
+
+    Month navigation and range changes update existing buttons instead of destroying
+    and rebuilding 42/84 Tk widgets, which is noticeably smoother on Windows.
+    """
     def __init__(self, parent, initial, on_select, months=1):
         super().__init__(parent)
         self.cursor = initial or date.today()
         self.year, self.month = self.cursor.year, self.cursor.month
-        self.on_select, self.months = on_select, months
+        self.on_select, self.months = on_select, max(1, int(months))
         self.start = self.end = None
         self.year_var = tk.StringVar(self, str(self.year))
         self.month_var = tk.StringVar(self, str(self.month))
@@ -65,7 +69,42 @@ class CalendarPanel(ttk.Frame):
         self.body = ttk.Frame(self)
         self.body.pack()
         self.buttons = {}
+        self._slots = []
+        self._ensure_slots(self.months)
         self.draw()
+
+    def _ensure_slots(self, count):
+        while len(self._slots) < count:
+            offset = len(self._slots)
+            box = ttk.Frame(self.body, padding=(4, 0), style='Calendar.TFrame')
+            box.grid(row=0, column=offset, sticky='n')
+            title = ttk.Label(box, anchor='center', style='Calendar.TLabel',
+                              font=('맑은 고딕', 11, 'bold'))
+            title.grid(row=0, column=0, columnspan=7, pady=(0, 7))
+            for col, name in enumerate('월화수목금토일'):
+                ttk.Label(box, text=name, anchor='center', style='Calendar.TLabel').grid(
+                    row=1, column=col, pady=4)
+            cells = []
+            for index in range(42):
+                row, col = divmod(index, 7)
+                button = tk.Button(
+                    box, text='', width=4, pady=3, font=('맑은 고딕', 10),
+                    bg='#ffffff', fg='#1f2937', activebackground='#d7e8f2',
+                    activeforeground='#14212e', relief='flat', borderwidth=0,
+                    highlightthickness=2, highlightbackground='#ffffff',
+                    highlightcolor='#245eab', cursor='hand2', takefocus=0,
+                )
+                button._calendar_value = None
+                button.configure(command=lambda b=button: self.select(b._calendar_value)
+                                 if b._calendar_value is not None else None)
+                for key in ('Left', 'Right', 'Up', 'Down', 'Home', 'End',
+                            'Prior', 'Next', 'Return', 'space'):
+                    button.bind('<'+key+'>',
+                        lambda event, b=button: self.key(event, b._calendar_value)
+                        if b._calendar_value is not None else 'break')
+                button.grid(row=row + 2, column=col, padx=1, pady=1, sticky='nsew')
+                cells.append(button)
+            self._slots.append({'box': box, 'title': title, 'cells': cells})
 
     def jump(self, event=None):
         try:
@@ -114,10 +153,14 @@ class CalendarPanel(ttk.Frame):
             button.focus_set()
 
     def select(self, value):
+        if value is None:
+            return
         self.cursor = value
         self.on_select(value)
 
     def key(self, event, value):
+        if value is None:
+            return 'break'
         key, delta = event.keysym, None
         try:
             if key in ('Return', 'space'):
@@ -144,39 +187,39 @@ class CalendarPanel(ttk.Frame):
     def draw(self):
         self.year_var.set(str(self.year))
         self.month_var.set(str(self.month))
-        for child in self.body.winfo_children():
-            child.destroy()
+        self._ensure_slots(self.months)
         self.buttons.clear()
         first = date(self.year, self.month, 1)
-        for offset in range(self.months):
+        today = date.today()
+        for offset, slot in enumerate(self._slots):
+            if offset >= self.months:
+                slot['box'].grid_remove()
+                continue
             shown = shift_month(first, offset)
             if offset and shown <= first:
-                break
-            box = ttk.Frame(self.body, padding=(4, 0), style='Calendar.TFrame')
-            box.grid(row=0, column=offset, sticky='n')
-            ttk.Label(box, text=f'{shown.year}년 {shown.month}월', anchor='center', style='Calendar.TLabel',
-                      font=('맑은 고딕', 11, 'bold')).grid(row=0, column=0, columnspan=7, pady=(0, 7))
-            for col, name in enumerate('월화수목금토일'):
-                ttk.Label(box, text=name, anchor='center', style='Calendar.TLabel').grid(row=1, column=col, pady=4)
+                slot['box'].grid_remove()
+                continue
+            slot['box'].grid()
+            slot['title'].configure(text=f'{shown.year}년 {shown.month}월')
             weeks = calendar.Calendar(firstweekday=0).monthdayscalendar(shown.year, shown.month)
-            weeks += [[0] * 7 for _ in range(6 - len(weeks))]
-            for row, week in enumerate(weeks, 2):
-                for col, day in enumerate(week):
-                    if not day:
-                        ttk.Label(box, text='', width=5, style='Calendar.TLabel').grid(row=row, column=col, pady=4)
-                        continue
-                    value = date(shown.year, shown.month, day)
-                    bg, fg = self.day_colors(value, col)
-                    button = tk.Button(box, text=f'{day}·' if value == date.today() else str(day),
-                        width=4, pady=3, font=('맑은 고딕', 10), bg=bg, fg=fg,
-                        activebackground='#d7e8f2', activeforeground='#14212e', relief='flat',
-                        borderwidth=0, highlightthickness=2, highlightbackground=bg,
-                        highlightcolor='#245eab', cursor='hand2', takefocus=int(value == self.cursor),
-                        command=lambda v=value: self.select(v))
-                    button.grid(row=row, column=col, padx=1, pady=1, sticky='nsew')
-                    for key in ('Left', 'Right', 'Up', 'Down', 'Home', 'End', 'Prior', 'Next', 'Return', 'space'):
-                        button.bind('<'+key+'>', lambda event, v=value: self.key(event, v))
-                    self.buttons[value] = button
+            days = [day for week in weeks for day in week]
+            days += [0] * (42 - len(days))
+            for index, day in enumerate(days[:42]):
+                button = slot['cells'][index]
+                if not day:
+                    button._calendar_value = None
+                    button.configure(text='', state='disabled', takefocus=0,
+                                     bg='#ffffff', fg='#1f2937',
+                                     highlightbackground='#ffffff', cursor='')
+                    continue
+                value = date(shown.year, shown.month, day)
+                button._calendar_value = value
+                bg, fg = self.day_colors(value, index % 7)
+                button.configure(
+                    text=f'{day}·' if value == today else str(day),
+                    state='normal', takefocus=int(value == self.cursor),
+                    bg=bg, fg=fg, highlightbackground=bg, cursor='hand2')
+                self.buttons[value] = button
 
 
 class CalendarDialog(tk.Toplevel):
