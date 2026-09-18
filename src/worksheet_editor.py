@@ -104,7 +104,6 @@ class Editor(tk.Toplevel):
         self.table.extra_bindings('begin_edit_cell', self.begin_cell_edit)
         self.table.bind('<F4>', lambda event: (self.pick_extra_attendees_if_selected(), 'break')[1])
         self.table.bind('<Alt-Down>', lambda event: (self.pick_extra_attendees_if_selected(), 'break')[1])
-        self.table.MT.bind('<ButtonRelease-1>', self.attendee_cell_clicked, add='+')
         self.text_size.trace_add('write', lambda *a: self.resize_text())
         self.query.trace_add('write', lambda *a: self.apply_filter())
         self.filter.trace_add('write', lambda *a: self.apply_filter())
@@ -252,30 +251,12 @@ class Editor(tk.Toplevel):
             self.attendee_picker = None
             try:
                 self.grab_set()
+                self.after_idle(self.table.MT.focus_set)
             except tk.TclError:
                 pass
         picker = show_popover(self, original, apply, anchor, on_close=closed)
         self.attendee_picker = picker
         return picker
-
-    def attendee_cell_clicked(self, event=None):
-        """One real mouse click on the extra-attendee cell opens its inline LOV."""
-        def open_selected():
-            selected = self.table.get_currently_selected()
-            if not selected or getattr(selected, 'type_', 'cell') not in ('cell', 'cells'):
-                return
-            try:
-                column = self.table.displayed_column_to_data(selected.column)
-                row = self.table.displayed_row_to_data(selected.row)
-            except (AttributeError, IndexError, TypeError, ValueError):
-                return
-            if self.COLUMNS[column] != sheet.EXTRA_ATTENDEE_COLUMN:
-                return
-            # A click inside an already selected cell should not recreate the same LOV.
-            if self.attendee_picker is not None and self.attendee_picker.winfo_exists():
-                return
-            self.pick_extra_attendees(row)
-        self.after_idle(open_selected)
 
     def pick_extra_attendees_if_selected(self):
         selected = self.table.get_currently_selected()
@@ -289,8 +270,8 @@ class Editor(tk.Toplevel):
     def begin_cell_edit(self, event):
         column = self.table.displayed_column_to_data(event.column)
         if self.COLUMNS[column] == sheet.EXTRA_ATTENDEE_COLUMN:
-            # One mouse click already opens the LOV. Double-click/Enter/F4 are only
-            # fallback entry points. Typing/F2 remains editable if the user wants it.
+            # Keep the established interaction: double-click/Enter opens the LOV.
+            # Typing/F2 stays as direct cell editing and always works after LOV close.
             if event.key in ('??', 'Return'):
                 row = self.table.displayed_row_to_data(event.row)
                 if self.attendee_picker is None or not self.attendee_picker.winfo_exists():
@@ -468,7 +449,7 @@ class Editor(tk.Toplevel):
             '• 초록색은 입력 안내이며 Concur 필수값 확정을 뜻하지 않습니다.\n'
             f'• {self.guide_summary.get()}\n'
             '• 입실·퇴실: 셀 더블클릭/Enter → 달력\n'
-            '• 추가 참석자: 더블클릭/Enter/F4/Alt+↓ → 셀 안 체크박스 LOV\n'
+            '• 추가 참석자: 더블클릭/Enter/F4/Alt+↓ → 선택 셀 바로 아래 체크박스 LOV\n'
             '  문자 입력/F2는 셀 직접 편집 · LOV에서도 여러 명/직접 입력 가능\n'
             '• Ctrl+C/V: 복사/붙여넣기 · Ctrl+Z/Y: 실행 취소/다시 실행 · Ctrl+S: 저장\n\n'
             'Concur 반영은 저장된 전체 작업지를 기준으로 합니다.\n'
