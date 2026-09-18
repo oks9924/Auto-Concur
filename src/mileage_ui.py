@@ -58,16 +58,6 @@ class VehicleManager(Dialog):
         except ValueError as exc: self.error.configure(text=str(exc));return False
         self.render();self.new();self.error.configure(text='목록 저장을 누르면 다음 실행에도 유지됩니다.');return True
 
-    def copy(self):
-        index=self.index()
-        if index is None:
-            messagebox.showinfo('행 선택','복사할 마일리지 행을 먼저 선택하세요.',parent=self)
-            return
-        try:
-            return MileageForm(self,template=self.book.rows[index])
-        except (OSError,ValueError) as exc:
-            messagebox.showerror('마일리지 복사',str(exc),parent=self)
-
     def remove(self):
         if self.editing is None: return
         if messagebox.askyesno('차량 삭제','등록 목록에서만 삭제합니다. 기존 마일리지 행은 보존합니다. 삭제할까요?',parent=self):
@@ -249,6 +239,16 @@ class MileagePanel(ttk.LabelFrame):
         if index is None: messagebox.showinfo('행 선택','마일리지 행을 먼저 선택하세요.',parent=self);return
         try: return MileageForm(self,index)
         except (OSError,ValueError) as exc: messagebox.showerror('마일리지 입력',str(exc),parent=self)
+
+    def copy(self):
+        index=self.index()
+        if index is None:
+            messagebox.showinfo('행 선택','복사할 마일리지 행을 먼저 선택하세요.',parent=self)
+            return
+        try:
+            return MileageForm(self,template=self.book.rows[index])
+        except (OSError,ValueError) as exc:
+            messagebox.showerror('마일리지 복사',str(exc),parent=self)
 
     def remove(self):
         index=self.index()
