@@ -254,7 +254,9 @@ class AttendeePopover(tk.Frame):
 
         foot=ttk.Frame(self,padding=(8,4,8,8));foot.pack(fill='x')
         self.count=ttk.Label(foot);self.count.pack(side='left')
-        ttk.Button(foot,text='목록 관리',command=self.manage).pack(side='left',padx=(8,0))
+        ttk.Button(foot,text='표시 선택',command=lambda:self.check_shown(True)).pack(side='left',padx=(8,0))
+        ttk.Button(foot,text='표시 해제',command=lambda:self.check_shown(False)).pack(side='left',padx=(4,0))
+        ttk.Button(foot,text='목록 관리',command=self.manage).pack(side='left',padx=(4,0))
         ttk.Button(foot,text='취소',command=self.close).pack(side='right')
         ttk.Button(foot,text='적용',command=self.apply).pack(side='right',padx=(0,5))
 
@@ -294,6 +296,11 @@ class AttendeePopover(tk.Frame):
 
     def update_count(self):
         self.count.configure(text=f'선택 {sum(v.get() for v in self.checked.values())}명')
+
+    def check_shown(self, value):
+        for key in self.shown:
+            self.checked[key].set(value)
+        self.update_count()
 
     def add_manual(self):
         values=split_people(self.manual.get())
