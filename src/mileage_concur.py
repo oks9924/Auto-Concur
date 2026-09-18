@@ -10,7 +10,7 @@ import argparse
 from pathlib import Path
 import re
 
-from playwright.sync_api import Error as PWError
+from playwright.sync_api import Error as PWError, TimeoutError as PWTimeout
 
 from . import attach_receipts as ar, console, paths
 from . import concur_ui as ui
@@ -53,7 +53,7 @@ SURFACE_HELPERS = r"""
   };
   const surface = () => {
     const nodes=[...document.querySelectorAll(
-      '[role="dialog"],[role="alertdialog"],.sapcnqr-dialog__body,[class*="side-panel__side"]'
+      '[role="dialog"],[role="alertdialog"],.sapcnqr-dialog__body,#sapcnqr-layout-side-panel-elements,[class*="side-panel__side"]'
     )].filter(visible);
     if (!nodes.length) return document;
     return nodes.sort((a,b) => {
@@ -196,7 +196,10 @@ COMBO_JS = "(names) => {" + SURFACE_HELPERS + r"""
 OPTION_JS = r"""(wanted) => {
   const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'};
   const norm=s=>(s||'').replace(/\s+/g,' ').trim();
-  const hits=[...document.querySelectorAll('[role="option"],li,button')].filter(e=>visible(e)&&norm(e.innerText)===wanted);
+  const all=[...document.querySelectorAll('[role="option"],li,button')].filter(visible);
+  const exact=all.filter(e=>norm(e.innerText)===wanted);
+  const pref=all.filter(e=>norm(e.innerText).startsWith(wanted+' '));
+  const hits=exact.length===1?exact:(exact.length===0&&pref.length===1?pref:[]);
   const targets=[...new Set(hits.map(e=>e.closest('[role="option"],li,button')||e))];
   if(targets.length!==1)return null;
   document.querySelectorAll('[data-auto-mileage-option]').forEach(e=>e.removeAttribute('data-auto-mileage-option'));
@@ -213,6 +216,54 @@ FILE_INPUT_JS = "() => {" + SURFACE_HELPERS + r"""
   return '[data-auto-mileage-file="1"]';
 }"""
 
+RECEIPT_VIEW_JS = "(names) => {" + SURFACE_HELPERS + r"""
+  const root=surface(), wants=names.map(norm);
+  const buttons=[...root.querySelectorAll('button,[role="button"],a')].filter(e=>visible(e)&&!e.disabled);
+  const hits=buttons.filter(e=>{
+    const text=norm(e.innerText), aria=norm(e.getAttribute('aria-label'));
+    return wants.includes(text)||wants.includes(aria);
+  });
+  if(hits.length!==1)return null;
+  document.querySelectorAll('[data-auto-mileage-receipt-view]').forEach(e=>e.removeAttribute('data-auto-mileage-receipt-view'));
+  hits[0].setAttribute('data-auto-mileage-receipt-view','1');
+  return '[data-auto-mileage-receipt-view="1"]';
+}"""
+
+RECEIPT_ATTACH_JS = "() => {" + SURFACE_HELPERS + r"""
+  const root=surface();
+  const buttons=[...root.querySelectorAll('button,[role="button"]')].filter(e=>visible(e)&&!e.disabled);
+  const hits=buttons.filter(e=>{
+    const text=norm(e.innerText), aria=norm(e.getAttribute('aria-label'));
+    const hook=e.getAttribute('data-nuiexp')||'';
+    return hook==='rcpt-btn-attach-receipt'
+      || ['영수증 첨부','Attach Receipt','Attach receipt'].includes(text)
+      || ['영수증 첨부','Attach Receipt','Attach receipt'].includes(aria);
+  });
+  if(hits.length!==1)return null;
+  document.querySelectorAll('[data-auto-mileage-receipt-attach]').forEach(e=>e.removeAttribute('data-auto-mileage-receipt-attach'));
+  hits[0].setAttribute('data-auto-mileage-receipt-attach','1');
+  return '[data-auto-mileage-receipt-attach="1"]';
+}"""
+
+GLOBAL_UPLOAD_JS = r"""() => {
+  const byId=[...document.querySelectorAll('#upload-file')].filter(e=>!e.disabled);
+  if(byId.length!==1)return null;
+  byId[0].setAttribute('data-auto-mileage-file-global','1');
+  return '[data-auto-mileage-file-global="1"]';
+}"""
+
+RECEIPT_CLOSE_JS = "() => {" + SURFACE_HELPERS + r"""
+  const root=surface();
+  const buttons=[...root.querySelectorAll('button,[role="button"]')].filter(e=>visible(e)&&!e.disabled);
+  const hits=buttons.filter(e=>{
+    const text=norm(e.innerText), aria=norm(e.getAttribute('aria-label'));
+    return ['닫기','Close'].includes(text)||['닫기','Close'].includes(aria);
+  });
+  if(hits.length!==1)return null;
+  document.querySelectorAll('[data-auto-mileage-receipt-close]').forEach(e=>e.removeAttribute('data-auto-mileage-receipt-close'));
+  hits[0].setAttribute('data-auto-mileage-receipt-close','1');
+  return '[data-auto-mileage-receipt-close="1"]';
+}"""
 
 
 KNOWN_PREWRITE_MARKERS = (
@@ -277,20 +328,75 @@ def _select_vehicle(page, vehicle):
         raise MileageConcurError('차량 ID 선택칸을 확인하지 못했습니다.' + ui.diagnose(page, '마일리지 차량 ID'))
     page.locator(selector).click()
     ui.click_target(page, OPTION_JS, '차량 ID 선택', vehicle)
+    # In the observed Concur form the car popper can remain above the detail
+    # panel even after a choice is applied. Never continue while it can intercept
+    # receipt/save clicks.
+    popper = page.locator('[data-nuiexp="popper-carKey"]')
+    if popper.count():
+        try:
+            popper.wait_for(state='hidden', timeout=800)
+        except PWTimeout:
+            page.keyboard.press('Escape')
+            try:
+                popper.wait_for(state='hidden', timeout=2000)
+            except PWTimeout as exc:
+                raise MileageConcurError(
+                    '차량 ID 선택 목록이 닫히지 않아 다음 단계로 진행하지 않았습니다.'
+                    + ui.diagnose(page, '마일리지 차량 목록 닫기')) from exc
 
 
 def _upload_map(page, filename):
+    # Do not use the report-list receipt button behind the expense side panel.
+    # Open the receipt UI from the active mileage surface first.
     selector = page.evaluate(FILE_INPUT_JS)
     if not selector:
-        buttons = page.locator('[data-nuiexp="rcpt-btn-attach-receipt"]')
-        if buttons.count() == 1:
-            buttons.click()
-            page.wait_for_timeout(300)
-            selector = page.evaluate(FILE_INPUT_JS)
+        view = page.evaluate(
+            RECEIPT_VIEW_JS,
+            ['영수증 보기','View Receipt','View Receipts','Receipts'],
+        )
+        if view:
+            page.locator(view).click(timeout=10000)
+            page.wait_for_timeout(350)
+
+        selector = page.evaluate(FILE_INPUT_JS) or page.evaluate(GLOBAL_UPLOAD_JS)
+
     if not selector:
-        raise MileageConcurError('현재 마일리지 입력 화면에서 지도 이미지 업로드 칸을 하나로 확인하지 못했습니다.'
-                                 + ui.diagnose(page, '마일리지 지도 첨부'))
+        attach = page.evaluate(RECEIPT_ATTACH_JS)
+        if attach:
+            chooser = None
+            try:
+                with page.expect_file_chooser(timeout=1500) as pending:
+                    page.locator(attach).click(timeout=5000)
+                chooser = pending.value
+            except PWTimeout:
+                # Some Concur builds reveal the hidden input instead of opening
+                # the native chooser. The click already happened; do not click twice.
+                pass
+            if chooser is not None:
+                chooser.set_files(str(filename))
+                page.wait_for_timeout(2500)
+                return
+            page.wait_for_timeout(300)
+            selector = page.evaluate(FILE_INPUT_JS) or page.evaluate(GLOBAL_UPLOAD_JS)
+
+    if not selector:
+        raise MileageConcurError(
+            '현재 마일리지 영수증 화면에서 지도 이미지 업로드 칸을 확인하지 못했습니다.'
+            + ui.diagnose(page, '마일리지 지도 첨부'))
     page.locator(selector).set_input_files(str(filename))
+    page.wait_for_timeout(2500)
+
+    # If a receipt modal/drawer replaced the detail surface, close only that
+    # surface and prove the mileage form is visible again before Save.
+    if not page.evaluate(MILEAGE_FORM_READY_JS):
+        close = page.evaluate(RECEIPT_CLOSE_JS)
+        if close:
+            page.locator(close).click(timeout=10000)
+            ui.wait_condition(page, MILEAGE_FORM_READY_JS, '마일리지 상세 화면 복귀', timeout=10000)
+        elif not page.evaluate(MILEAGE_FORM_READY_JS):
+            raise MileageConcurError(
+                '지도 이미지는 선택했지만 마일리지 상세 화면으로 돌아오지 못해 저장하지 않았습니다.'
+                + ui.diagnose(page, '마일리지 영수증 화면 닫기'))
 
 
 def _expense_id(url):
@@ -321,7 +427,7 @@ def _fill_and_save(page, report_url, row, map_path, draft_id, before):
 
     try:
         page.wait_for_timeout(700)
-        ui.click_target(page, ui.SAVE_BUTTONS_JS, '마일리지 저장', '저장,Save')
+        ui.click_target(page, ui.SAVE_BUTTONS_JS, '마일리지 저장', '경비 저장,저장,Save Expense,Save')
     except Exception as exc:
         raise UncertainMileageCreate(str(exc), draft_id) from exc
 
