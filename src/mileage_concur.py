@@ -278,7 +278,6 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
         print(summary)
         return RunResult(0, summary)
 
-    known_ids = None
     created = 0
     for n, local_id in enumerate(pending_ids, 1):
         # Reload by stable local id after every save; save() replaces validated dicts.
@@ -290,7 +289,7 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
         print(f'[{n}/{len(pending_ids)}] 마일리지 신규 생성: '
               f'{row["date"]} · {row["origin"]} → {row["destination"]} · {row["distance"]}km')
         try:
-            ident = create_one(page, report_url, row, image, known_ids)
+            ident = create_one(page, report_url, row, image)
         except UncertainMileageCreate as exc:
             current['concur_state'] = 'needs_review'
             current['concur_note'] = str(exc)
@@ -310,13 +309,6 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
         book.rows = book.validate_rows(book.rows)
         book.save()
         created += 1
-        if known_ids is None:
-            # create_one read the initial set itself. Subsequent runs can use the
-            # refreshed report list; adding the verified id is sufficient.
-            page.goto(report_url, wait_until='domcontentloaded')
-            known_ids = _report_ids(page)
-        else:
-            known_ids.add(ident)
         print(f'  확인 완료: {ident}')
 
     summary = (f'마일리지 신규 생성 확인 {created}건 · 기존 확인 {info["verified"]}건'
