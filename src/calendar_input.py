@@ -111,11 +111,11 @@ class RangePicker(CalendarDialog):
             entry.bind('<Return>', self.manual)
             entry.bind('<FocusOut>', self.manual)
             entry.bind('<FocusIn>', lambda event, name=label: self.mode.set(name))
-        shortcuts = ttk.Frame(box)
-        shortcuts.pack(fill='x', pady=(0, 8))
-        choices = ('1박', '2박', '3박', '거래일로 이동') if stay else ('오늘', '최근 7일', '이번 달', '지난달')
-        for name in choices:
-            ttk.Button(shortcuts, text=name, command=lambda n=name: self.preset(n)).pack(side='left', padx=(0, 4))
+        if not stay:
+            shortcuts = ttk.Frame(box)
+            shortcuts.pack(fill='x', pady=(0, 8))
+            for name in ('오늘', '최근 7일', '이번 달', '지난달'):
+                ttk.Button(shortcuts, text=name, command=lambda n=name: self.preset(n)).pack(side='left', padx=(0, 4))
         # One month keeps first-open latency low on Windows/dual-monitor setups.
         # Previous/next month buttons still cover cross-month ranges.
         months = 1

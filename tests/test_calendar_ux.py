@@ -83,14 +83,27 @@ def test_period_cancel_and_same_day(root):
     dialog.apply();assert applied==[('2026-09-17','2026-09-17')]
 
 
-def test_stay_incomplete_invalid_and_shortcut(root):
+def test_stay_incomplete_invalid_and_manual_range(root):
     applied=[]
     dialog=StayCalendar(root,date(2026,9,17),None,None,lambda *x:applied.append(x))
     dialog.choose_date(date(2026,9,17));assert dialog.mode.get()=='퇴실'
     dialog.apply();assert not applied and dialog.winfo_exists()
     dialog.choose_date(date(2026,9,17));dialog.apply();assert not applied
-    dialog.preset('2박');dialog.apply()
+    dialog.choose_date(date(2026,9,19));dialog.apply()
     assert applied==[('2026-09-17','2026-09-19')]
+
+
+def test_stay_calendar_has_no_shortcut_buttons(root):
+    from tkinter import ttk
+    dialog=StayCalendar(root,date(2026,9,17),None,None,lambda *x:None)
+    def descendants(widget):
+        return [child for direct in widget.winfo_children()
+                for child in [direct, *descendants(direct)]]
+    texts=[w.cget('text') for w in descendants(dialog) if isinstance(w,ttk.Button)]
+    for label in ('1박','2박','3박','거래일로 이동'):
+        assert label not in texts
+    assert '두 날짜 비우기' in texts and '취소' in texts and '적용' in texts
+    dialog.close()
 
 
 def test_range_typing_and_clear_are_draft_only(root):
