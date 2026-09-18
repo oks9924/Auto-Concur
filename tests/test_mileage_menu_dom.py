@@ -1,6 +1,7 @@
 import os
 import pytest
 from playwright.sync_api import sync_playwright
+from src import mileage_concur
 from src.mileage_concur import EXACT_TEXT_JS, MILEAGE_TYPE_JS, COMBO_JS, FIELD_JS, MILEAGE_FORM_READY_JS, OPTION_JS, RECEIPT_VIEW_JS
 
 
@@ -162,4 +163,29 @@ def test_receipt_view_is_scoped_to_active_mileage_panel(browser):
     page.locator(selector).click()
     assert page.get_attribute('body','data-view')=='yes'
     assert page.get_attribute('body','data-background') is None
+    page.close()
+
+
+def test_upload_map_opens_receipt_view_inside_active_panel(browser,tmp_path):
+    page=browser.new_page()
+    page.set_content("""
+    <button id='background' data-nuiexp='rcpt-btn-attach-receipt'
+      onclick="document.body.dataset.background='yes'">영수증 첨부</button>
+    <div id='sapcnqr-layout-side-panel-elements'>
+      <div><span>거래 날짜</span><input id='date'></div>
+      <div><span>출발지</span><input id='origin'></div>
+      <div><span>도착지</span><input id='dest'></div>
+      <button id='view' onclick="
+        document.body.dataset.view='yes';
+        const x=document.createElement('input');
+        x.type='file';x.id='upload-file';this.parentElement.appendChild(x);
+      ">영수증 보기</button>
+    </div>
+    """)
+    filename=tmp_path/'map.png'
+    filename.write_bytes(b'not-a-real-image-needed-for-browser-file-input')
+    mileage_concur._upload_map(page,filename)
+    assert page.get_attribute('body','data-view')=='yes'
+    assert page.get_attribute('body','data-background') is None
+    assert page.locator('#upload-file').evaluate('(e)=>e.files.length')==1
     page.close()
