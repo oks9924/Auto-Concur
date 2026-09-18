@@ -317,17 +317,20 @@ class AttendeePopover(tk.Frame):
         return FavoritesManager(self.parent,self.store,on_saved=refresh)
 
     def place_for_cell(self, anchor):
-        """anchor uses editor-local coordinates: x, y, bottom, width."""
+        """Attach below the worksheet cell using editor-local coordinates.
+
+        Never use monitor/screen coordinates and never flip to another monitor.
+        When the cell is low in the editor, shrink the LOV rather than placing it above.
+        """
         x, top, bottom, width = anchor
         self.update_idletasks()
         parent_w=max(self.parent.winfo_width(),1)
         parent_h=max(self.parent.winfo_height(),1)
-        pop_w=min(480,max(340,parent_w-24))
-        pop_h=min(350,max(260,parent_h-100))
+        pop_w=min(480,max(340,min(parent_w-24, int(width)*2)))
         x=max(8,min(int(x),parent_w-pop_w-8))
-        y=int(bottom)+2
-        if y+pop_h>parent_h-8:
-            y=max(8,int(top)-pop_h-2)
+        y=max(0,int(bottom)+2)
+        available=max(90,parent_h-y-8)
+        pop_h=min(350,available)
         self.place(x=x,y=y,width=pop_w,height=pop_h)
         self.lift()
 
