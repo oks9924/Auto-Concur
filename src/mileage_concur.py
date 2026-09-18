@@ -286,18 +286,28 @@ def _retryable(row):
     return row.get('concur_state') == 'retryable' or row.get('concur_stage') == 'pre_save' or _legacy_presave(row)
 
 
+def _receipt_pending(row):
+    return (bool(row.get('concur_expense_id'))
+            and row.get('concur_state') in ('verified', 'receipt_missing', 'receipt_unknown')
+            and row.get('concur_receipt_verified') is not True)
+
+
 def status(folder: Path, limit=None):
     book = MileageBook(folder)
     retryable = [r['id'] for r in book.rows if _retryable(r)]
+    receipt_pending = [r['id'] for r in book.rows if _receipt_pending(r)]
     pending = [r['id'] for r in book.rows
-               if r.get('concur_state') not in ('verified','needs_review') or _retryable(r)]
+               if r.get('concur_state') not in ('verified','needs_review')
+               or _retryable(r) or _receipt_pending(r)]
     if limit is not None:
         pending = pending[:limit]
     return {
         'total': len(book.rows),
         'pending_ids': pending,
         'pending': len(pending),
-        'verified': sum(r.get('concur_state') == 'verified' for r in book.rows),
+        'verified': sum(r.get('concur_state') == 'verified'
+                        and r.get('concur_receipt_verified') is True for r in book.rows),
+        'created_receipt_check': len(receipt_pending),
         'needs_review': sum(r.get('concur_state') == 'needs_review' and not _retryable(r)
                             for r in book.rows),
         'retryable_prewrite': len(retryable),
@@ -349,6 +359,7 @@ def _upload_map(page, filename):
     # Do not use the report-list receipt button behind the expense side panel.
     # Open the receipt UI from the active mileage surface first.
     selector = page.evaluate(FILE_INPUT_JS)
+    uploaded = False
     if not selector:
         view = page.evaluate(
             RECEIPT_VIEW_JS,
@@ -374,17 +385,20 @@ def _upload_map(page, filename):
                 pass
             if chooser is not None:
                 chooser.set_files(str(filename))
-                page.wait_for_timeout(2500)
-                return
-            page.wait_for_timeout(300)
-            selector = page.evaluate(FILE_INPUT_JS) or page.evaluate(GLOBAL_UPLOAD_JS)
+                uploaded = True
+            else:
+                page.wait_for_timeout(300)
+                selector = page.evaluate(FILE_INPUT_JS) or page.evaluate(GLOBAL_UPLOAD_JS)
 
-    if not selector:
-        raise MileageConcurError(
-            '현재 마일리지 영수증 화면에서 지도 이미지 업로드 칸을 확인하지 못했습니다.'
-            + ui.diagnose(page, '마일리지 지도 첨부'))
-    page.locator(selector).set_input_files(str(filename))
-    page.wait_for_timeout(2500)
+    if not uploaded:
+        if not selector:
+            raise MileageConcurError(
+                '현재 마일리지 영수증 화면에서 지도 이미지 업로드 칸을 확인하지 못했습니다.'
+                + ui.diagnose(page, '마일리지 지도 첨부'))
+        page.locator(selector).set_input_files(str(filename))
+        uploaded = True
+
+    page.wait_for_timeout(3500)
 
     # If a receipt modal/drawer replaced the detail surface, close only that
     # surface and prove the mileage form is visible again before Save.
@@ -407,6 +421,40 @@ def _expense_id(url):
 def _report_ids(page, strict=False):
     rows = ar.rows_when_ready(page, allow_incomplete=not strict)
     return {r.expense_id for r in rows if r.expense_id}
+
+
+def _receipt_state(page, report_url, expense_id, tries=5):
+    """Return True/False only when one report row gives a stable receipt answer."""
+    seen = []
+    for attempt in range(tries):
+        page.goto(report_url, wait_until='domcontentloaded')
+        check_context(page, report_url)
+        rows = ar.rows_when_ready(page, allow_incomplete=True)
+        matches = [r for r in rows if r.expense_id == expense_id]
+        if len(matches) != 1:
+            return None
+        state = matches[0].has_receipt
+        if state is True:
+            return True
+        seen.append(state)
+        if attempt + 1 < tries:
+            page.wait_for_timeout(1200)
+    return False if seen and all(value is False for value in seen) else None
+
+
+def _repair_receipt(page, report_url, row, map_path, expense_id):
+    """Attach only the map receipt to an already-created expense. Never create a new expense."""
+    page.goto(ar.expense_url(report_url, expense_id), wait_until='domcontentloaded')
+    check_context(page, report_url)
+    ui.wait_condition(page, MILEAGE_FORM_READY_JS, '기존 마일리지 상세 입력 화면', timeout=15000)
+    _upload_map(page, map_path)
+    try:
+        ui.click_target(page, ui.SAVE_BUTTONS_JS, '마일리지 영수증 저장',
+                        '경비 저장,저장,Save Expense,Save')
+    except Exception as exc:
+        raise UncertainMileageCreate(str(exc), expense_id) from exc
+    page.wait_for_timeout(1500)
+    return _receipt_state(page, report_url, expense_id)
 
 
 def _fill_and_save(page, report_url, row, map_path, draft_id, before):
@@ -489,6 +537,8 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
         print(f"이전 실행에서 확인이 필요한 마일리지 {info['needs_review']}건은 자동 재시도하지 않습니다.")
     if info.get('retryable_prewrite'):
         print(f"저장 전 화면 인식 실패 이력 {info['retryable_prewrite']}건은 실제 저장 여부를 확인한 뒤 안전하게 다시 시도합니다.")
+    if info.get('created_receipt_check'):
+        print(f"이미 생성된 마일리지 {info['created_receipt_check']}건은 새로 만들지 않고 영수증 첨부 상태를 확인합니다.")
 
     if not pending_ids:
         summary = (f"마일리지 신규 생성 대상 없음 · 기존 확인 {info['verified']}건"
@@ -507,6 +557,61 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
         current = next((r for r in book.rows if r.get('id') == local_id), None)
         if current is None:
             raise MileageConcurError('마일리지 내부 식별자가 실행 중 사라졌습니다.')
+        if _receipt_pending(current):
+            expense_id = current.get('concur_expense_id')
+            row = checked_row(current)
+            image = book.check_image(row)
+            print(f'[{n}/{len(pending_ids)}] 기존 마일리지 영수증 확인: {expense_id}')
+            state = _receipt_state(page, report_url, expense_id)
+            if state is True:
+                current['concur_state'] = 'verified'
+                current['concur_stage'] = 'verified'
+                current['concur_receipt_verified'] = True
+                current['concur_note'] = '기존 경비와 영수증 존재 확인'
+                book.rows = book.validate_rows(book.rows)
+                book.save()
+                created += 1
+                print('  기존 영수증 확인 완료 · 새 경비 생성 안 함')
+                continue
+            if state is None:
+                current['concur_state'] = 'receipt_unknown'
+                current['concur_stage'] = 'receipt_check'
+                current['concur_note'] = '현재 리포트에서 영수증 상태를 하나로 확인하지 못함'
+                book.rows = book.validate_rows(book.rows)
+                book.save()
+                print('  영수증 상태 미확인 · 중복 첨부하지 않고 다음 실행에서 다시 확인합니다.')
+                return RunResult(1, '기존 마일리지 영수증 상태 확인 필요 1건')
+            print('  기존 경비에 영수증이 없는 것을 확인했습니다. 같은 경비 ID에 지도 이미지만 첨부합니다.')
+            try:
+                repaired = _repair_receipt(page, report_url, row, image, expense_id)
+            except UncertainMileageCreate as exc:
+                current['concur_state'] = 'receipt_unknown'
+                current['concur_stage'] = 'receipt_save_attempted'
+                current['concur_note'] = str(exc)
+                current['concur_receipt_verified'] = False
+                book.rows = book.validate_rows(book.rows)
+                book.save()
+                print('  영수증 저장 결과 확인 필요 · 새 경비는 만들지 않습니다.')
+                return RunResult(1, '기존 마일리지 영수증 저장 결과 확인 필요 1건')
+            if repaired is True:
+                current['concur_state'] = 'verified'
+                current['concur_stage'] = 'verified'
+                current['concur_receipt_verified'] = True
+                current['concur_note'] = '기존 경비에 지도 이미지 첨부 후 영수증 존재 확인'
+                book.rows = book.validate_rows(book.rows)
+                book.save()
+                created += 1
+                print('  지도 이미지 첨부 및 영수증 확인 완료')
+                continue
+            current['concur_state'] = 'receipt_missing' if repaired is False else 'receipt_unknown'
+            current['concur_stage'] = 'receipt_check'
+            current['concur_receipt_verified'] = False
+            current['concur_note'] = '첨부 후 리포트에서 영수증 존재를 확인하지 못함'
+            book.rows = book.validate_rows(book.rows)
+            book.save()
+            print('  첨부 후 영수증을 확인하지 못했습니다. 새 경비는 만들지 않습니다.')
+            return RunResult(1, '기존 마일리지 영수증 확인 필요 1건')
+
         # Migrate old pre-save failures. Earlier builds stored a provisional URL id
         # as concur_expense_id even though Save was never clicked.
         if _legacy_presave(current):
@@ -587,17 +692,31 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
             print('  ' + str(exc))
             return RunResult(1, summary)
 
-        current['concur_state'] = 'verified'
-        current['concur_stage'] = 'verified'
         current['concur_expense_id'] = ident
         current.pop('concur_draft_id', None)
-        current['concur_note'] = '저장 후 리포트의 신규 경비 ID 확인'
+        receipt = _receipt_state(page, report_url, ident)
+        if receipt is True:
+            current['concur_state'] = 'verified'
+            current['concur_stage'] = 'verified'
+            current['concur_receipt_verified'] = True
+            current['concur_note'] = '저장 후 신규 경비 ID와 영수증 존재 확인'
+            book.rows = book.validate_rows(book.rows)
+            book.save()
+            created += 1
+            print(f'  경비 및 영수증 확인 완료: {ident}')
+            continue
+
+        current['concur_state'] = 'receipt_missing' if receipt is False else 'receipt_unknown'
+        current['concur_stage'] = 'receipt_check'
+        current['concur_receipt_verified'] = False
+        current['concur_note'] = ('경비는 생성됐지만 리포트에서 영수증이 없음'
+                                  if receipt is False else '경비는 생성됐지만 영수증 상태를 확인하지 못함')
         book.rows = book.validate_rows(book.rows)
         book.save()
-        created += 1
-        print(f'  확인 완료: {ident}')
+        print(f'  경비 생성 확인: {ident} · 영수증은 별도 확인/보완 필요')
+        return RunResult(1, '마일리지 경비 생성 완료 · 영수증 확인 필요 1건')
 
-    summary = (f'마일리지 신규 생성 확인 {created}건 · 기존 확인 {info["verified"]}건'
+    summary = (f'마일리지 경비·영수증 확인 {created}건 · 기존 완료 {info["verified"]}건'
                + (f' · 기존 확인 필요 {info["needs_review"]}건' if info['needs_review'] else ''))
     print(summary)
     return RunResult(int(bool(info['needs_review'])), summary)

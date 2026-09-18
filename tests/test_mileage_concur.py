@@ -26,9 +26,11 @@ def test_verified_mileage_is_persisted_and_not_created_twice(tmp_path,monkeypatc
     calls=[]
     monkeypatch.setattr(mileage_concur.ar,'open_report',lambda:(Closeable(),Closeable(),object(),'https://example/reports/R'))
     monkeypatch.setattr(mileage_concur,'create_one',lambda page,url,row,image:(calls.append(row['id']) or 'EXP-1'))
+    monkeypatch.setattr(mileage_concur,'_receipt_state',lambda *a,**k:True)
     assert mileage_concur.run(tmp_path,True,None)==0
     saved=MileageBook(tmp_path).rows[0]
     assert saved['concur_state']=='verified' and saved['concur_expense_id']=='EXP-1'
+    assert saved['concur_receipt_verified'] is True
     assert len(calls)==1
     assert mileage_concur.run(tmp_path,True,None)==0
     assert len(calls)==1
@@ -110,6 +112,7 @@ def test_multiple_mileage_rows_each_persist_verified_id(tmp_path,monkeypatch):
         lambda:(Closeable(),Closeable(),object(),'https://example/reports/R'))
     monkeypatch.setattr(mileage_concur,'create_one',
         lambda page,url,row,image:(calls.append(row['id']) or 'EXP-'+row['id'][:6]))
+    monkeypatch.setattr(mileage_concur,'_receipt_state',lambda *a,**k:True)
     assert mileage_concur.run(tmp_path,True,None)==0
     saved=MileageBook(tmp_path).rows
     assert len(calls)==2
@@ -129,6 +132,7 @@ def test_known_prewrite_ui_failure_is_retryable(tmp_path,monkeypatch):
     called=[]
     monkeypatch.setattr(mileage_concur,'create_one',
         lambda page,url,row,image:(called.append(row['id']) or 'EXP-RETRY'))
+    monkeypatch.setattr(mileage_concur,'_receipt_state',lambda *a,**k:True)
     result=mileage_concur.run_in_session(object(),'https://example/reports/R',tmp_path,True,None)
     assert result==0 and len(called)==1
     saved=MileageBook(tmp_path).rows[0]
@@ -170,6 +174,7 @@ def test_legacy_presave_id_reuses_real_report_draft(tmp_path,monkeypatch):
     monkeypatch.setattr(mileage_concur.ui,'wait_condition',lambda *a,**k:True)
     monkeypatch.setattr(mileage_concur,'_fill_and_save',
         lambda page,url,row,image,draft,before:(called.append(('resume',draft)) or draft))
+    monkeypatch.setattr(mileage_concur,'_receipt_state',lambda *a,**k:True)
     monkeypatch.setattr(mileage_concur,'create_one',
         lambda *a,**k:(_ for _ in ()).throw(AssertionError('must not create duplicate')))
     result=mileage_concur.run_in_session(page,'https://example/reports/R',tmp_path,True,None)
@@ -190,6 +195,7 @@ def test_legacy_presave_id_missing_from_complete_report_creates_fresh(tmp_path,m
     monkeypatch.setattr(mileage_concur,'_report_ids',lambda page,strict=False:set())
     monkeypatch.setattr(mileage_concur,'create_one',
         lambda page,url,row,image:(calls.append(row['id']) or 'EXP-NEW'))
+    monkeypatch.setattr(mileage_concur,'_receipt_state',lambda *a,**k:True)
     result=mileage_concur.run_in_session(page,'https://example/reports/R',tmp_path,True,None)
     assert result==0 and len(calls)==1
     saved=MileageBook(tmp_path).rows[0]
@@ -230,3 +236,67 @@ def test_mileage_save_targets_expense_save_button(tmp_path,monkeypatch):
     assert result=='EXP-1'
     save=[item for item in called if item[0]=='마일리지 저장']
     assert save==[('마일리지 저장','경비 저장,저장,Save Expense,Save')]
+
+
+def test_old_verified_expense_without_receipt_flag_is_scheduled_for_receipt_check(tmp_path):
+    book=prepared(tmp_path)
+    book.rows[0]['concur_state']='verified'
+    book.rows[0]['concur_stage']='verified'
+    book.rows[0]['concur_expense_id']='EXP-EXISTING'
+    book.rows[0].pop('concur_receipt_verified',None)
+    book.save()
+    info=mileage_concur.status(tmp_path)
+    assert info['pending']==1
+    assert info['created_receipt_check']==1
+    assert info['verified']==0
+
+
+def test_existing_expense_missing_receipt_is_repaired_without_new_expense(tmp_path,monkeypatch):
+    book=prepared(tmp_path)
+    book.rows[0]['concur_state']='verified'
+    book.rows[0]['concur_stage']='verified'
+    book.rows[0]['concur_expense_id']='EXP-EXISTING'
+    book.save()
+
+    states=iter([False, True])
+    monkeypatch.setattr(mileage_concur,'_receipt_state',lambda *a,**k:next(states))
+    repaired=[]
+    monkeypatch.setattr(mileage_concur,'_repair_receipt',
+        lambda page,url,row,image,eid:(repaired.append(eid) or True))
+    monkeypatch.setattr(mileage_concur,'create_one',
+        lambda *a,**k:(_ for _ in ()).throw(AssertionError('must not create another expense')))
+
+    result=mileage_concur.run_in_session(object(),'https://example/reports/R',tmp_path,True,None)
+    assert result==0
+    assert repaired==['EXP-EXISTING']
+    saved=MileageBook(tmp_path).rows[0]
+    assert saved['concur_expense_id']=='EXP-EXISTING'
+    assert saved['concur_receipt_verified'] is True
+    assert saved['concur_state']=='verified'
+
+
+def test_existing_expense_with_receipt_is_only_marked_complete(tmp_path,monkeypatch):
+    book=prepared(tmp_path)
+    book.rows[0]['concur_state']='verified'
+    book.rows[0]['concur_expense_id']='EXP-EXISTING'
+    book.save()
+    monkeypatch.setattr(mileage_concur,'_receipt_state',lambda *a,**k:True)
+    monkeypatch.setattr(mileage_concur,'_repair_receipt',
+        lambda *a,**k:(_ for _ in ()).throw(AssertionError('must not upload duplicate receipt')))
+    result=mileage_concur.run_in_session(object(),'https://example/reports/R',tmp_path,True,None)
+    assert result==0
+    saved=MileageBook(tmp_path).rows[0]
+    assert saved['concur_receipt_verified'] is True
+
+
+def test_new_expense_without_receipt_is_not_marked_fully_verified(tmp_path,monkeypatch):
+    prepared(tmp_path)
+    monkeypatch.setattr(mileage_concur,'create_one',lambda *a,**k:'EXP-NEW')
+    monkeypatch.setattr(mileage_concur,'_receipt_state',lambda *a,**k:False)
+    result=mileage_concur.run_in_session(object(),'https://example/reports/R',tmp_path,True,None)
+    assert result==1
+    saved=MileageBook(tmp_path).rows[0]
+    assert saved['concur_expense_id']=='EXP-NEW'
+    assert saved['concur_state']=='receipt_missing'
+    assert saved['concur_receipt_verified'] is False
+    assert mileage_concur.status(tmp_path)['pending']==1
