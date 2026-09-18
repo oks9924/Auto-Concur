@@ -88,7 +88,7 @@ class _Writer:
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Auto-Concur · 작업 공간 UX 2026.09.17")
+        self.title(f"Auto-Concur · 코드 {paths.stamp()}")
         self.cfg = settings.load()
         self.events: queue.Queue = queue.Queue()
         self.busy = False

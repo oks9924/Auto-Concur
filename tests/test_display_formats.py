@@ -192,11 +192,12 @@ def test_lodging_unknown_saved_amount_is_not_zero(monkeypatch):
     assert driver.verify_edit(plan) is None
 
 
-def test_format_settings_dialog_saves_without_touching_concur(monkeypatch):
+def test_format_settings_dialog_saves_without_touching_concur(monkeypatch,tk_cleanup):
     import tkinter as tk
     from tkinter import ttk
     from src import settings
     app = tk.Tk()
+    tk_cleanup(app)
     app.withdraw()
     app.cfg = {}
     saved = []
@@ -213,4 +214,4 @@ def test_format_settings_dialog_saves_without_touching_concur(monkeypatch):
         assert app.cfg['concur_number_style']=='COMMA'
         assert not dialog.winfo_exists()
     finally:
-        app.destroy()
+        pass  # tk_cleanup cancels callbacks with their original owners.

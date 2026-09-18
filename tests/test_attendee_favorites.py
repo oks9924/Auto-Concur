@@ -53,13 +53,10 @@ def test_failed_replace_retains_data_and_cleans_lock(tmp_path,monkeypatch):
 
 
 @pytest.fixture
-def root(tmp_path,monkeypatch):
+def root(tmp_path,monkeypatch,tk_window):
     monkeypatch.setattr(paths,'base',lambda:tmp_path)
-    app=tk.Tk();app.geometry('800x600');app.update()
-    yield app
-    for child in list(app.winfo_children()): child.destroy()
-    for task in app.tk.call('after','info'): app.after_cancel(task)
-    app.destroy()
+    tk_window.geometry('800x600');tk_window.update()
+    return tk_window
 
 
 @pytest.fixture
@@ -204,13 +201,13 @@ def test_empty_check_selection_preserves_concur_blank_semantics(editor,store):
     assert editor.model.rows[0]['추가 참석자']=='' and editor.model.rows[0]['참석자']=='base.user'
 
 
-def test_home_management_button_disabled_when_busy(root,monkeypatch,tmp_path):
+def test_home_management_button_disabled_when_busy(monkeypatch,tmp_path,tk_cleanup):
     from src import gui
     monkeypatch.setattr(gui,'_preload',lambda:None)
     monkeypatch.setattr(gui.settings,'load',lambda:deepcopy(settings.DEFAULTS))
-    app=gui.App();app.update()
+    monkeypatch.setattr(paths,'base',lambda:tmp_path)
+    app=gui.App();tk_cleanup(app);app.update()
     button=next(w for w in descendants(app) if isinstance(w,ttk.Button) and w.cget('text')=='자주 쓰는 추가 참석자 관리')
     assert button in app.buttons
     button.invoke();manager=next(w for w in app.winfo_children() if isinstance(w,FavoritesManager));manager.close()
-    for task in app.tk.call('after','info'):app.after_cancel(task)
-    app.destroy()
+    # Registered with tk_cleanup before any assertions.

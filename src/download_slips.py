@@ -28,6 +28,7 @@ from playwright.sync_api import sync_playwright
 from pypdf import PdfReader, PdfWriter
 
 from . import browser, console, paths, settings
+from .download_diagnostics import DownloadWatch, save_bundle
 
 SLIP_PAGE = "https://mycompany.hyundaicard.com/hs/cs/HSCS1002.do?_method=s&_proc=authCard"
 PROFILE_DIR = paths.at("browser-profile", "hyundaicard")
@@ -221,66 +222,72 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
 
     with sync_playwright() as p:
         ctx = browser.launch(p, PROFILE_DIR, accept_downloads=True, locale="ko-KR")
-        page = browser.open_first(ctx, SLIP_PAGE)
+        with DownloadWatch(ctx, out_dir) as watch:
+            page = browser.open_first(ctx, SLIP_PAGE)
 
-        print("\n" + "=" * 64)
-        print("  브라우저에서 카드 인증을 직접 해 주세요 (가상키패드라 자동 입력이 안 됩니다).")
-        print("=" * 64)
-        console.wait_enter("매출내역 목록이 뜨는 것까지 확인하셨으면")
+            print("\n" + "=" * 64)
+            print("  브라우저에서 카드 인증을 직접 해 주세요 (가상키패드라 자동 입력이 안 됩니다).")
+            print("=" * 64)
+            console.wait_enter("매출내역 목록이 뜨는 것까지 확인하셨으면")
 
-        _set_date(page, "#inqFromDt", from_date)
-        _set_date(page, "#inqToDt", to_date)
-        page.click("#btnIqry")
+            _set_date(page, "#inqFromDt", from_date)
+            _set_date(page, "#inqToDt", to_date)
+            page.click("#btnIqry")
 
-        # 조회 결과가 올 때까지 기다린다. 3초만 기다렸더니 아직 안 온 화면을
-        # 읽어서 '선택 칸이 없다'(chCol: -1, rows: ['1'])로 멈춘 적이 있다.
-        # 체크박스 칼럼이 생기는 것이 결과가 다 왔다는 신호다.
-        grid = None
-        for _ in range(int(QUERY_TIMEOUT_MS / 1000)):
-            grid = page.evaluate(FIND_GRID_JS)
-            if grid and grid["chCol"] >= 0:
-                break
-            page.wait_for_timeout(1000)
+            # 조회 결과가 올 때까지 기다린다. 3초만 기다렸더니 아직 안 온 화면을
+            # 읽어서 '선택 칸이 없다'(chCol: -1, rows: ['1'])로 멈춘 적이 있다.
+            # 체크박스 칼럼이 생기는 것이 결과가 다 왔다는 신호다.
+            grid = None
+            for _ in range(int(QUERY_TIMEOUT_MS / 1000)):
+                grid = page.evaluate(FIND_GRID_JS)
+                if grid and grid["chCol"] >= 0:
+                    break
+                page.wait_for_timeout(1000)
 
-        if not grid:
-            _dump_modal(page, out_dir)
-            raise DownloadError("거래 목록을 찾지 못했습니다. 조회가 됐는지 화면을 확인해 주세요.")
-        if grid["chCol"] < 0:
-            raise DownloadError(
-                "조회 결과를 기다렸지만 선택 칸이 생기지 않았습니다. "
-                "그 기간에 거래가 없거나 조회가 끝나지 않은 것 같습니다. "
-                f"화면을 확인하고 다시 시도해 주세요: {grid}"
-            )
+            if not grid:
+                _dump_modal(page, out_dir)
+                raise DownloadError("거래 목록을 찾지 못했습니다. 조회가 됐는지 화면을 확인해 주세요.")
+            if grid["chCol"] < 0:
+                raise DownloadError(
+                    "조회 결과를 기다렸지만 선택 칸이 생기지 않았습니다. "
+                    "그 기간에 거래가 없거나 조회가 끝나지 않은 것 같습니다. "
+                    f"화면을 확인하고 다시 시도해 주세요: {grid}"
+                )
 
-        rows = grid["rows"]
-        print(f"거래 {len(rows)}건을 찾았습니다.")
-        if limit:
-            rows = rows[:limit]
-            print(f"--limit {limit} 이라서 {len(rows)}건만 받습니다.")
+            rows = grid["rows"]
+            print(f"거래 {len(rows)}건을 찾았습니다.")
+            if limit:
+                rows = rows[:limit]
+                print(f"--limit {limit} 이라서 {len(rows)}건만 받습니다.")
 
-        base = {"key": grid["key"], "col": grid["chCol"]}
-        page.evaluate(SET_CHECKS_JS, {**base, "rows": grid["rows"], "on": False})
-        page.evaluate(SET_CHECKS_JS, {**base, "rows": rows, "on": True})
+            base = {"key": grid["key"], "col": grid["chCol"]}
+            page.evaluate(SET_CHECKS_JS, {**base, "rows": grid["rows"], "on": False})
+            page.evaluate(SET_CHECKS_JS, {**base, "rows": rows, "on": True})
 
-        page.evaluate("fnPdf()")
-        page.wait_for_timeout(1000)  # 출력방식 모달이 그려질 때까지
-        if not _click_text(page, LAYOUT_ONE_PER_PAGE):
-            _dump_modal(page, out_dir)
-            raise DownloadError(f"출력방식 창에서 '{LAYOUT_ONE_PER_PAGE}'을 찾지 못했습니다.")
+            watch.mark('request_bundle')
+            page.evaluate("fnPdf()")
+            page.wait_for_timeout(1000)  # 출력방식 모달이 그려질 때까지
+            if not _click_text(page, LAYOUT_ONE_PER_PAGE):
+                _dump_modal(page, out_dir)
+                raise DownloadError(f"출력방식 창에서 '{LAYOUT_ONE_PER_PAGE}'을 찾지 못했습니다.")
 
-        print(f"{len(rows)}건을 한 파일로 만드는 중입니다. 몇 분 걸릴 수 있습니다...")
-        try:
-            with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as dl:
-                if not _click_text(page, "확인"):
-                    raise DownloadError("출력방식 창에서 '확인'을 찾지 못했습니다.")
-            downloaded = dl.value
-        except PWTimeout:
-            _dump_modal(page, out_dir)
-            raise DownloadError("다운로드가 시작되지 않았습니다. 건수를 줄여서 다시 시도해 주세요.")
+            print(f"{len(rows)}건을 한 파일로 만드는 중입니다. 몇 분 걸릴 수 있습니다...")
+            watch.mark('await_download')
+            try:
+                with page.expect_download(timeout=DOWNLOAD_TIMEOUT_MS) as dl:
+                    if not _click_text(page, "확인"):
+                        raise DownloadError("출력방식 창에서 '확인'을 찾지 못했습니다.")
+                downloaded = dl.value
+            except PWTimeout:
+                _dump_modal(page, out_dir)
+                raise DownloadError("다운로드가 시작되지 않았습니다. 건수를 줄여서 다시 시도해 주세요.")
 
-        bundle = raw_dir / downloaded.suggested_filename
-        downloaded.save_as(bundle)
-        ctx.close()
+            watch.mark('save_started')
+            print('다운로드 시작을 확인했습니다. 파일 전송 완료 및 저장을 기다립니다...')
+            bundle = save_bundle(downloaded, raw_dir)
+            watch.mark('save_completed')
+            watch.mark('normal_context_close')
+            ctx.close()
 
     print(f"받은 파일을 저장했습니다: {bundle}")
     n = _split(bundle, out_dir, len(rows))

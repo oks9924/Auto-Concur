@@ -19,7 +19,9 @@ jobs:
           architecture: x64
       - run: python -m pip install -r requirements.txt
       - run: python -m playwright install chromium
-      - run: python -m pytest -q --junitxml=test-results.xml
+      # Keep Tcl's native standard handles intact. Python output remains captured;
+      # explicit capsys/capfd fixtures and every test assertion still execute.
+      - run: python -m pytest -q --capture=sys --junitxml=test-results.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:

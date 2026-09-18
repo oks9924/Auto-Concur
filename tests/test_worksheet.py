@@ -111,13 +111,10 @@ def test_native_edits_survive_b_rerun(source):
     assert organize._kept_edits(source.parent)['1']['코멘트'] == 'keep'
 
 
-@pytest.fixture(scope='module')
-def tk_root():
-    import tkinter as tk
-    root = tk.Tk()
-    root.withdraw()
-    yield root
-    root.destroy()
+@pytest.fixture
+def tk_root(tk_window):
+    tk_window.withdraw()
+    return tk_window
 
 
 @pytest.fixture
