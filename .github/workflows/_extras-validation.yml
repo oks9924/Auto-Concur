@@ -1,0 +1,40 @@
+name: Attendee favorites and local mileage validation
+on:
+  push:
+    branches: [feat/attendee-favorites-20260918]
+    paths: ['.extras-payload/**', '_apply_extras.py', '.github/workflows/_extras-validation.yml']
+permissions:
+  contents: write
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/attendee-favorites-20260918
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Materialize checksum-verified source
+        run: python _apply_extras.py
+      - run: python -m pip install -r requirements.txt
+      - name: Related editor and data-preservation checks
+        run: xvfb-run -a python -m pytest -q tests/test_attendee_favorites.py tests/test_attendee_defaults.py tests/test_mileage.py tests/test_workspace_ux.py tests/test_worksheet.py tests/test_blank_policy.py --junitxml=extras-results.xml
+      - name: Commit verified application files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .gitignore src/attendee_favorites.py src/attendee_picker.py src/mileage.py src/mileage_ui.py src/row_editor.py src/worksheet_editor.py src/workspace_ui.py tests/test_attendee_favorites.py tests/test_mileage.py tests/test_workspace_ux.py docs/attendee-favorites-20260918.md docs/mileage-20260918.md
+          git rm -r .extras-payload _apply_extras.py .github/workflows/_extras-validation.yml .github/workflows/_favorites-source.yml
+          git commit -m 'Add favorite attendee checkboxes and separate local mileage workspace; related tests passed'
+          git push origin HEAD:feat/attendee-favorites-20260918
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extras-validation
+          path: |
+            extras-results.xml
+            .extras-payload/
+          include-hidden-files: true
+          retention-days: 1
