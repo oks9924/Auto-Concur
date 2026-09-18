@@ -110,22 +110,34 @@ MILEAGE_FORM_READY_JS = "() => {" + SURFACE_HELPERS + r"""
 FIELD_JS = "(names) => {" + SURFACE_HELPERS + r"""
   const root=surface();
   const wants=names.map(x=>norm(x).toLowerCase());
-  const controls=[...root.querySelectorAll('input,textarea')].filter(e => visible(e) && !e.disabled && e.type!=='file');
-  const byAttr=controls.filter(e => {
-    const hay=[e.getAttribute('aria-label'),e.name,e.id,e.placeholder].map(x=>norm(x).toLowerCase()).join(' ');
-    return wants.some(w => w && hay.includes(w));
-  });
-  const byLabel=[];
-  for (const l of root.querySelectorAll('label')) {
-    const t=norm(l.innerText).toLowerCase();
-    if (!wants.some(w => w && t.includes(w))) continue;
-    let e=l.control;
-    if (!e && l.htmlFor) e=document.getElementById(l.htmlFor);
-    if (!e) e=l.querySelector('input,textarea');
-    if (e && root.contains(e) && visible(e) && !e.disabled && e.type!=='file') byLabel.push(e);
-  }
-  const hits=[...new Set([...byLabel,...byAttr])];
-  if (hits.length!==1) return null;
+  const controls=[...root.querySelectorAll('input,textarea')].filter(e =>
+    visible(e) && !e.disabled && e.type!=='file' && e.type!=='hidden');
+
+  const attrScore = e => {
+    const hay=[e.getAttribute('aria-label'),e.name,e.id,e.placeholder,e.getAttribute('data-nuiexp')]
+      .map(x=>norm(x).toLowerCase()).join(' ');
+    return wants.some(w=>w && hay.includes(w)) ? 100 : 0;
+  };
+  const labelScore = e => {
+    let score=0, n=e.parentElement;
+    for(let depth=0; n && root.contains(n) && depth<5; depth++, n=n.parentElement){
+      const own=[...n.childNodes].filter(x=>x.nodeType===Node.TEXT_NODE)
+        .map(x=>norm(x.textContent).toLowerCase()).join(' ');
+      const labels=[...n.querySelectorAll(':scope > label,:scope > span,:scope > div')]
+        .filter(x=>x!==e && visible(x)).slice(0,8)
+        .map(x=>norm(x.innerText).toLowerCase()).join(' ');
+      const hay=(own+' '+labels).trim();
+      if(wants.some(w=>w && (hay===w || hay.startsWith(w+' ') || hay.includes(w)))) {
+        score=Math.max(score, 50-depth);
+      }
+    }
+    return score;
+  };
+  const scored=controls.map(e=>[e,Math.max(attrScore(e),labelScore(e))]).filter(x=>x[1]>0);
+  if(!scored.length) return null;
+  const best=Math.max(...scored.map(x=>x[1]));
+  const hits=scored.filter(x=>x[1]===best).map(x=>x[0]);
+  if(hits.length!==1) return null;
   document.querySelectorAll('[data-auto-mileage-field]').forEach(e=>e.removeAttribute('data-auto-mileage-field'));
   hits[0].setAttribute('data-auto-mileage-field','1');
   return '[data-auto-mileage-field="1"]';
@@ -133,22 +145,25 @@ FIELD_JS = "(names) => {" + SURFACE_HELPERS + r"""
 
 COMBO_JS = "(names) => {" + SURFACE_HELPERS + r"""
   const root=surface(), wants=names.map(x=>norm(x).toLowerCase());
-  const candidates=[...root.querySelectorAll('[role="combobox"],button')].filter(e =>
-    visible(e) && !e.disabled && e.getAttribute('data-testid')!=='column-sort');
-  const byOwn=candidates.filter(e=>{
-    const hay=norm([e.innerText,e.getAttribute('aria-label'),e.getAttribute('data-nuiexp'),e.id].join(' ')).toLowerCase();
-    return wants.some(w=>w && hay.includes(w));
-  });
-  const byLabel=[];
-  for (const l of root.querySelectorAll('label')) {
-    const t=norm(l.innerText).toLowerCase();
-    if (!wants.some(w=>w && t.includes(w))) continue;
-    let e=l.control;
-    if (!e && l.htmlFor) e=document.getElementById(l.htmlFor);
-    if (!e) e=l.parentElement?.querySelector('[role="combobox"],button');
-    if (e && root.contains(e) && visible(e) && e.getAttribute('data-testid')!=='column-sort') byLabel.push(e);
-  }
-  const hits=[...new Set([...byLabel,...byOwn])];
+  const candidates=[...root.querySelectorAll('[role="combobox"],button,input')].filter(e =>
+    visible(e) && !e.disabled && e.getAttribute('data-testid')!=='column-sort'
+    && e.type!=='hidden' && e.type!=='file');
+  const attrScore=e=>{
+    const hay=norm([e.innerText,e.getAttribute('aria-label'),e.getAttribute('data-nuiexp'),e.id,e.name,e.placeholder].join(' ')).toLowerCase();
+    return wants.some(w=>w&&hay.includes(w))?100:0;
+  };
+  const nearScore=e=>{
+    let score=0,n=e.parentElement;
+    for(let depth=0;n&&root.contains(n)&&depth<5;depth++,n=n.parentElement){
+      const hay=norm(n.innerText).toLowerCase();
+      if(wants.some(w=>w&&(hay===w||hay.startsWith(w+' ')||hay.includes(w)))) score=Math.max(score,50-depth);
+    }
+    return score;
+  };
+  const scored=candidates.map(e=>[e,Math.max(attrScore(e),nearScore(e))]).filter(x=>x[1]>0);
+  if(!scored.length)return null;
+  const best=Math.max(...scored.map(x=>x[1]));
+  const hits=scored.filter(x=>x[1]===best).map(x=>x[0]);
   if(hits.length!==1)return null;
   document.querySelectorAll('[data-auto-mileage-combo]').forEach(e=>e.removeAttribute('data-auto-mileage-combo'));
   hits[0].setAttribute('data-auto-mileage-combo','1');
@@ -181,6 +196,9 @@ KNOWN_PREWRITE_MARKERS = (
     'data-auto-mileage-combo',
     '수동으로 경비 생성 표시',
     '자동차 마일리지 유형 표시',
+    '입력칸을 하나로 확인하지 못했습니다',
+    '차량 ID 선택칸을 확인하지 못했습니다',
+    '마일리지 상세 입력 화면',
 )
 
 
@@ -190,11 +208,19 @@ def _known_prewrite_failure(row):
             and any(marker in str(row.get('concur_note') or '') for marker in KNOWN_PREWRITE_MARKERS))
 
 
+def _resumable_draft(row):
+    return (row.get('concur_state') == 'needs_review'
+            and bool(row.get('concur_expense_id'))
+            and any(marker in str(row.get('concur_note') or '') for marker in KNOWN_PREWRITE_MARKERS))
+
+
 def status(folder: Path, limit=None):
     book = MileageBook(folder)
     retryable = [r['id'] for r in book.rows if _known_prewrite_failure(r)]
+    resumable = [r['id'] for r in book.rows if _resumable_draft(r)]
     pending = [r['id'] for r in book.rows
-               if r.get('concur_state') not in ('verified','needs_review') or _known_prewrite_failure(r)]
+               if r.get('concur_state') not in ('verified','needs_review')
+               or _known_prewrite_failure(r) or _resumable_draft(r)]
     if limit is not None:
         pending = pending[:limit]
     return {
@@ -202,9 +228,11 @@ def status(folder: Path, limit=None):
         'pending_ids': pending,
         'pending': len(pending),
         'verified': sum(r.get('concur_state') == 'verified' for r in book.rows),
-        'needs_review': sum(r.get('concur_state') == 'needs_review' and not _known_prewrite_failure(r)
+        'needs_review': sum(r.get('concur_state') == 'needs_review'
+                            and not _known_prewrite_failure(r) and not _resumable_draft(r)
                             for r in book.rows),
         'retryable_prewrite': len(retryable),
+        'resumable_drafts': len(resumable),
     }
 
 
@@ -257,31 +285,7 @@ def _report_ids(page):
     return {r.expense_id for r in ar.rows_when_ready(page, allow_incomplete=True) if r.expense_id}
 
 
-def create_one(page, report_url, row, map_path, before_ids=None):
-    """Create exactly one mileage expense and prove one new report id appeared."""
-    page.goto(report_url, wait_until='domcontentloaded')
-    check_context(page, report_url)
-    before = _report_ids(page) if before_ids is None else set(before_ids)
-
-    # These two menu actions do not create an expense yet. Failures here are safe
-    # to retry and must not be recorded as an uncertain server write.
-    ui.click_target(page, ADD_EXPENSE_JS, '경비 추가')
-    page.wait_for_timeout(200)
-    _click_unique_text(
-        page,
-        ['수동으로 경비 생성','Create Expense Manually','Create Manually','Create New Expense'],
-        '수동으로 경비 생성',
-    )
-    page.wait_for_timeout(300)
-    try:
-        _select_mileage_type(page)
-    except Exception as exc:
-        draft = _expense_id(page.url)
-        if draft:
-            raise UncertainMileageCreate(str(exc), draft) from exc
-        raise MileageConcurError(str(exc)) from exc
-
-    draft_id = _expense_id(page.url)
+def _fill_and_save(page, report_url, row, map_path, draft_id, before):
     try:
         _fill(page, ['거래 날짜','Transaction Date','Date'], row['date'], '거래 날짜')
         _fill(page, ['출발지','출발 위치','Origin','From'], row['origin'], '출발지')
@@ -292,12 +296,12 @@ def create_one(page, report_url, row, map_path, before_ids=None):
         _fill(page, ['설명','Description','Business Purpose'], row['description'], '설명')
         _upload_map(page, map_path)
     except Exception as exc:
+        # If Concur has already assigned an expense id, resume that exact draft on
+        # the next run rather than creating another expense.
         if draft_id:
             raise UncertainMileageCreate(str(exc), draft_id) from exc
         raise MileageConcurError(str(exc)) from exc
 
-    # From the save click onward the server may have accepted the expense even if
-    # the response/navigation is lost. Never retry automatically after this point.
     try:
         page.wait_for_timeout(700)
         ui.click_target(page, ui.SAVE_BUTTONS_JS, '마일리지 저장', '저장,Save')
@@ -325,6 +329,47 @@ def create_one(page, report_url, row, map_path, before_ids=None):
         raise UncertainMileageCreate(str(exc), draft_id or _expense_id(page.url)) from exc
 
 
+def resume_one(page, report_url, row, map_path, expense_id):
+    """Resume only the exact Concur draft previously recorded for this local row."""
+    page.goto(report_url, wait_until='domcontentloaded')
+    check_context(page, report_url)
+    before=_report_ids(page)
+    if expense_id not in before:
+        raise UncertainMileageCreate(
+            '이전에 생성된 것으로 기록한 마일리지 경비 ID를 현재 리포트에서 찾지 못했습니다. '
+            '중복 생성을 막기 위해 새 경비를 만들지 않습니다.', expense_id)
+    page.goto(ar.expense_url(report_url, expense_id), wait_until='domcontentloaded')
+    check_context(page, report_url)
+    ui.wait_condition(page, MILEAGE_FORM_READY_JS, '기존 마일리지 상세 입력 화면', timeout=15000)
+    return _fill_and_save(page, report_url, row, map_path, expense_id, before)
+
+
+def create_one(page, report_url, row, map_path, before_ids=None):
+    """Create exactly one mileage expense and prove one new report id appeared."""
+    page.goto(report_url, wait_until='domcontentloaded')
+    check_context(page, report_url)
+    before = _report_ids(page) if before_ids is None else set(before_ids)
+
+    ui.click_target(page, ADD_EXPENSE_JS, '경비 추가')
+    page.wait_for_timeout(200)
+    _click_unique_text(
+        page,
+        ['수동으로 경비 생성','Create Expense Manually','Create Manually','Create New Expense'],
+        '수동으로 경비 생성',
+    )
+    page.wait_for_timeout(300)
+    try:
+        _select_mileage_type(page)
+    except Exception as exc:
+        draft = _expense_id(page.url)
+        if draft:
+            raise UncertainMileageCreate(str(exc), draft) from exc
+        raise MileageConcurError(str(exc)) from exc
+
+    draft_id = _expense_id(page.url)
+    return _fill_and_save(page, report_url, row, map_path, draft_id, before)
+
+
 def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
     """Process saved mileage rows in an already authenticated report session."""
     book = MileageBook(folder)
@@ -339,6 +384,8 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
         print(f"이전 실행에서 확인이 필요한 마일리지 {info['needs_review']}건은 자동 재시도하지 않습니다.")
     if info.get('retryable_prewrite'):
         print(f"이전 버전의 저장 전 UI 탐색 실패 {info['retryable_prewrite']}건은 안전하게 다시 시도합니다.")
+    if info.get('resumable_drafts'):
+        print(f"기존 Concur 마일리지 초안 {info['resumable_drafts']}건은 새로 만들지 않고 같은 경비 ID에서 이어서 입력합니다.")
 
     if not pending_ids:
         summary = (f"마일리지 신규 생성 대상 없음 · 기존 확인 {info['verified']}건"
@@ -368,7 +415,10 @@ def run_in_session(page, report_url, folder: Path, apply=True, limit=None):
         print(f'[{n}/{len(pending_ids)}] 마일리지 신규 생성: '
               f'{row["date"]} · {row["origin"]} → {row["destination"]} · {row["distance"]}km')
         try:
-            ident = create_one(page, report_url, row, image)
+            if _resumable_draft(current):
+                ident = resume_one(page, report_url, row, image, current['concur_expense_id'])
+            else:
+                ident = create_one(page, report_url, row, image)
         except UncertainMileageCreate as exc:
             current['concur_state'] = 'needs_review'
             current['concur_note'] = str(exc)
