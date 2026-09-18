@@ -145,15 +145,16 @@ def test_table_filtered_cell_apply_atomic_undo_and_no_basic_change(editor,store)
     editor.table.redo();assert editor.model.rows[2]['추가 참석자']=='manual.user, test.b'
 
 
-def test_table_enter_picker_but_f2_and_typing_remain_text(editor,store):
+def test_table_extra_attendee_all_edit_entrypoints_use_lov(editor,store):
     c=editor.COLUMNS.index('추가 참석자')
-    event=SimpleNamespace(column=c,row=0,key='F2',value='manual.user')
-    assert editor.begin_cell_edit(event)=='manual.user'
-    event.key='x';event.value='x';assert editor.begin_cell_edit(event)=='x'
-    event.key='Return';assert editor.begin_cell_edit(event) is None
+    for key in ('F2','x','Return','??'):
+        event=SimpleNamespace(column=c,row=0,key=key,value='manual.user')
+        assert editor.begin_cell_edit(event) is None
     editor.update_idletasks()
-    picker=next(w for w in editor.winfo_children() if isinstance(w,AttendeePicker))
-    picker.close()
+    pickers=[w for w in editor.winfo_children() if isinstance(w,AttendeePicker)]
+    assert pickers
+    for picker in pickers:
+        picker.close()
 
 
 def descendants(w):
