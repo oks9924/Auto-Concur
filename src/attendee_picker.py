@@ -7,37 +7,20 @@ from .ui_scroll import ScrollArea
 
 
 class Dialog(tk.Toplevel):
-    def __init__(self, parent, title, popover_anchor=None):
+    def __init__(self, parent, title):
         self.previous_grab, self.previous_focus = parent.grab_current(), parent.focus_get()
-        self.popover_anchor = popover_anchor
         super().__init__(parent)
         self.withdraw()
         self.title(title)
         self.transient(parent.winfo_toplevel())
-        if popover_anchor is None:
-            w, h = min(650, self.winfo_screenwidth()-40), min(620, self.winfo_screenheight()-90)
-            self.geometry(f'{w}x{h}')
-            self.minsize(min(w, 480), min(h, 380))
-        else:
-            self.overrideredirect(True)
-            self.resizable(False, False)
-            self.configure(borderwidth=1, relief='solid')
+        w, h = min(650, self.winfo_screenwidth()-40), min(620, self.winfo_screenheight()-90)
+        self.geometry(f'{w}x{h}')
+        self.minsize(min(w, 480), min(h, 380))
         self.columnconfigure(0, weight=1)
         self.protocol('WM_DELETE_WINDOW', self.close)
         self.bind('<Escape>', lambda event: (self.close(), 'break')[1])
 
     def present(self):
-        if self.popover_anchor is not None:
-            self.update_idletasks()
-            x, top, bottom, cell_width = self.popover_anchor
-            sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-            width = min(470, sw - 24)
-            height = min(430, sh - 70)
-            x = max(8, min(int(x), sw - width - 8))
-            y = int(bottom) + 3
-            if y + height > sh - 35:
-                y = max(8, int(top) - height - 3)
-            self.geometry(f'{width}x{height}+{x}+{y}')
         self.deiconify()
         self.grab_set()
         self.focus_set()
@@ -142,9 +125,9 @@ class FavoritesManager(Dialog):
 
 
 class AttendeePicker(Dialog):
-    def __init__(self,parent,current,on_apply,store=None,anchor=None):
+    def __init__(self,parent,current,on_apply,store=None):
         self.store=store if store is not None else FavoriteStore()
-        super().__init__(parent,'추가 참석자 선택 · 여러 명 체크', popover_anchor=anchor)
+        super().__init__(parent,'추가 참석자 선택 · 여러 명 체크')
         self.original, self.on_apply = current or '', on_apply
         self.options, self.checked = {}, {}
         selected=split_people(current)
@@ -234,14 +217,169 @@ class AttendeePicker(Dialog):
         self.close();return True
 
 
+
+class AttendeePopover(tk.Frame):
+    """Worksheet-only LOV rendered inside the editor, never as another window."""
+    def __init__(self, parent, current, on_apply, store=None, on_close=None):
+        super().__init__(parent, bd=1, relief='solid', background='#ffffff',
+                         highlightthickness=1, highlightbackground='#64748b')
+        self.parent, self.on_apply, self.on_close = parent, on_apply, on_close
+        self.store = store if store is not None else FavoriteStore()
+        self.original = current or ''
+        self.options, self.checked = {}, {}
+        selected = split_people(current)
+        self.order = [value.casefold() for value in selected]
+        for value in selected:
+            self.add_option(value, value, True)
+        self.refresh_favorites()
+
+        self.query, self.manual = tk.StringVar(self), tk.StringVar(self)
+        head=ttk.Frame(self,padding=(8,8,8,4));head.pack(fill='x')
+        ttk.Label(head,text='추가 참석자').pack(side='left')
+        search=ttk.Entry(head,textvariable=self.query,width=22);search.pack(side='right',fill='x',expand=True,padx=(8,0))
+
+        body=ttk.Frame(self,padding=(8,2,8,2));body.pack(fill='both',expand=True)
+        self.canvas=tk.Canvas(body,highlightthickness=0,borderwidth=0,height=190)
+        bar=ttk.Scrollbar(body,orient='vertical',command=self.canvas.yview)
+        self.list=ttk.Frame(self.canvas)
+        self.window=self.canvas.create_window((0,0),window=self.list,anchor='nw')
+        self.canvas.configure(yscrollcommand=bar.set)
+        self.canvas.pack(side='left',fill='both',expand=True);bar.pack(side='right',fill='y')
+        self.list.bind('<Configure>',lambda e:self.canvas.configure(scrollregion=self.canvas.bbox('all')))
+        self.canvas.bind('<Configure>',lambda e:self.canvas.itemconfigure(self.window,width=e.width))
+
+        manual=ttk.Frame(self,padding=(8,4));manual.pack(fill='x')
+        ttk.Entry(manual,textvariable=self.manual).pack(side='left',fill='x',expand=True)
+        ttk.Button(manual,text='직접 추가',command=self.add_manual).pack(side='left',padx=(5,0))
+
+        foot=ttk.Frame(self,padding=(8,4,8,8));foot.pack(fill='x')
+        self.count=ttk.Label(foot);self.count.pack(side='left')
+        ttk.Button(foot,text='표시 선택',command=lambda:self.check_shown(True)).pack(side='left',padx=(8,0))
+        ttk.Button(foot,text='표시 해제',command=lambda:self.check_shown(False)).pack(side='left',padx=(4,0))
+        ttk.Button(foot,text='목록 관리',command=self.manage).pack(side='left',padx=(4,0))
+        ttk.Button(foot,text='취소',command=self.close).pack(side='right')
+        ttk.Button(foot,text='적용',command=self.apply).pack(side='right',padx=(0,5))
+
+        self.query.trace_add('write',lambda *a:self.render())
+        self.bind('<Escape>',lambda e:(self.close(),'break')[1])
+        search.bind('<Escape>',lambda e:(self.close(),'break')[1])
+        self.render()
+        self.after_idle(search.focus_set)
+
+    def add_option(self,value,label,selected=False):
+        key=value.casefold()
+        if key not in self.options:
+            self.options[key]={'label':label,'value':value,'registered':False}
+            self.checked[key]=tk.BooleanVar(self,value=selected)
+        return key
+
+    def refresh_favorites(self):
+        for item in self.options.values():
+            item['registered']=False
+        for item in self.store.people:
+            key=self.add_option(item['value'],item['label'])
+            self.options[key].update(label=item['label'],registered=True)
+
+    def render(self):
+        for child in self.list.winfo_children():
+            child.destroy()
+        q=self.query.get().strip().casefold()
+        self.shown=[k for k,p in self.options.items() if q in (p['label']+' '+p['value']).casefold()]
+        for key in self.shown:
+            person=self.options[key]
+            suffix='' if person['registered'] else ' · 이번 경비'
+            ttk.Checkbutton(self.list,text=f"{person['label']}  ({person['value']}){suffix}",
+                            variable=self.checked[key],command=self.update_count).pack(anchor='w',fill='x',pady=2)
+        if not self.shown:
+            ttk.Label(self.list,text='등록된 참석자가 없습니다.' if not self.options else '검색 결과가 없습니다.').pack(anchor='w')
+        self.update_count()
+
+    def update_count(self):
+        self.count.configure(text=f'선택 {sum(v.get() for v in self.checked.values())}명')
+
+    def check_shown(self, value):
+        for key in self.shown:
+            self.checked[key].set(value)
+        self.update_count()
+
+    def add_manual(self):
+        values=split_people(self.manual.get())
+        try:
+            for value in values:
+                validate_person('',value)
+        except ValueError as exc:
+            self.count.configure(text=str(exc))
+            return False
+        for value in values:
+            key=self.add_option(value,value,True)
+            self.checked[key].set(True)
+        self.manual.set('')
+        self.render()
+        return True
+
+    def manage(self):
+        def refresh():
+            self.refresh_favorites()
+            self.render()
+        return FavoritesManager(self.parent,self.store,on_saved=refresh)
+
+    def place_for_cell(self, anchor):
+        """Attach below the worksheet cell using editor-local coordinates.
+
+        Never use monitor/screen coordinates and never flip to another monitor.
+        When the cell is low in the editor, shrink the LOV rather than placing it above.
+        """
+        x, top, bottom, width = anchor
+        self.update_idletasks()
+        parent_w=max(self.parent.winfo_width(),1)
+        parent_h=max(self.parent.winfo_height(),1)
+        pop_w=min(480,max(340,min(parent_w-24, int(width)*2)))
+        x=max(8,min(int(x),parent_w-pop_w-8))
+        y=max(0,int(bottom)+2)
+        available=max(90,parent_h-y-8)
+        pop_h=min(350,available)
+        self.place(x=x,y=y,width=pop_w,height=pop_h)
+        self.lift()
+
+    def apply(self):
+        if self.manual.get().strip() and not self.add_manual():
+            return False
+        order=list(dict.fromkeys([*self.order,*self.options]))
+        values=[self.options[key]['value'] for key in order if self.checked[key].get()]
+        current=split_people(self.original)
+        result=self.original if values==current else ', '.join(values)
+        if self.on_apply(result) is False:
+            return False
+        self.close()
+        return True
+
+    def close(self):
+        if not self.winfo_exists():
+            return
+        callback=self.on_close
+        self.destroy()
+        if callback:
+            callback()
+
+
+def show_popover(parent,current,on_apply,anchor,on_close=None):
+    try:
+        picker=AttendeePopover(parent,current,on_apply,on_close=on_close)
+        picker.place_for_cell(anchor)
+        return picker
+    except (OSError,ValueError) as exc:
+        messagebox.showerror('참석자 목록 확인',
+            f'목록을 열지 못했습니다. 셀 직접 입력은 계속 사용할 수 있습니다.\n{exc}',parent=parent)
+        return None
+
 def show_manager(parent):
     try: return FavoritesManager(parent)
     except (OSError,ValueError) as exc:
         messagebox.showerror('참석자 목록 확인',f'목록을 열지 못했습니다. 원본 파일은 바꾸지 않았습니다.\n{exc}',parent=parent)
 
 
-def show_picker(parent,current,on_apply,anchor=None):
-    try: return AttendeePicker(parent,current,on_apply,anchor=anchor)
+def show_picker(parent,current,on_apply):
+    try: return AttendeePicker(parent,current,on_apply)
     except (OSError,ValueError) as exc:
         messagebox.showerror('참석자 목록 확인',f'목록을 열지 못했습니다. 직접 입력은 계속 사용할 수 있습니다.\n{exc}',parent=parent)
 

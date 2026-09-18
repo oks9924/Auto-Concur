@@ -326,13 +326,16 @@ def test_replace_dialog_all_is_one_undo_and_respects_filter(editor, monkeypatch)
     assert editor.model.rows[1]['코멘트'] == 'old old'
 
 
-def test_extra_attendee_cell_always_opens_lov_instead_of_text_editor(editor, monkeypatch):
+def test_extra_attendee_direct_typing_and_lov_are_both_available(editor, monkeypatch):
     from types import SimpleNamespace
     called=[]
     monkeypatch.setattr(editor,'pick_extra_attendees',lambda row:called.append(row))
     column=editor.COLUMNS.index('추가 참석자')
-    event=SimpleNamespace(column=column,row=0,key='a',value='기존값')
-    assert editor.begin_cell_edit(event) is None
+    direct=SimpleNamespace(column=column,row=0,key='a',value='기존값')
+    assert editor.begin_cell_edit(direct)=='기존값'
+    assert called==[]
+    lov=SimpleNamespace(column=column,row=0,key='Return',value='기존값')
+    assert editor.begin_cell_edit(lov) is None
     editor.update()
     assert called==[0]
 
@@ -390,3 +393,9 @@ def test_opening_row_editor_syncs_only_selected_row(editor,monkeypatch):
     row=editor.edit_row()
     assert row is not None and row.row_index==1
     row.cancel()
+
+
+def test_table_splitter_is_non_live_resize(editor):
+    import tkinter as tk
+    assert isinstance(editor.tables, tk.PanedWindow)
+    assert str(editor.tables.cget('opaqueresize')) in ('0','false','False')
