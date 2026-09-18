@@ -1179,9 +1179,10 @@ def _sync_attendees(page, report_url: str, row: Row, queries: list[str]) -> int:
     return len(missing) + len(extra)
 
 
-def apply_plan(page, plan: Plan, report_url: str) -> str:
+def apply_plan(page, plan: Plan, report_url: str, *, opened: bool = False) -> str:
     row = plan.row
-    page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
+    if not opened:
+        page.goto(expense_url(report_url, row.expense_id), wait_until="domcontentloaded")
 
     # 이 금액이 화면에 뜰 때까지 기다린다. 대기와 '맞는 경비를 열었나' 확인이
     # 한 번에 된다. 목록과 상세가 같은 화면에 있어서 필드 존재만으로는 모른다.

@@ -53,14 +53,17 @@ class Driver:
         self.guard()
         return fx.apply_plan(self.page, plan, self.report_url)
 
+    def open_for_verification(self, row):
+        self.page.goto(ar.expense_url(self.report_url, row.expense_id), wait_until='domcontentloaded')
+        self.guard()
+        ui.wait_condition(self.page, amount_check_js(), '저장된 경비 금액 확인', str(row.amount))
+
     def verify_edit(self, plan):
         page = self.page
         self.guard()
         if self.matching is not None:
             self.check_binding(plan.row, self.rows())
-        page.goto(ar.expense_url(self.report_url, plan.row.expense_id), wait_until='domcontentloaded')
-        self.guard()
-        ui.wait_condition(page, amount_check_js(), '저장된 경비 금액 확인', str(plan.row.amount))
+        self.open_for_verification(plan.row)
         checks = []
         for selector, expected in ((fx.PURPOSE_FIELD, plan.purpose), (fx.COMMENT_FIELD, plan.comment)):
             if expected:
