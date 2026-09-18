@@ -147,35 +147,66 @@ def test_safe_pre_save_screen_failure_stays_retryable(tmp_path,monkeypatch):
     assert mileage_concur.status(tmp_path)['pending']==1
 
 
-def test_resumable_draft_is_reused_not_recreated(tmp_path,monkeypatch):
+class Page:
+    def __init__(self):
+        self.url='https://example/reports/R'
+        self.gotos=[]
+    def goto(self,url,wait_until=None):
+        self.url=url;self.gotos.append(url)
+
+
+def test_legacy_presave_id_reuses_real_report_draft(tmp_path,monkeypatch):
     book=prepared(tmp_path)
     book.rows[0]['concur_state']='needs_review'
     book.rows[0]['concur_expense_id']='EXP-DRAFT'
     book.rows[0]['concur_note']='거래 날짜 입력칸을 하나로 확인하지 못했습니다.'
     book.save()
     info=mileage_concur.status(tmp_path)
-    assert info['pending']==1 and info['resumable_drafts']==1 and info['needs_review']==0
+    assert info['pending']==1 and info['retryable_prewrite']==1 and info['needs_review']==0
 
-    called=[]
-    monkeypatch.setattr(mileage_concur,'resume_one',
-        lambda page,url,row,image,eid:(called.append(('resume',eid)) or eid))
+    page=Page();called=[]
+    monkeypatch.setattr(mileage_concur,'check_context',lambda *a:None)
+    monkeypatch.setattr(mileage_concur,'_report_ids',lambda page,strict=False:{'EXP-DRAFT'})
+    monkeypatch.setattr(mileage_concur.ui,'wait_condition',lambda *a,**k:True)
+    monkeypatch.setattr(mileage_concur,'_fill_and_save',
+        lambda page,url,row,image,draft,before:(called.append(('resume',draft)) or draft))
     monkeypatch.setattr(mileage_concur,'create_one',
         lambda *a,**k:(_ for _ in ()).throw(AssertionError('must not create duplicate')))
-    result=mileage_concur.run_in_session(object(),'https://example/reports/R',tmp_path,True,None)
-    assert result==0
-    assert called==[('resume','EXP-DRAFT')]
+    result=mileage_concur.run_in_session(page,'https://example/reports/R',tmp_path,True,None)
+    assert result==0 and called==[('resume','EXP-DRAFT')]
     saved=MileageBook(tmp_path).rows[0]
     assert saved['concur_state']=='verified' and saved['concur_expense_id']=='EXP-DRAFT'
 
 
-def test_missing_recorded_draft_never_creates_replacement(tmp_path,monkeypatch):
+def test_legacy_presave_id_missing_from_complete_report_creates_fresh(tmp_path,monkeypatch):
     book=prepared(tmp_path)
-    row=book.rows[0]
-    monkeypatch.setattr(mileage_concur,'_report_ids',lambda page:set())
+    book.rows[0]['concur_state']='needs_review'
+    book.rows[0]['concur_expense_id']='EXP-TEMP'
+    book.rows[0]['concur_note']='이전에 생성된 것으로 기록한 마일리지 경비 ID를 현재 리포트에서 찾지 못했습니다. 중복 생성을 막기 위해 새 경비를 만들지 않습니다.'
+    book.save()
+
+    page=Page();calls=[]
     monkeypatch.setattr(mileage_concur,'check_context',lambda *a:None)
-    class P:
-        url='https://example/reports/R'
-        def goto(self,*a,**k): self.url=a[0]
-    import pytest
-    with pytest.raises(mileage_concur.UncertainMileageCreate,match='중복 생성을 막기 위해'):
-        mileage_concur.resume_one(P(),'https://example/reports/R',row,book.check_image(row),'EXP-DRAFT')
+    monkeypatch.setattr(mileage_concur,'_report_ids',lambda page,strict=False:set())
+    monkeypatch.setattr(mileage_concur,'create_one',
+        lambda page,url,row,image:(calls.append(row['id']) or 'EXP-NEW'))
+    result=mileage_concur.run_in_session(page,'https://example/reports/R',tmp_path,True,None)
+    assert result==0 and len(calls)==1
+    saved=MileageBook(tmp_path).rows[0]
+    assert saved['concur_state']=='verified'
+    assert saved['concur_expense_id']=='EXP-NEW'
+    assert 'concur_draft_id' not in saved
+
+
+def test_presave_failure_with_url_id_stays_retryable_not_needs_review(tmp_path,monkeypatch):
+    prepared(tmp_path)
+    monkeypatch.setattr(mileage_concur,'create_one',
+        lambda *a,**k:(_ for _ in ()).throw(mileage_concur.RetryableMileageCreate(
+            '거래 날짜 입력칸을 하나로 확인하지 못했습니다.','EXP-TEMP')))
+    result=mileage_concur.run_in_session(object(),'https://example/reports/R',tmp_path,True,None)
+    assert result==1
+    saved=MileageBook(tmp_path).rows[0]
+    assert saved['concur_state']=='retryable'
+    assert saved['concur_stage']=='pre_save'
+    assert saved['concur_draft_id']=='EXP-TEMP'
+    assert 'concur_expense_id' not in saved
