@@ -43,9 +43,14 @@ EXACT_TEXT_JS = r"""(names) => {
     const r=e.getBoundingClientRect(), s=getComputedStyle(e);
     return r.width>0 && r.height>0 && s.display!=='none' && s.visibility!=='hidden';
   };
-  const all=[...document.querySelectorAll('[role="menuitem"],[role="option"],button,a,li')].filter(visible);
+  const norm = s => (s||'').replace(/\s+/g,' ').trim();
+  const all=[...document.querySelectorAll('body *')].filter(visible);
   for (const name of names) {
-    const hits=all.filter(e => (e.innerText||'').replace(/\s+/g,' ').trim()===name);
+    const exact=all.filter(e => norm(e.innerText)===name);
+    // React/Concur menu rows often wrap the visible label in div/span instead of
+    // button/a/li. Prefer the deepest exact-text element; clicking it bubbles to
+    // the menu row and avoids matching a larger container with the same text.
+    const hits=exact.filter(e => ![...e.children].some(c => visible(c) && norm(c.innerText)===name));
     if (hits.length===1) {
       document.querySelectorAll('[data-auto-mileage-text]')
         .forEach(e=>e.removeAttribute('data-auto-mileage-text'));
@@ -58,13 +63,16 @@ EXACT_TEXT_JS = r"""(names) => {
 
 MILEAGE_TYPE_JS = r"""() => {
   const visible = e => {
+    if (!e) return false;
     const r=e.getBoundingClientRect(), s=getComputedStyle(e);
     return r.width>0 && r.height>0 && s.display!=='none' && s.visibility!=='hidden';
   };
+  const norm = s => (s||'').replace(/\s+/g,' ').trim();
   const names = ['자동차 마일리지','차량 마일리지','마일리지'];
-  const all=[...document.querySelectorAll('[role="menuitem"],[role="option"],button,a,li')].filter(visible);
+  const all=[...document.querySelectorAll('body *')].filter(visible);
   for (const name of names) {
-    const hits=all.filter(e => (e.innerText||'').replace(/\s+/g,' ').trim()===name);
+    const exact=all.filter(e => norm(e.innerText)===name);
+    const hits=exact.filter(e => ![...e.children].some(c => visible(c) && norm(c.innerText)===name));
     if (hits.length===1) {
       document.querySelectorAll('[data-auto-mileage-type]')
         .forEach(e=>e.removeAttribute('data-auto-mileage-type'));
