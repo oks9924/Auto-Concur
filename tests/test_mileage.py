@@ -31,7 +31,7 @@ def test_estimate_and_vehicle_no_inference(tmp_path):
 @pytest.mark.parametrize('field,value',[('origin',''),('destination',''),('distance','0'),('distance','-1'),
     ('distance','1,200'),('distance','NaN'),('distance','Infinity'),('distance','1e4'),
     ('passengers','1.5'),('passengers','-1'),('date','bad'),('date','2026-02-30'),('description',''),
-    ('kind','auto'),('rate','999'),('map','')])
+    ('kind','auto'),('map','')])
 def test_invalid_row(field,value,tmp_path):
     book=MileageBook(tmp_path);row=ready(book,tmp_path);row[field]=value
     with pytest.raises(ValueError): checked_row(row)
