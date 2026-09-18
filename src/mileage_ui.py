@@ -1,4 +1,4 @@
-"""Manual mileage table below the original card worksheet; local data only."""
+"""Manual mileage table below the original card worksheet, with explicit Concur create handoff."""
 from copy import deepcopy
 from datetime import date
 from decimal import Decimal
@@ -112,7 +112,7 @@ class MileageForm(Dialog):
         ttk.Button(box,text='지도 이미지 첨부',command=self.pick_image).grid(row=9,column=0,sticky='w',pady=6)
         self.map_label=ttk.Label(box,text=self.map_fields.get('map_name') or 'PNG / JPG · 20MB 이하',wraplength=370)
         self.map_label.grid(row=9,column=1,sticky='w')
-        ttk.Label(box,text='지도는 실제 경로 이미지 파일을 선택하세요. 도구가 경로나 증빙을 생성하지 않습니다.\n현재는 입력·로컬 보관 단계입니다. Concur 신규 경비 생성·지도 업로드는 아직 연결되지 않았습니다.',wraplength=520).grid(row=10,column=0,columnspan=2,sticky='w',pady=6)
+        ttk.Label(box,text='지도는 실제 경로 이미지 파일을 선택하세요. 도구가 경로나 증빙을 생성하지 않습니다.\n표에 저장한 뒤 마일리지 영역의 [Concur 신규 생성]에서 별도 실행합니다.',wraplength=520).grid(row=10,column=0,columnspan=2,sticky='w',pady=6)
         foot=ttk.Frame(self,padding=12);foot.grid(row=1,column=0,sticky='ew')
         self.error=ttk.Label(foot,wraplength=540);self.error.pack(anchor='w')
         ttk.Button(foot,text='취소',command=self.close).pack(side='right')
@@ -177,14 +177,15 @@ class MileagePanel(ttk.LabelFrame):
              ('kind','구분',65),('distance','거리(km)',85),('rate','환급률',80),('estimate','예상금액(원)',110),
              ('passengers','탑승자 수',90),('description','설명',220),('map_name','지도 이미지',150)]
 
-    def __init__(self,parent,folder):
+    def __init__(self,parent,folder,on_concur=None):
         self.book=MileageBook(folder)
+        self.on_concur=on_concur
         super().__init__(parent,text='차량 마일리지 · 카드 경비와 별도 관리',padding=6)
         self.columnconfigure(0,weight=1);self.rowconfigure(2,weight=1)
-        ttk.Label(self,text='로컬 입력·보관 전용 · 기존 Concur 반영 버튼은 위쪽 카드 경비만 처리합니다.',wraplength=800).grid(row=0,column=0,sticky='w')
+        ttk.Label(self,text='카드 경비와 별도 관리 · [Concur 신규 생성]은 저장된 마일리지만 새 경비로 만듭니다.',wraplength=800).grid(row=0,column=0,sticky='w')
         actions=ttk.Frame(self);actions.grid(row=1,column=0,sticky='ew',pady=4)
         for text,cmd in [('추가',self.add),('선택 수정',self.edit),('선택 삭제',self.remove),('지도 보기',self.preview),
-                         ('되돌리기',self.undo),('다시 실행',self.redo),('마일리지 저장',self.save)]:
+                         ('되돌리기',self.undo),('다시 실행',self.redo),('마일리지 저장',self.save),('Concur 신규 생성',self.send_concur)]:
             ttk.Button(actions,text=text,command=cmd).pack(side='left',padx=2)
         area=ttk.Frame(self);area.grid(row=2,column=0,sticky='nsew');area.columnconfigure(0,weight=1);area.rowconfigure(0,weight=1)
         self.table=ttk.Treeview(area,columns=[k for k,_,_ in self.COLUMNS],show='headings',height=5,selectmode='browse')
@@ -205,7 +206,9 @@ class MileagePanel(ttk.LabelFrame):
         for row in self.book.rows:
             self.table.insert('','end',iid=row['id'],values=[row.get(k,'') for k,_,_ in self.COLUMNS])
         if selected and self.table.exists(selected[0]): self.table.selection_set(selected[0])
-        self.note.configure(text=f"{len(self.book.rows)}건 · "+('저장 전 변경 있음' if self.book.dirty else '로컬 저장 상태')+' · Concur 미반영')
+        verified=sum(r.get('concur_state')=='verified' for r in self.book.rows)
+        review=sum(r.get('concur_state')=='needs_review' for r in self.book.rows)
+        self.note.configure(text=f"{len(self.book.rows)}건 · "+('저장 전 변경 있음' if self.book.dirty else '로컬 저장 상태')+f' · Concur 확인 {verified}건 · 확인 필요 {review}건')
 
     def index(self):
         selected=self.table.selection()
@@ -237,6 +240,27 @@ class MileagePanel(ttk.LabelFrame):
             messagebox.showerror('마일리지 저장',str(exc),parent=self);return False
         self.render();return True
 
+    def send_concur(self):
+        if not self.book.rows:
+            messagebox.showinfo('마일리지 없음','Concur에 생성할 마일리지 행이 없습니다.',parent=self)
+            return
+        if not self.save():
+            return
+        if self.on_concur is None:
+            messagebox.showerror('실행 연결 없음','이 창에서는 Concur 신규 생성을 시작할 수 없습니다.',parent=self)
+            return
+        pending=sum(r.get('concur_state') not in ('verified','needs_review') for r in self.book.rows)
+        review=sum(r.get('concur_state')=='needs_review' for r in self.book.rows)
+        if not pending:
+            messagebox.showinfo('신규 생성 대상 없음',
+                ('확인 필요한 행은 자동 재시도하지 않습니다.' if review else '모든 마일리지 행이 이미 확인되었습니다.'), parent=self)
+            return
+        text=f'저장된 마일리지 {pending}건을 Concur에 새 경비로 생성합니다.\n\n'
+        text+='카드 경비 C단계와 별도 실행이며, 저장 결과가 불명확한 행은 자동 재시도하지 않습니다.'
+        if review:
+            text+=f'\n기존 확인 필요 {review}건은 제외합니다.'
+        if messagebox.askokcancel('마일리지 Concur 신규 생성',text,parent=self):
+            self.on_concur()
     def confirm_close(self):
         if not self.book.dirty: return True
         answer=messagebox.askyesnocancel('마일리지 저장','마일리지 표의 변경도 저장할까요? 카드 경비와 별도 파일입니다.',parent=self)
