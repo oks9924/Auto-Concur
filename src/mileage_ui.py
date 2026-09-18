@@ -18,7 +18,7 @@ class VehicleManager(Dialog):
         super().__init__(parent, '차량 ID 관리 · 마일리지')
         self.rows, self.editing, self.on_saved = deepcopy(self.store.rows), None, on_saved
         self.rowconfigure(1, weight=1)
-        ttk.Label(self, text='Concur 차량 ID에 본인이 지정한 이름을 정확히 등록하세요.\nlong 470원/km · short 280원/km (사용자 제공 기준, 실제 Concur 환급률 별도 확인)',
+        ttk.Label(self, text='Concur 차량 ID에 본인이 지정한 이름을 정확히 등록하세요.\nlong 280원/km · short 470원/km (사용자 제공 기준, 실제 Concur 환급률 별도 확인)',
                   wraplength=560, padding=12).grid(row=0, column=0, sticky='ew')
         self.table = ttk.Treeview(self, columns=('vehicle', 'kind', 'rate'), show='headings', selectmode='browse')
         for key, title in [('vehicle','Concur 차량 ID'), ('kind','구분'), ('rate','환급률(원/km)')]:
