@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 import pytest
 from src.attendee_favorites import FavoriteStore, split_people, validate_person, validate_people
-from src.attendee_picker import AttendeePicker, FavoritesManager, AttendeesEntry
+from src.attendee_picker import AttendeePicker, AttendeePopover, FavoritesManager, AttendeesEntry
 from src import paths, settings
 from src.worksheet import write_json
 
@@ -145,16 +145,19 @@ def test_table_filtered_cell_apply_atomic_undo_and_no_basic_change(editor,store)
     editor.table.redo();assert editor.model.rows[2]['추가 참석자']=='manual.user, test.b'
 
 
-def test_table_extra_attendee_all_edit_entrypoints_use_lov(editor,store):
+def test_table_extra_attendee_keeps_direct_edit_and_lov_entrypoints(editor,store):
     c=editor.COLUMNS.index('추가 참석자')
-    for key in ('F2','x','Return','??'):
+    for key in ('F2','x'):
+        event=SimpleNamespace(column=c,row=0,key=key,value='manual.user')
+        assert editor.begin_cell_edit(event)=='manual.user'
+    for key in ('Return','??'):
         event=SimpleNamespace(column=c,row=0,key=key,value='manual.user')
         assert editor.begin_cell_edit(event) is None
-    editor.update_idletasks()
-    pickers=[w for w in editor.winfo_children() if isinstance(w,AttendeePicker)]
-    assert pickers
-    for picker in pickers:
-        picker.close()
+        editor.update_idletasks()
+        assert isinstance(editor.attendee_picker,AttendeePopover)
+        editor.attendee_picker.close()
+        editor.update_idletasks()
+        assert editor.attendee_picker is None
 
 
 def descendants(w):
@@ -215,14 +218,17 @@ def test_home_management_button_disabled_when_busy(monkeypatch,tmp_path,tk_clean
 
 
 
-def test_table_attendee_picker_is_cell_anchored_popover(editor,store):
+def test_table_attendee_picker_is_embedded_below_selected_cell(editor,store):
     editor.table.select_cell(0,editor.COLUMNS.index('추가 참석자'))
+    column=editor.COLUMNS.index('추가 참석자')
+    anchor=editor._attendee_anchor(0,column)
     picker=editor.pick_extra_attendees()
-    assert isinstance(picker,AttendeePicker)
-    assert picker.popover_anchor is not None
-    assert bool(picker.overrideredirect())
-    x,top,bottom,width=picker.popover_anchor
-    assert bottom>=top and width>0
+    editor.update_idletasks()
+    assert isinstance(picker,AttendeePopover)
+    assert picker.winfo_toplevel() is editor
+    place=picker.place_info()
+    assert int(float(place['y'])) == anchor[2] + 2
+    assert int(float(place['x'])) >= 0
     picker.close()
 
 
@@ -231,6 +237,17 @@ def test_row_form_attendee_picker_remains_normal_dialog(editor,store):
     row=RowEditor(editor,0)
     entry=next(w for w in descendants(row) if isinstance(w,AttendeesEntry))
     picker=entry.open()
-    assert picker.popover_anchor is None
+    assert isinstance(picker,AttendeePicker)
     assert not bool(picker.overrideredirect())
     picker.close();row.cancel()
+
+
+def test_inline_lov_close_restores_direct_cell_edit(editor,store):
+    editor.table.select_cell(0,editor.COLUMNS.index('추가 참석자'))
+    picker=editor.pick_extra_attendees()
+    assert isinstance(picker,AttendeePopover)
+    picker.close(); editor.update()
+    c=editor.COLUMNS.index('추가 참석자')
+    event=SimpleNamespace(column=c,row=0,key='x',value='한글입력')
+    assert editor.begin_cell_edit(event)=='한글입력'
+    assert editor.attendee_picker is None
