@@ -99,3 +99,16 @@ def test_preview_never_creates_binding_or_upload(tmp_path):
     assert int(result) == 0 and '미리보기' in result.summary
     assert not (tmp_path / 'mileage-concur.json').exists()
     assert page.uploads == []
+
+
+def test_uncertain_create_without_id_never_retries(tmp_path, monkeypatch):
+    book, row = ready_book(tmp_path)
+    store = BindingStore(tmp_path)
+    store.set(row['id'], report=report().url, fingerprint=row_fingerprint(row),
+              expense_id=None, state='needs_review')
+    monkeypatch.setattr('src.mileage_concur._open_new',
+                        lambda *a: (_ for _ in ()).throw(AssertionError('must not create again')))
+    page = Page()
+    assert int(run(page, report(), tmp_path, True)) == 1
+    assert page.uploads == []
+    assert BindingStore(tmp_path).get(row['id'])['state'] == 'needs_review'
