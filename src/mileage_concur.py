@@ -64,7 +64,7 @@ TYPE_OPTION_JS = "(names) => {" + concur_ui.DOM_HELPERS + MARK + """
 
 FIELD_SELECTOR_JS = "(arg) => {" + concur_ui.DOM_HELPERS + MARK + r"""
   const root = surface();
-  const norm = s => (s || '').replace(/\s+/g, ' ').replace(/s*[:：]s*$/, '').trim().toLowerCase();
+  const norm = s => (s || '').replace(/\s+/g, ' ').replace(/\s*[:：]\s*$/, '').trim().toLowerCase();
   const labelOf = el => {
     const aria = el.getAttribute('aria-label');
     if (aria) return aria;
@@ -90,10 +90,15 @@ FIELD_SELECTOR_JS = "(arg) => {" + concur_ui.DOM_HELPERS + MARK + r"""
   }
   const wants = arg.labels.map(norm);
   const controls = [...root.querySelectorAll('input,textarea,[role="combobox"]')].filter(visible);
-  const matches = controls.filter(el => {
+  let matches = controls.filter(el => {
     const got = norm(labelOf(el));
     return got && wants.some(w => got === w || got.startsWith(w + ' '));
   });
+  // Accessible comboboxes can expose both a role=combobox wrapper and its
+  // nested input with the same label. Treat that as one control, preferring
+  // the combobox rather than declaring a false ambiguity.
+  const combos = matches.filter(el => el.getAttribute('role') === 'combobox');
+  if (combos.length === 1) matches = [combos[0]];
   return matches.length === 1 ? mark(matches[0], arg.name) : matches.length > 1 ? '!AMBIGUOUS' : null;
 }"""
 
