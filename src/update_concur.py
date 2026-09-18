@@ -48,10 +48,10 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None,
     cfg = dict(settings.load() if cfg is None else cfg)
     cfg['date_tolerance_days'] = tolerance
     precheck(folder, sheet_path)
-    from . import concur_workflow
+    from . import sequential_workflow
     pw, ctx, page, report = open_report(automatic=True)
     try:
-        return concur_workflow.run(page, report, folder, cfg, sheet_path, apply, limit, again)
+        return sequential_workflow.run(page, report, folder, cfg, sheet_path, apply, limit, again)
     finally:
         ctx.close()
         pw.stop()

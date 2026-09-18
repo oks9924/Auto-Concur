@@ -53,7 +53,7 @@ READ_ROWS_JS = r'''() => {
     ? r.id || r.getAttribute('data-row-key') || linkedId(r)
     : r.getAttribute('data-row-key') || linkedId(r);
   const rows = [...document.querySelectorAll(ROW)].filter(r => {
-    if (r.closest('thead, tfoot') || owned(r, '[role="columnheader"], th').length
+    if (r.closest('thead, tfoot, [data-testid="footer-columns"]') || owned(r, '[role="columnheader"], th').length
         || !visibleRow(r)) return false;
     if (legacyRow(r)) return true;
     if (r.closest('[data-testid="data-row"]')) return false;
