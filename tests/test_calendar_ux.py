@@ -159,3 +159,19 @@ def test_selection_change_reuses_existing_calendar_buttons(root):
     after={day:id(button) for day,button in panel.buttons.items()}
     assert after==before
     assert panel.buttons[date(2026,9,10)].cget('bg')=='#14634b'
+
+
+def test_month_navigation_reuses_calendar_button_widgets(root):
+    panel=CalendarPanel(root,date(2026,9,17),lambda value:None)
+    before=[id(button) for button in panel._slots[0]['cells']]
+    panel.move(1)
+    after=[id(button) for button in panel._slots[0]['cells']]
+    assert after==before
+    assert panel.month==10 and date(2026,10,17) in panel.buttons
+
+
+def test_range_picker_uses_one_month_for_faster_open(root):
+    dialog=RangePicker(root,date(2026,9,17),None,None,lambda *x:None,stay=True)
+    assert dialog.panel.months==1
+    assert len(dialog.panel._slots)==1
+    dialog.close()
