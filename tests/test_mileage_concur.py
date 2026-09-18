@@ -210,3 +210,23 @@ def test_presave_failure_with_url_id_stays_retryable_not_needs_review(tmp_path,m
     assert saved['concur_stage']=='pre_save'
     assert saved['concur_draft_id']=='EXP-TEMP'
     assert 'concur_expense_id' not in saved
+
+
+def test_mileage_save_targets_expense_save_button(tmp_path,monkeypatch):
+    page=FakePage()
+    page.url='https://example/reports/R/expenses/EXP-1'
+    called=[]
+    monkeypatch.setattr(mileage_concur,'_fill',lambda *a,**k:None)
+    monkeypatch.setattr(mileage_concur,'_select_vehicle',lambda *a,**k:None)
+    monkeypatch.setattr(mileage_concur,'_upload_map',lambda *a,**k:None)
+    monkeypatch.setattr(mileage_concur,'check_context',lambda *a:None)
+    monkeypatch.setattr(mileage_concur,'_report_ids',lambda *a,**k:{'EXP-1'})
+    monkeypatch.setattr(mileage_concur.ui,'click_target',
+        lambda page,script,what,arg=None,**kwargs:called.append((what,arg)))
+    row={'date':'2026-09-18','origin':'A','destination':'B','vehicle':'V',
+         'distance':'1','passengers':'1','description':'D'}
+    result=mileage_concur._fill_and_save(
+        page,'https://example/reports/R',row,tmp_path/'map.png','EXP-1',set())
+    assert result=='EXP-1'
+    save=[item for item in called if item[0]=='마일리지 저장']
+    assert save==[('마일리지 저장','경비 저장,저장,Save Expense,Save')]
