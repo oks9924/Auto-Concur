@@ -1,7 +1,7 @@
 import os
 import pytest
 from playwright.sync_api import sync_playwright
-from src.mileage_concur import EXACT_TEXT_JS, MILEAGE_TYPE_JS, COMBO_JS, FIELD_JS, MILEAGE_FORM_READY_JS
+from src.mileage_concur import EXACT_TEXT_JS, MILEAGE_TYPE_JS, COMBO_JS, FIELD_JS, MILEAGE_FORM_READY_JS, OPTION_JS, RECEIPT_VIEW_JS
 
 
 @pytest.fixture(scope='module')
@@ -131,4 +131,35 @@ def test_vehicle_combo_found_from_nearby_div_label(browser):
     """)
     selector=page.evaluate(COMBO_JS,['차량 ID','Vehicle ID','Vehicle'])
     assert selector and page.locator(selector).get_attribute('id')=='vehicle'
+    page.close()
+
+
+def test_vehicle_option_accepts_kind_suffix(browser):
+    page=browser.new_page()
+    page.set_content("""
+    <div role='listbox'>
+      <div role='option' id='car'>05두2956 long</div>
+    </div>
+    """)
+    selector=page.evaluate(OPTION_JS,'05두2956')
+    assert selector and page.locator(selector).get_attribute('id')=='car'
+    page.close()
+
+
+def test_receipt_view_is_scoped_to_active_mileage_panel(browser):
+    page=browser.new_page()
+    page.set_content("""
+    <button id='background' data-nuiexp='rcpt-btn-attach-receipt'
+      onclick="document.body.dataset.background='yes'">영수증 첨부</button>
+    <div id='sapcnqr-layout-side-panel-elements'>
+      <div><span>거래 날짜</span><input id='date'></div>
+      <div><span>출발지</span><input id='origin'></div>
+      <button id='view' onclick="document.body.dataset.view='yes'">영수증 보기</button>
+    </div>
+    """)
+    selector=page.evaluate(RECEIPT_VIEW_JS,['영수증 보기','View Receipt'])
+    assert selector and page.locator(selector).get_attribute('id')=='view'
+    page.locator(selector).click()
+    assert page.get_attribute('body','data-view')=='yes'
+    assert page.get_attribute('body','data-background') is None
     page.close()
