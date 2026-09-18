@@ -150,7 +150,7 @@ class AttendeePicker(Dialog):
         ttk.Entry(foot,textvariable=self.manual).grid(row=2,column=0,sticky='ew')
         ttk.Button(foot,text='추가',command=self.add_manual).grid(row=2,column=1,padx=6)
         actions=ttk.Frame(foot);actions.grid(row=3,column=0,columnspan=2,sticky='ew',pady=8)
-        for text,cmd in [('표시 항목 선택',lambda:self.check_shown(True)),('표시 항목 해제',lambda:self.check_shown(False))]:
+        for text,cmd in [('전체 선택',lambda:self.check_all(True)),('전체 선택 해제',lambda:self.check_all(False))]:
             ttk.Button(actions,text=text,command=cmd).pack(side='left',padx=(0,5))
         ttk.Button(actions,text='취소',command=self.close).pack(side='right')
         ttk.Button(actions,text='적용',command=self.apply).pack(side='right',padx=5)
@@ -192,6 +192,10 @@ class AttendeePicker(Dialog):
         for key in self.shown: self.checked[key].set(value)
         self.update_count()
 
+    def check_all(self, value):
+        for variable in self.checked.values(): variable.set(value)
+        self.update_count()
+
     def add_manual(self):
         values=split_people(self.manual.get())
         try:
@@ -219,7 +223,12 @@ class AttendeePicker(Dialog):
 
 
 class AttendeePopover(tk.Frame):
-    """Worksheet-only LOV rendered inside the editor, never as another window."""
+    """Responsive worksheet LOV embedded in the editor and anchored below one cell."""
+    MIN_WIDTH = 520
+    MAX_WIDTH = 680
+    TARGET_HEIGHT = 390
+    MIN_BODY_HEIGHT = 70
+
     def __init__(self, parent, current, on_apply, store=None, on_close=None):
         super().__init__(parent, bd=1, relief='solid', background='#ffffff',
                          highlightthickness=1, highlightbackground='#64748b')
@@ -233,38 +242,66 @@ class AttendeePopover(tk.Frame):
             self.add_option(value, value, True)
         self.refresh_favorites()
 
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
         self.query, self.manual = tk.StringVar(self), tk.StringVar(self)
-        head=ttk.Frame(self,padding=(8,8,8,4));head.pack(fill='x')
-        ttk.Label(head,text='추가 참석자').pack(side='left')
-        search=ttk.Entry(head,textvariable=self.query,width=22);search.pack(side='right',fill='x',expand=True,padx=(8,0))
 
-        body=ttk.Frame(self,padding=(8,2,8,2));body.pack(fill='both',expand=True)
-        self.canvas=tk.Canvas(body,highlightthickness=0,borderwidth=0,height=190)
-        bar=ttk.Scrollbar(body,orient='vertical',command=self.canvas.yview)
+        self.head=ttk.Frame(self,padding=(10,8,10,5))
+        self.head.grid(row=0,column=0,sticky='ew')
+        self.head.columnconfigure(1,weight=1)
+        ttk.Label(self.head,text='추가 참석자').grid(row=0,column=0,sticky='w',padx=(0,10))
+        self.search=ttk.Entry(self.head,textvariable=self.query)
+        self.search.grid(row=0,column=1,sticky='ew')
+
+        self.body=ttk.Frame(self,padding=(10,2,10,2))
+        self.body.grid(row=1,column=0,sticky='nsew')
+        self.body.columnconfigure(0,weight=1);self.body.rowconfigure(0,weight=1)
+        self.canvas=tk.Canvas(self.body,highlightthickness=0,borderwidth=0,height=170)
+        bar=ttk.Scrollbar(self.body,orient='vertical',command=self.canvas.yview)
         self.list=ttk.Frame(self.canvas)
         self.window=self.canvas.create_window((0,0),window=self.list,anchor='nw')
         self.canvas.configure(yscrollcommand=bar.set)
-        self.canvas.pack(side='left',fill='both',expand=True);bar.pack(side='right',fill='y')
+        self.canvas.grid(row=0,column=0,sticky='nsew')
+        bar.grid(row=0,column=1,sticky='ns')
         self.list.bind('<Configure>',lambda e:self.canvas.configure(scrollregion=self.canvas.bbox('all')))
         self.canvas.bind('<Configure>',lambda e:self.canvas.itemconfigure(self.window,width=e.width))
 
-        manual=ttk.Frame(self,padding=(8,4));manual.pack(fill='x')
-        ttk.Entry(manual,textvariable=self.manual).pack(side='left',fill='x',expand=True)
-        ttk.Button(manual,text='직접 추가',command=self.add_manual).pack(side='left',padx=(5,0))
+        self.manual_frame=ttk.Frame(self,padding=(10,5))
+        self.manual_frame.grid(row=2,column=0,sticky='ew')
+        self.manual_frame.columnconfigure(0,weight=1)
+        self.manual_entry=ttk.Entry(self.manual_frame,textvariable=self.manual)
+        self.manual_entry.grid(row=0,column=0,sticky='ew')
+        ttk.Button(self.manual_frame,text='직접 추가',command=self.add_manual).grid(
+            row=0,column=1,padx=(6,0))
 
-        foot=ttk.Frame(self,padding=(8,4,8,8));foot.pack(fill='x')
-        self.count=ttk.Label(foot);self.count.pack(side='left')
-        ttk.Button(foot,text='표시 선택',command=lambda:self.check_shown(True)).pack(side='left',padx=(8,0))
-        ttk.Button(foot,text='표시 해제',command=lambda:self.check_shown(False)).pack(side='left',padx=(4,0))
-        ttk.Button(foot,text='목록 관리',command=self.manage).pack(side='left',padx=(4,0))
-        ttk.Button(foot,text='취소',command=self.close).pack(side='right')
-        ttk.Button(foot,text='적용',command=self.apply).pack(side='right',padx=(0,5))
+        # Three rows prevent clipping even with larger Windows DPI/font settings.
+        self.foot=ttk.Frame(self,padding=(10,4,10,8))
+        self.foot.grid(row=3,column=0,sticky='ew')
+        self.foot.columnconfigure(0,weight=1)
+        self.count=ttk.Label(self.foot)
+        self.count.grid(row=0,column=0,columnspan=3,sticky='w',pady=(0,4))
+
+        utility=ttk.Frame(self.foot)
+        utility.grid(row=1,column=0,columnspan=3,sticky='ew')
+        for col in range(3): utility.columnconfigure(col,weight=1,uniform='lovutil')
+        self.select_all_button=ttk.Button(utility,text='전체 선택',command=lambda:self.check_all(True))
+        self.select_all_button.grid(row=0,column=0,sticky='ew',padx=(0,3))
+        self.clear_all_button=ttk.Button(utility,text='전체 선택 해제',command=lambda:self.check_all(False))
+        self.clear_all_button.grid(row=0,column=1,sticky='ew',padx=3)
+        self.manage_button=ttk.Button(utility,text='목록 관리',command=self.manage)
+        self.manage_button.grid(row=0,column=2,sticky='ew',padx=(3,0))
+
+        actions=ttk.Frame(self.foot)
+        actions.grid(row=2,column=0,columnspan=3,sticky='e',pady=(6,0))
+        ttk.Button(actions,text='취소',command=self.close).pack(side='left',padx=(0,5))
+        ttk.Button(actions,text='적용',command=self.apply).pack(side='left')
 
         self.query.trace_add('write',lambda *a:self.render())
         self.bind('<Escape>',lambda e:(self.close(),'break')[1])
-        search.bind('<Escape>',lambda e:(self.close(),'break')[1])
+        self.search.bind('<Escape>',lambda e:(self.close(),'break')[1])
+        self.manual_entry.bind('<Escape>',lambda e:(self.close(),'break')[1])
         self.render()
-        self.after_idle(search.focus_set)
+        self.after_idle(self.search.focus_set)
 
     def add_option(self,value,label,selected=False):
         key=value.casefold()
@@ -288,18 +325,31 @@ class AttendeePopover(tk.Frame):
         for key in self.shown:
             person=self.options[key]
             suffix='' if person['registered'] else ' · 이번 경비'
-            ttk.Checkbutton(self.list,text=f"{person['label']}  ({person['value']}){suffix}",
-                            variable=self.checked[key],command=self.update_count).pack(anchor='w',fill='x',pady=2)
+            ttk.Checkbutton(
+                self.list,
+                text=f"{person['label']}  ({person['value']}){suffix}",
+                variable=self.checked[key],command=self.update_count,
+            ).pack(anchor='w',fill='x',pady=2)
         if not self.shown:
-            ttk.Label(self.list,text='등록된 참석자가 없습니다.' if not self.options else '검색 결과가 없습니다.').pack(anchor='w')
+            ttk.Label(
+                self.list,
+                text='등록된 참석자가 없습니다.' if not self.options else '검색 결과가 없습니다.',
+            ).pack(anchor='w')
         self.update_count()
 
     def update_count(self):
-        self.count.configure(text=f'선택 {sum(v.get() for v in self.checked.values())}명')
+        self.count.configure(
+            text=f'선택 {sum(v.get() for v in self.checked.values())}명 · 전체 {len(self.options)}명')
 
     def check_shown(self, value):
+        """Compatibility helper for filtered operations/tests; UI uses true all-selection."""
         for key in self.shown:
             self.checked[key].set(value)
+        self.update_count()
+
+    def check_all(self, value):
+        for variable in self.checked.values():
+            variable.set(value)
         self.update_count()
 
     def add_manual(self):
@@ -324,20 +374,31 @@ class AttendeePopover(tk.Frame):
         return FavoritesManager(self.parent,self.store,on_saved=refresh)
 
     def place_for_cell(self, anchor):
-        """Attach below the worksheet cell using editor-local coordinates.
-
-        Never use monitor/screen coordinates and never flip to another monitor.
-        When the cell is low in the editor, shrink the LOV rather than placing it above.
-        """
-        x, top, bottom, width = anchor
+        """Keep the LOV below the cell and size it from actual widget requirements."""
+        x, top, bottom, cell_width = anchor
         self.update_idletasks()
         parent_w=max(self.parent.winfo_width(),1)
         parent_h=max(self.parent.winfo_height(),1)
-        pop_w=min(480,max(340,min(parent_w-24, int(width)*2)))
+
+        max_w=max(320,parent_w-16)
+        requested=max(self.MIN_WIDTH,self.winfo_reqwidth()+12,int(cell_width)*2)
+        pop_w=min(self.MAX_WIDTH,max_w,requested)
         x=max(8,min(int(x),parent_w-pop_w-8))
         y=max(0,int(bottom)+2)
-        available=max(90,parent_h-y-8)
-        pop_h=min(350,available)
+
+        # Header/manual/actions keep their natural height; only the scrolling list
+        # is sacrificed on short windows, so controls never overlap each other.
+        fixed=(self.head.winfo_reqheight()+self.manual_frame.winfo_reqheight()
+               +self.foot.winfo_reqheight()+18)
+        available=max(1,parent_h-y-8)
+        desired=max(fixed+self.MIN_BODY_HEIGHT,
+                    min(self.TARGET_HEIGHT,self.winfo_reqheight()+12))
+        pop_h=min(available,desired)
+        if pop_h < fixed + 24:
+            # There is physically too little room below this row. Keep every control
+            # readable and leave a small scrollable list rather than clipping buttons.
+            pop_h=min(available,max(fixed+24,1))
+
         self.place(x=x,y=y,width=pop_w,height=pop_h)
         self.lift()
 
