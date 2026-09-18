@@ -28,6 +28,7 @@ attendee-favorites.json
 .attendee-favorites*
 mileage-vehicles.json
 mileage-workbook.json
+mileage-concur.json
 mileage-maps/
 .mileage-*
 

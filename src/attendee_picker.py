@@ -217,6 +217,121 @@ class AttendeePicker(Dialog):
         self.close();return True
 
 
+
+class CellAttendeePicker(Dialog):
+    """Compact checkbox LOV opened from the worksheet cell.
+
+    Existing manually typed values which are not favorites are always preserved.
+    Favorite values can be checked/unchecked and are appended in favorite order.
+    The detailed row editor continues to use the full AttendeePicker.
+    """
+    def __init__(self, parent, current, on_apply, store=None):
+        self.store = store if store is not None else FavoriteStore()
+        if not self.store.people:
+            raise ValueError('등록된 자주 쓰는 참석자가 없습니다.')
+        super().__init__(parent, '추가 참석자 · 빠른 선택')
+        self.original, self.on_apply = current or '', on_apply
+        self.geometry('')
+        self.minsize(330, 180)
+        self.resizable(True, True)
+        selected = {value.casefold() for value in split_people(current)}
+        favorite_keys = {person['value'].casefold() for person in self.store.people}
+        self.manual_values = [value for value in split_people(current) if value.casefold() not in favorite_keys]
+        self.checked = {
+            person['value'].casefold(): tk.BooleanVar(self, value=person['value'].casefold() in selected)
+            for person in self.store.people
+        }
+        self.query = tk.StringVar(self)
+        head = ttk.Frame(self, padding=(10, 10, 10, 4))
+        head.grid(row=0, column=0, sticky='ew'); head.columnconfigure(0, weight=1)
+        ttk.Entry(head, textvariable=self.query).grid(row=0, column=0, sticky='ew')
+        ttk.Button(head, text='목록 관리', command=self.manage).grid(row=0, column=1, padx=(6, 0))
+        if self.manual_values:
+            ttk.Label(head, text='직접 입력 유지: ' + ', '.join(self.manual_values),
+                      wraplength=420).grid(row=1, column=0, columnspan=2, sticky='w', pady=(5, 0))
+        self.body = ttk.Frame(self, padding=(10, 4))
+        self.body.grid(row=1, column=0, sticky='nsew')
+        self.rowconfigure(1, weight=1); self.columnconfigure(0, weight=1)
+        foot = ttk.Frame(self, padding=10); foot.grid(row=2, column=0, sticky='ew')
+        self.count = ttk.Label(foot); self.count.pack(side='left')
+        ttk.Button(foot, text='취소', command=self.close).pack(side='right')
+        ttk.Button(foot, text='적용', command=self.apply).pack(side='right', padx=6)
+        self.query.trace_add('write', lambda *a: self.render())
+        self.render()
+        self.update_idletasks()
+        width = min(460, max(340, self.winfo_reqwidth()))
+        height = min(520, max(190, self.winfo_reqheight()))
+        x = min(max(0, parent.winfo_pointerx() - 40), max(0, self.winfo_screenwidth() - width - 10))
+        y = min(max(0, parent.winfo_pointery() + 14), max(0, self.winfo_screenheight() - height - 60))
+        self.geometry(f'{width}x{height}+{x}+{y}')
+        self.present()
+
+    def render(self):
+        for child in self.body.winfo_children():
+            child.destroy()
+        query = self.query.get().strip().casefold()
+        shown = []
+        for person in self.store.people:
+            if query in (person['label'] + ' ' + person['value']).casefold():
+                shown.append(person)
+                key = person['value'].casefold()
+                ttk.Checkbutton(self.body, text=f"{person['label']}  ({person['value']})",
+                                variable=self.checked[key], command=self.update_count).pack(
+                                    anchor='w', fill='x', pady=3)
+        if not shown:
+            ttk.Label(self.body, text='검색 결과가 없습니다.').pack(anchor='w')
+        self.shown = shown
+        self.update_count()
+
+    def update_count(self):
+        self.count.configure(text=f'즐겨찾기 선택 {sum(v.get() for v in self.checked.values())}명')
+
+    def manage(self):
+        def refreshed():
+            fresh = FavoriteStore(self.store.path)
+            old = {k: v.get() for k, v in self.checked.items()}
+            self.store = fresh
+            self.checked = {
+                p['value'].casefold(): tk.BooleanVar(self, value=old.get(p['value'].casefold(), False))
+                for p in self.store.people
+            }
+            self.render()
+        return FavoritesManager(self, FavoriteStore(self.store.path), on_saved=refreshed)
+
+    def apply(self):
+        favorite = {person['value'].casefold(): person for person in self.store.people}
+        result, seen = [], set()
+        # Preserve original order for manual values and still-selected favorites.
+        for value in split_people(self.original):
+            key = value.casefold()
+            if key in favorite and not self.checked.get(key, tk.BooleanVar(value=False)).get():
+                continue
+            if key not in seen:
+                result.append(value); seen.add(key)
+        # Newly checked favorites append after existing/manual values.
+        for person in self.store.people:
+            key = person['value'].casefold()
+            if self.checked[key].get() and key not in seen:
+                result.append(person['value']); seen.add(key)
+        value = ', '.join(result)
+        if self.on_apply(value) is False:
+            return False
+        self.close()
+        return True
+
+
+def show_cell_picker(parent, current, on_apply):
+    try:
+        store = FavoriteStore()
+        if not store.people:
+            return None
+        return CellAttendeePicker(parent, current, on_apply, store)
+    except (OSError, ValueError) as exc:
+        messagebox.showerror('빠른 참석자 선택',
+            f'자주 쓰는 참석자 목록을 열지 못했습니다. F2 또는 타이핑으로 직접 입력할 수 있습니다.\n{exc}',
+            parent=parent)
+        return None
+
 def show_manager(parent):
     try: return FavoritesManager(parent)
     except (OSError,ValueError) as exc:

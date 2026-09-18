@@ -17,6 +17,8 @@ from pathlib import Path
 
 from . import console, paths, settings, sheet
 from .attach_receipts import AttachError, load_manifest, open_report
+from .concur_workflow import RunResult
+from .mileage import BOOK_NAME, MileageBook
 
 
 def pick_sheet(folder: Path, given: str | None) -> Path | None:
@@ -40,6 +42,9 @@ def precheck(folder: Path, sheet_path: Path | None) -> None:
     print(f"전표 {len(slips)}건을 읽었습니다: {folder / 'manifest.csv'}")
     if sheet_path:
         print(f"작업지 {len(sheet.load(sheet_path))}행을 읽었습니다: {sheet_path}")
+    mileage_path = folder / BOOK_NAME
+    if mileage_path.exists():
+        print(f"차량 마일리지 {len(MileageBook(folder).rows)}건을 읽었습니다: {mileage_path}")
 
 
 @configured_run
@@ -48,10 +53,18 @@ def run(folder: Path, apply: bool, tolerance: int, limit: int | None,
     cfg = dict(settings.load() if cfg is None else cfg)
     cfg['date_tolerance_days'] = tolerance
     precheck(folder, sheet_path)
-    from . import sequential_workflow
+    from . import sequential_workflow, mileage_concur
+    mileage_path = folder / BOOK_NAME
+    mileage_count = len(MileageBook(folder).rows) if mileage_path.exists() else 0
     pw, ctx, page, report = open_report(automatic=True)
     try:
-        return sequential_workflow.run(page, report, folder, cfg, sheet_path, apply, limit, again)
+        card = sequential_workflow.run(page, report, folder, cfg, sheet_path, apply, limit, again,
+                                       mileage_count=mileage_count)
+        if getattr(card, 'cancelled', False):
+            return card
+        mileage = mileage_concur.run(page, report, folder, apply, limit)
+        summary = card.summary + ' · ' + mileage.summary
+        return RunResult(int(bool(int(card) or int(mileage))), summary)
     finally:
         ctx.close()
         pw.stop()
@@ -75,7 +88,7 @@ def main() -> int:
     try:
         return run(folder, args.apply, tolerance, args.limit,
                    pick_sheet(folder, args.sheet), args.again)
-    except (AttachError, sheet.SheetError) as exc:
+    except (AttachError, sheet.SheetError, ValueError, OSError) as exc:
         print(f"\n작업을 중단했습니다: {exc}")
         return 1
 

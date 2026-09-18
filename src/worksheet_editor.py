@@ -11,7 +11,8 @@ from .expense_policy import input_guide
 from .calendar_input import DateEntry
 from .worksheet import Worksheet, normalize
 from .attendee_defaults import AttendeeDefaults
-from .attendee_picker import AttendeesEntry, show_picker, show_manager
+from .attendee_picker import AttendeesEntry, show_picker, show_manager, show_cell_picker
+from .sheet_ime import schedule_style
 
 
 class Editor(tk.Toplevel):
@@ -58,7 +59,7 @@ class Editor(tk.Toplevel):
         more.grid(row=0, column=6, sticky='ew', padx=3)
         ttk.Button(tools, text='추가 참석자 선택', command=self.pick_extra_attendees).grid(row=1, column=0, sticky='ew', padx=(0, 5), pady=3)
         ttk.Button(tools, text='자주 쓰는 참석자 관리', command=lambda: show_manager(self)).grid(row=1, column=1, columnspan=2, sticky='w', pady=3)
-        ttk.Label(tools, text='추가 참석자: 더블클릭/Enter 선택 · F2 직접 입력').grid(row=1, column=3, columnspan=3, sticky='w')
+        ttk.Label(tools, text='추가 참석자: 더블클릭/Enter 빠른 체크 LOV · F2/타이핑 직접 입력').grid(row=1, column=3, columnspan=3, sticky='w')
         filters = ttk.Frame(self, padding=(16, 0, 16, 10))
         filters.grid(row=2, column=0, sticky='ew')
         ttk.Label(filters, text='검색').pack(side='left')
@@ -199,7 +200,7 @@ class Editor(tk.Toplevel):
         if date_column == '퇴실날짜':
             dialog.mode.set('퇴실')
 
-    def pick_extra_attendees(self, row_index=None):
+    def pick_extra_attendees(self, row_index=None, compact=False):
         self.table.close_text_editor(set_data=True)
         self.sync()
         if row_index is None:
@@ -217,19 +218,28 @@ class Editor(tk.Toplevel):
             if value != original:
                 self.table.set_data(row_index, column, data=value, undo=True, emit_event=True)
             return True
+        if compact:
+            quick = show_cell_picker(self, original, apply)
+            if quick is not None:
+                return quick
         return show_picker(self, original, apply)
 
     def begin_cell_edit(self, event):
         column = self.table.displayed_column_to_data(event.column)
         if self.COLUMNS[column] == sheet.EXTRA_ATTENDEE_COLUMN and event.key in ('??', 'Return'):
             row = self.table.displayed_row_to_data(event.row)
-            self.after_idle(lambda: self.pick_extra_attendees(row))
+            self.after_idle(lambda: self.pick_extra_attendees(row, compact=True))
             return None
         if self.COLUMNS[column] in sheet.DATE_COLUMNS:
             row = self.table.displayed_row_to_data(event.row)
             name = self.COLUMNS[column]
             self.after_idle(lambda: self.pick_stay_dates(row, name))
             return None
+        # tksheet creates its Tk Text editor after this callback returns.
+        # Flatten/style it once it exists so Windows Korean IME composes inside
+        # the cell instead of showing the default conspicuous editor box.
+        size = int(self.text_size.get())
+        schedule_style(self, self.table, ('맑은 고딕', size, 'normal'))
         return event.value
 
     def find_replace(self):
@@ -496,8 +506,8 @@ class Editor(tk.Toplevel):
                 '영수증만 첨부되는 거래도 있을 수 있으며 실제 대상 건수는 다음 리포트 확인창에서 결정됩니다.\n\n'
                 '입력을 저장한 뒤 Concur 대상 확인 단계로 이동할까요?')
         if self.mileage_panel is not None:
-            text += (f'\n\n별도 마일리지 {len(self.mileage_panel.book.rows)}건은 이 실행에 포함되지 않습니다.'
-                     '\n현재는 마일리지 입력·로컬 보관만 지원합니다.')
+            text += (f'\n\n별도 마일리지 {len(self.mileage_panel.book.rows)}건도 C단계에서 자동차 마일리지 신규 경비로 처리합니다.'
+                     '\n지도 이미지와 저장 결과를 확인한 뒤 다음 건으로 진행합니다.')
         if not messagebox.askokcancel('실제 처리 범위 확인', text, parent=self):
             return
         if self.mileage_panel is not None and not self.mileage_panel.confirm_close():

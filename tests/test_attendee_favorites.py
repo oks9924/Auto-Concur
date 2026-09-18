@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 import pytest
 from src.attendee_favorites import FavoriteStore, split_people, validate_person, validate_people
-from src.attendee_picker import AttendeePicker, FavoritesManager, AttendeesEntry
+from src.attendee_picker import AttendeePicker, CellAttendeePicker, FavoritesManager, AttendeesEntry
 from src import paths, settings
 from src.worksheet import write_json
 
@@ -145,15 +145,24 @@ def test_table_filtered_cell_apply_atomic_undo_and_no_basic_change(editor,store)
     editor.table.redo();assert editor.model.rows[2]['추가 참석자']=='manual.user, test.b'
 
 
-def test_table_enter_picker_but_f2_and_typing_remain_text(editor,store):
+def test_table_enter_compact_lov_but_f2_and_typing_remain_text(editor,store):
     c=editor.COLUMNS.index('추가 참석자')
     event=SimpleNamespace(column=c,row=0,key='F2',value='manual.user')
     assert editor.begin_cell_edit(event)=='manual.user'
     event.key='x';event.value='x';assert editor.begin_cell_edit(event)=='x'
     event.key='Return';assert editor.begin_cell_edit(event) is None
     editor.update_idletasks()
-    picker=next(w for w in editor.winfo_children() if isinstance(w,AttendeePicker))
+    picker=next(w for w in editor.winfo_children() if isinstance(w,CellAttendeePicker))
     picker.close()
+
+
+def test_compact_cell_lov_preserves_manual_and_appends_checked_favorites(root,store):
+    out=[]
+    picker=CellAttendeePicker(root,'manual.user, test.b',out.append,store)
+    picker.checked['test.b'].set(False)
+    picker.checked['test.a@example.invalid'].set(True)
+    assert picker.apply()
+    assert out==['manual.user, test.a@example.invalid']
 
 
 def descendants(w):
