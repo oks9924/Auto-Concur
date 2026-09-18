@@ -145,3 +145,37 @@ def test_safe_pre_save_screen_failure_stays_retryable(tmp_path,monkeypatch):
     assert saved['concur_state']=='retryable'
     assert '상세 화면' in saved['concur_note']
     assert mileage_concur.status(tmp_path)['pending']==1
+
+
+def test_resumable_draft_is_reused_not_recreated(tmp_path,monkeypatch):
+    book=prepared(tmp_path)
+    book.rows[0]['concur_state']='needs_review'
+    book.rows[0]['concur_expense_id']='EXP-DRAFT'
+    book.rows[0]['concur_note']='거래 날짜 입력칸을 하나로 확인하지 못했습니다.'
+    book.save()
+    info=mileage_concur.status(tmp_path)
+    assert info['pending']==1 and info['resumable_drafts']==1 and info['needs_review']==0
+
+    called=[]
+    monkeypatch.setattr(mileage_concur,'resume_one',
+        lambda page,url,row,image,eid:(called.append(('resume',eid)) or eid))
+    monkeypatch.setattr(mileage_concur,'create_one',
+        lambda *a,**k:(_ for _ in ()).throw(AssertionError('must not create duplicate')))
+    result=mileage_concur.run_in_session(object(),'https://example/reports/R',tmp_path,True,None)
+    assert result==0
+    assert called==[('resume','EXP-DRAFT')]
+    saved=MileageBook(tmp_path).rows[0]
+    assert saved['concur_state']=='verified' and saved['concur_expense_id']=='EXP-DRAFT'
+
+
+def test_missing_recorded_draft_never_creates_replacement(tmp_path,monkeypatch):
+    book=prepared(tmp_path)
+    row=book.rows[0]
+    monkeypatch.setattr(mileage_concur,'_report_ids',lambda page:set())
+    monkeypatch.setattr(mileage_concur,'check_context',lambda *a:None)
+    class P:
+        url='https://example/reports/R'
+        def goto(self,*a,**k): self.url=a[0]
+    import pytest
+    with pytest.raises(mileage_concur.UncertainMileageCreate,match='중복 생성을 막기 위해'):
+        mileage_concur.resume_one(P(),'https://example/reports/R',row,book.check_image(row),'EXP-DRAFT')
