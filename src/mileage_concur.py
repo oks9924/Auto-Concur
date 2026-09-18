@@ -408,9 +408,9 @@ def run(page, report, folder, apply, limit=None):
                     continue
                 store.set(row['id'], state='needs_review')
                 raise ar.AttachError('이전 신규 생성/저장 결과가 확정되지 않아 자동 재전송하지 않았습니다.')
-            if state == 'creating' and not expense_id:
+            if state in ('creating','needs_review') and not expense_id:
                 store.set(row['id'], state='needs_review')
-                raise ar.AttachError('이전 실행에서 새 경비 ID를 확보하기 전에 중단되었습니다. 중복 생성 방지를 위해 자동 재시도하지 않습니다.')
+                raise ar.AttachError('이전 실행에서 새 경비 ID를 확보하기 전에 생성 결과가 불명확해졌습니다. 중복 생성 방지를 위해 자동 재시도하지 않습니다.')
             if state == 'verified' and expense_id:
                 fields, receipt = _verify(page, report.url, row, expense_id)
                 if fields is True and receipt is True:
