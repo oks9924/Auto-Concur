@@ -251,3 +251,44 @@ def test_inline_lov_close_restores_direct_cell_edit(editor,store):
     event=SimpleNamespace(column=c,row=0,key='x',value='한글입력')
     assert editor.begin_cell_edit(event)=='한글입력'
     assert editor.attendee_picker is None
+
+
+
+def test_inline_lov_uses_responsive_unclipped_actions_at_min_editor_size(editor,store):
+    editor.geometry('820x520')
+    editor.update()
+    editor.table.select_cell(0,editor.COLUMNS.index('추가 참석자'))
+    picker=editor.pick_extra_attendees()
+    editor.update()
+    assert isinstance(picker,AttendeePopover)
+
+    texts=[w.cget('text') for w in descendants(picker) if isinstance(w,ttk.Button)]
+    assert '전체 선택' in texts
+    assert '전체 선택 해제' in texts
+    assert '목록 관리' in texts
+    assert '표시 선택' not in texts
+    assert '표시 해제' not in texts
+
+    left,top=picker.winfo_rootx(),picker.winfo_rooty()
+    right,bottom=left+picker.winfo_width(),top+picker.winfo_height()
+    for button in [w for w in descendants(picker) if isinstance(w,ttk.Button) and w.winfo_ismapped()]:
+        assert button.winfo_rootx() >= left
+        assert button.winfo_rootx()+button.winfo_width() <= right+1
+        assert button.winfo_rooty() >= top
+        assert button.winfo_rooty()+button.winfo_height() <= bottom+1
+    assert picker.winfo_width() <= editor.winfo_width()-8
+    picker.close()
+
+
+def test_inline_lov_all_selection_ignores_search_filter(editor,store):
+    editor.table.select_cell(0,editor.COLUMNS.index('추가 참석자'))
+    picker=editor.pick_extra_attendees()
+    picker.query.set('테스트 A')
+    editor.update_idletasks()
+    assert len(picker.shown)==1
+
+    picker.select_all_button.invoke()
+    assert all(variable.get() for variable in picker.checked.values())
+    picker.clear_all_button.invoke()
+    assert not any(variable.get() for variable in picker.checked.values())
+    picker.close()
