@@ -105,3 +105,30 @@ def test_mileage_type_prefers_button_inside_active_modal(browser):
     page.locator(selector).click()
     assert page.get_attribute('body','data-clicked')=='modal'
     page.close()
+
+
+def test_field_found_when_label_is_div_span_not_html_label(browser):
+    page=browser.new_page()
+    page.set_content("""
+    <div class='sapcnqr-dialog__body'>
+      <div class='field-row'><div><span>거래 날짜</span></div><div><input id='txdate'></div></div>
+      <div class='field-row'><div><span>출발지</span></div><div><input id='origin'></div></div>
+      <div class='field-row'><div><span>도착지</span></div><div><input id='dest'></div></div>
+    </div>
+    """)
+    selector=page.evaluate(FIELD_JS,['거래 날짜','Transaction Date','Date'])
+    assert selector and page.locator(selector).get_attribute('id')=='txdate'
+    page.close()
+
+
+def test_vehicle_combo_found_from_nearby_div_label(browser):
+    page=browser.new_page()
+    page.set_content("""
+    <div class='sapcnqr-dialog__body'>
+      <div class='field-row'><div><span>차량 ID</span></div><div><button id='vehicle' role='combobox'>05두2956</button></div></div>
+      <button data-testid='column-sort' aria-label='Vehicle'>background vehicle sort</button>
+    </div>
+    """)
+    selector=page.evaluate(COMBO_JS,['차량 ID','Vehicle ID','Vehicle'])
+    assert selector and page.locator(selector).get_attribute('id')=='vehicle'
+    page.close()
