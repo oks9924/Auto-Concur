@@ -105,3 +105,37 @@ def test_mileage_type_prefers_button_inside_active_modal(browser):
     page.locator(selector).click()
     assert page.get_attribute('body','data-clicked')=='modal'
     page.close()
+
+
+def test_field_found_from_div_caption_and_sibling_input(browser):
+    page=browser.new_page()
+    page.set_content("""
+    <div class='sapcnqr-dialog__body add-modal__body modal-body--no-padding'>
+      <div class='field'>
+        <div class='caption'><span>거래 날짜</span></div>
+        <div class='control'><input id='transaction-date' value=''></div>
+      </div>
+      <div class='field'><div><span>출발지</span></div><div><input id='origin'></div></div>
+      <div class='field'><div><span>도착지</span></div><div><input id='destination'></div></div>
+    </div>
+    """)
+    selector=page.evaluate(FIELD_JS,['거래 날짜','Transaction Date','Date'])
+    assert selector and page.locator(selector).get_attribute('id')=='transaction-date'
+    page.close()
+
+
+def test_vehicle_combo_found_from_div_caption_and_sibling_button(browser):
+    page=browser.new_page()
+    page.set_content("""
+    <button data-testid='column-sort' aria-label='Vehicle'>background vehicle</button>
+    <div class='sapcnqr-dialog__body add-modal__body modal-body--no-padding'>
+      <div class='field'>
+        <div><span>차량 ID</span></div>
+        <div><button id='vehicle-combo' role='combobox'>05두2956</button></div>
+      </div>
+      <div><span>거리</span><input id='distance'></div>
+    </div>
+    """)
+    selector=page.evaluate(COMBO_JS,['차량 ID','Vehicle ID','Vehicle'])
+    assert selector and page.locator(selector).get_attribute('id')=='vehicle-combo'
+    page.close()
