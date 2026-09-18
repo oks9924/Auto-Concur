@@ -24,6 +24,7 @@ class Editor(tk.Toplevel):
         self.cfg, self.model, self.on_run = dict(cfg), model, on_run
         self.pending = None
         self.loading = False
+        self.attendee_picker = None
         self.title('경비 입력 · Auto-Concur')
         width, height = min(1240, self.winfo_screenwidth()-60), min(700, self.winfo_screenheight()-100)
         self.geometry(f'{width}x{height}')
@@ -181,8 +182,7 @@ class Editor(tk.Toplevel):
             return
         if row_index is None:
             row_index = self.table.displayed_row_to_data(selected.row)
-        self.sync()
-        row = self.model.rows[row_index]
+        row = self._row_from_table(row_index)
         anchor = sheet._as_date(row.get('거래일'))
         if anchor is None:
             messagebox.showerror('거래일 확인', '원본 거래일을 읽지 못했습니다.', parent=self)
@@ -197,9 +197,23 @@ class Editor(tk.Toplevel):
         if date_column == '퇴실날짜':
             dialog.mode.set('퇴실')
 
+    def _attendee_anchor(self, row_index, column):
+        try:
+            shown = list(self.table.display_rows())
+            display_row = shown.index(row_index)
+            mt = self.table.MT
+            self.table.see(display_row, column)
+            self.update_idletasks()
+            x = mt.winfo_rootx() + mt.col_positions[column] - mt.canvasx(0)
+            top = mt.winfo_rooty() + mt.row_positions[display_row] - mt.canvasy(0)
+            bottom = mt.winfo_rooty() + mt.row_positions[display_row + 1] - mt.canvasy(0)
+            width = mt.col_positions[column + 1] - mt.col_positions[column]
+            return (int(x), int(top), int(bottom), int(width))
+        except (ValueError, IndexError, tk.TclError, AttributeError):
+            return None
+
     def pick_extra_attendees(self, row_index=None):
         self.table.close_text_editor(set_data=True)
-        self.sync()
         if row_index is None:
             selected = self.table.get_currently_selected()
             if not selected:
@@ -208,6 +222,8 @@ class Editor(tk.Toplevel):
             row_index = self.table.displayed_row_to_data(selected.row)
         column = self.COLUMNS.index(sheet.EXTRA_ATTENDEE_COLUMN)
         original = self.table.get_sheet_data()[row_index][column]
+        if self.attendee_picker is not None and self.attendee_picker.winfo_exists():
+            self.attendee_picker.close()
         def apply(value):
             if self.table.get_sheet_data()[row_index][column] != original:
                 messagebox.showerror('입력 변경', '참석자 값이 변경되었습니다. 닫고 다시 열어 주세요.', parent=self)
@@ -215,7 +231,13 @@ class Editor(tk.Toplevel):
             if value != original:
                 self.table.set_data(row_index, column, data=value, undo=True, emit_event=True)
             return True
-        return show_picker(self, original, apply)
+        picker = show_picker(self, original, apply, anchor=self._attendee_anchor(row_index, column))
+        self.attendee_picker = picker
+        if picker is not None:
+            picker.bind('<Destroy>', lambda event, p=picker:
+                        setattr(self, 'attendee_picker', None) if event.widget is p and self.attendee_picker is p else None,
+                        add='+')
+        return picker
 
     def pick_extra_attendees_if_selected(self):
         selected = self.table.get_currently_selected()
@@ -329,14 +351,26 @@ class Editor(tk.Toplevel):
     def refresh(self):
         self.loading = True
         self.table.set_sheet_data([[self.row_status(row), *[row.get(c, '') for c in self.COLUMNS[1:]]]
-                                  for row in self.model.rows])
+                                  for row in self.model.rows], redraw=False)
         for name, choices in settings.choices(self.cfg).items():
             self.table.dropdown(self.table.span(None, self.COLUMNS.index(name), None, self.COLUMNS.index(name) + 1),
                                 values=['', *choices], edit_data=False, state='normal', validate_input=False)
         self.table.reset_undos()
         self.loading = False
-        self.apply_filter()
-        self.highlight_inputs()
+        self.apply_filter(redraw=False)
+        self.highlight_inputs(redraw=False)
+        self.table.refresh()
+
+    def _row_from_table(self, index):
+        data = self.table.get_sheet_data()[index]
+        row = dict(self.model.rows[index])
+        for name in sheet.EDITABLE:
+            row[name] = str(data[self.COLUMNS.index(name)] if data[self.COLUMNS.index(name)] is not None else '').strip()
+        return row
+
+    def sync_row(self, index):
+        self.model.rows[index] = self._row_from_table(index)
+        self.model.dirty = any(a != b for a, b in zip(self.model.rows, self.model.original))
 
     def sync(self):
         data = self.table.get_sheet_data()
@@ -346,17 +380,31 @@ class Editor(tk.Toplevel):
         if self.loading:
             return
         filled = self.attendee_defaults.apply(event)
-        self.sync()
-        for i, row in enumerate(self.model.rows):
-            self.table.set_cell_data(i, 0, self.row_status(row), redraw=False)
-        self.highlight_inputs()
+        changed = set()
+        if isinstance(event, dict):
+            changed = {r for r, _ in event.get('cells', {}).get('table', {})}
+        if changed:
+            for row_index in changed:
+                if 0 <= row_index < len(self.model.rows):
+                    self.sync_row(row_index)
+                    self.table.set_cell_data(row_index, 0, self.row_status(self.model.rows[row_index]), redraw=False)
+        else:
+            self.sync()
+            for i, row in enumerate(self.model.rows):
+                self.table.set_cell_data(i, 0, self.row_status(row), redraw=False)
+
+        type_col = self.COLUMNS.index('경비유형')
+        type_changed = (not changed or any(c == type_col for _, c in
+                        (event.get('cells', {}).get('table', {}) if isinstance(event, dict) else {})))
+        if type_changed:
+            self.highlight_inputs(redraw=False)
         self.table.refresh()
         if self.pending:
             self.after_cancel(self.pending)
         self.pending = self.after(800, self.autosave)
         self.status.configure(text=(f'내부 직원간 식음료 {filled}건의 빈 참석자에 기본 참석자를 채웠습니다. Ctrl+Z로 함께 되돌릴 수 있습니다.' if filled else '편집 중 · 잠시 후 임시 저장합니다. 저장된 입력만 C단계에 반영됩니다.'))
 
-    def highlight_inputs(self):
+    def highlight_inputs(self, redraw=True):
         self.table.dehighlight_cells(all_=True, redraw=False)
         for r, row in enumerate(self.model.rows):
             kind = row.get('경비유형', '').strip()
@@ -371,7 +419,8 @@ class Editor(tk.Toplevel):
             row.get('경비유형'), self.cfg.get('expense_type_codes', {}).get(row.get('경비유형', '').strip()))[1]
             for row in self.model.rows)
         self.guide_summary.set(f'초록: 입력 안내 · 노랑: 안내 미등록 {unregistered}건 (필수 여부 미확인)')
-        self.table.refresh()
+        if redraw:
+            self.table.refresh()
 
     def show_help(self):
         text = (
@@ -390,12 +439,12 @@ class Editor(tk.Toplevel):
 
     def show_input_guide(self):
         self.table.close_text_editor(set_data=True)
-        self.sync()
         selected = self.table.get_currently_selected()
         if not selected:
             messagebox.showinfo('유형 입력 안내', '경비 행을 먼저 선택해 주세요.', parent=self)
             return
-        row = self.model.rows[self.table.displayed_row_to_data(selected.row)]
+        row_index = self.table.displayed_row_to_data(selected.row)
+        row = self._row_from_table(row_index)
         kind = row.get('경비유형', '').strip()
         fields, known = input_guide(kind, self.cfg.get('expense_type_codes', {}).get(kind))
         detail = ('초록색 안내 항목: '+', '.join(fields) if known else '이 유형의 안내 규칙은 아직 등록되지 않았습니다.')
@@ -410,7 +459,7 @@ class Editor(tk.Toplevel):
         except OSError as exc:
             self.status.configure(text=f'임시 저장 실패: {exc}')
 
-    def apply_filter(self):
+    def apply_filter(self, redraw=True):
         if not hasattr(self, 'table'):
             return
         query, mode = self.query.get().casefold().strip(), self.filter.get()
@@ -430,7 +479,7 @@ class Editor(tk.Toplevel):
             if mode == '식음료' and '식음료' not in kind:
                 continue
             shown.append(i)
-        self.table.display_rows(rows=shown, all_rows_displayed=False, redraw=True)
+        self.table.display_rows(rows=shown, all_rows_displayed=False, redraw=redraw)
         self.count.configure(text=f'표시 {len(shown)} / 전체 {len(self.model.rows)}건')
 
     def bulk(self):
@@ -504,12 +553,12 @@ class Editor(tk.Toplevel):
     def edit_row(self):
         from .row_editor import RowEditor
         self.table.close_text_editor(set_data=True)
-        self.sync()
         selected = self.table.get_currently_selected()
         if not selected:
             messagebox.showinfo('행 선택', '편집할 경비 행을 선택한 뒤 한 건 상세 편집을 눌러 주세요.', parent=self)
             return
         index = self.table.displayed_row_to_data(selected.row)
+        self.sync_row(index)
         return RowEditor(self, index)
 
     def run(self):
