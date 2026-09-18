@@ -83,20 +83,16 @@ def test_failed_save_preserves_original(tmp_path,monkeypatch):
 
 
 @pytest.fixture
-def editor(tmp_path,monkeypatch):
+def editor(tmp_path,monkeypatch,tk_window):
     from src.worksheet_editor import Editor
     from src.organize import MANIFEST_COLUMNS
     monkeypatch.setattr(paths,'base',lambda:tmp_path)
-    root=tk.Tk();root.geometry('1200x900');root.update()
+    root=tk_window;root.geometry('1200x900');root.update()
     row={**dict.fromkeys(MANIFEST_COLUMNS,''),'승인번호':'T','파일명':'T.pdf','거래일':'2026-09-18','금액':'100', '가맹점명':'테스트'}
     file=tmp_path/'workbook.json';write_json(file,{'version':1,'rows':[row]})
     e=Editor(root,file,deepcopy(settings.DEFAULTS));root.update()
     yield e
-    if e.winfo_exists():
-        if e.pending: e.after_cancel(e.pending);e.pending=None
-        e.destroy()
-    for task in root.tk.call('after','info'): root.after_cancel(task)
-    root.destroy()
+    # tk_window owns cleanup, including when editor construction fails.
 
 
 def fill(form,folder):

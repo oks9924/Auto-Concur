@@ -154,8 +154,14 @@ def test_유형마다_채워야_할_칸이_초록이다(tmp_path):
         assert LODGING_TYPE in 규칙(name), name
     assert TRANSIT_TYPE in 규칙("코멘트")
 
-    # 코멘트 한 칸에 세 유형이 겹쳐 걸린다
-    assert len(칠한칸[get_column_letter(MANIFEST_COLUMNS.index("코멘트") + 1) + "2"]) == 3
+    # User-confirmed description-only types were expanded; check the actual
+    # formulas, not just a historical rule count.
+    from src.expense_policy import DESCRIPTION_ONLY_TYPES
+    types = {ATTENDEE_REQUIRED_TYPE, LODGING_TYPE, *DESCRIPTION_ONLY_TYPES}
+    type_col = get_column_letter(MANIFEST_COLUMNS.index("경비유형") + 1)
+    expected = {f'${type_col}2="{name}"' for name in types}
+    actual = 칠한칸[get_column_letter(MANIFEST_COLUMNS.index("코멘트") + 1) + "2"]
+    assert set(actual) == expected and len(actual) == len(expected)
     # 참석자는 식음료에서만 초록이다
     assert LODGING_TYPE not in 규칙("참석자")
 
@@ -165,8 +171,11 @@ def test_대중교통비_이름이_설정과_같다():
     from src.settings import EXPENSE_TYPE_CODES
     from src.sheet import GREEN_BY_TYPE
 
-    for type_name in GREEN_BY_TYPE:
-        assert type_name in EXPENSE_TYPE_CODES, type_name
+    from src.expense_policy import TRAINING_TYPE
+    # A confirmed local guidance rule does not invent a Concur type code.
+    pending = set(GREEN_BY_TYPE) - set(EXPENSE_TYPE_CODES)
+    assert pending == {TRAINING_TYPE}
+    assert GREEN_BY_TYPE[TRAINING_TYPE] == ['코멘트']
 
 
 def test_내용만_지운_줄은_건너뛴다(tmp_path, capsys):

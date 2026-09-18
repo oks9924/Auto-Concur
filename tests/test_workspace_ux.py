@@ -41,12 +41,9 @@ def test_history_state_is_not_live_success(tmp_path, state, expected):
 
 
 @pytest.fixture
-def root():
-    app=tk.Tk(); app.geometry('800x600'); app.update()
-    yield app
-    if app.winfo_exists():
-        for task in app.tk.call('after','info'): app.after_cancel(task)
-        app.destroy()
+def root(tk_window):
+    tk_window.geometry('800x600'); tk_window.update()
+    return tk_window
 
 
 @pytest.fixture
@@ -154,14 +151,12 @@ def test_no_selection_detail_does_not_guess_row(editor,monkeypatch):
 
 
 @pytest.fixture
-def app(monkeypatch,tmp_path):
+def app(monkeypatch,tmp_path,tk_cleanup):
     from src import gui
     monkeypatch.setattr(gui,'_preload',lambda:None)
     monkeypatch.setattr(gui.settings,'load',lambda:{**deepcopy(settings.DEFAULTS),'downloads_dir':str(tmp_path)})
-    a=gui.App();a.update()
+    a=gui.App();tk_cleanup(a);a.update()
     yield a
-    for task in a.tk.call('after','info'):a.after_cancel(task)
-    a.destroy()
 
 
 def test_workspace_keeps_dates_and_settings(app):

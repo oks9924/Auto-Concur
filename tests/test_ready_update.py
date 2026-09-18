@@ -133,11 +133,9 @@ def test_period_defaults_and_saved_range():
 
 
 @pytest.fixture
-def root():
-    root = tk.Tk()
-    root.withdraw()
-    yield root
-    root.destroy()
+def root(tk_window):
+    tk_window.withdraw()
+    return tk_window
 
 
 def test_calendar_selection_and_cancel(root):

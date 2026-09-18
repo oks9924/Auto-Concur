@@ -10,13 +10,9 @@ from src.expense_policy import input_guide
 
 
 @pytest.fixture
-def root():
-    window = tk.Tk()
-    window.geometry('900x650')
-    yield window
-    for job in window.tk.call('after', 'info'):
-        window.after_cancel(job)
-    window.destroy()
+def root(tk_window):
+    tk_window.geometry('900x650')
+    return tk_window
 
 
 @pytest.mark.parametrize('start,delta,result', [
@@ -127,7 +123,7 @@ def test_same_component_for_all_calendars(root):
 @pytest.mark.parametrize('name,code,count,known', [
     ('숙박비',None,5,True), ('다른 숙박 표시명','LODNG',5,True),
     ('내부 직원간 식음료',None,4,True), ('대중교통비', 'TRAIN',1,True),
-    ('주차비','PARKG',0,False), ('렌터카비','CARRT',0,False),
+    ('주차비','PARKG',1,True), ('렌터카비','CARRT',0,False),
     ('알 수 없는 식음료','UNKNOWN',0,False), ('',None,0,False)])
 def test_guide_does_not_guess_required_fields(name,code,count,known):
     fields,registered=input_guide(name,code)
@@ -138,7 +134,7 @@ def test_editor_unknown_guide_and_bulk_calendar(root,tmp_path):
     from src import settings,organize
     from src.worksheet import write_json
     from src.worksheet_editor import Editor
-    base={**dict.fromkeys(organize.MANIFEST_COLUMNS,''),'거래일':'2026-09-17','금액':'1000','승인번호':'A','가맹점명':'test','파일명':'a.pdf','경비유형':'주차비'}
+    base={**dict.fromkeys(organize.MANIFEST_COLUMNS,''),'거래일':'2026-09-17','금액':'1000','승인번호':'A','가맹점명':'test','파일명':'a.pdf','경비유형':'렌터카비'}
     path=tmp_path/'workbook.json';write_json(path,{'version':1,'rows':[base]})
     editor=Editor(root,path,settings.DEFAULTS)
     assert '미등록 1건' in editor.guide_count.cget('text')

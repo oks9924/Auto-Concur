@@ -25,11 +25,11 @@ def test_rule(old,new,before,after,default,expected):
 
 
 @pytest.fixture
-def editor(tmp_path):
+def editor(tmp_path, tk_window):
     from src.worksheet_editor import Editor
     from src.worksheet import write_json
     from src.organize import MANIFEST_COLUMNS
-    root=tk.Tk(); root.geometry('900x700'); root.update()
+    root=tk_window; root.geometry('900x700'); root.update()
     rows=[{**dict.fromkeys(MANIFEST_COLUMNS,''), '거래일':'2026-09-17', '금액':'17000',
            '승인번호':f'T{i}', '파일명':f'test{i}.pdf', '가맹점명':f'상점{i}',
            '경비유형':'주차비', '추가 참석자':'extra.user'} for i in range(3)]
@@ -37,16 +37,7 @@ def editor(tmp_path):
     cfg={**deepcopy(settings.DEFAULTS),'attendee_default':DEFAULT}
     e=Editor(root,path,cfg); root.update()
     yield e
-    if e.winfo_exists():
-        if e.pending:
-            e.after_cancel(e.pending)
-            e.pending = None
-        e.grab_release()
-        e.destroy()
-    # Descendant callbacks must be cleaned up by their owning widgets first.
-    for task in root.tk.call('after', 'info'):
-        root.after_cancel(task)
-    root.destroy()
+    # tk_window owns cleanup, including when editor construction fails.
 
 
 def col(editor,name): return editor.COLUMNS.index(name)
