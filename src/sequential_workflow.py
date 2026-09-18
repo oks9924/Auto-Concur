@@ -106,7 +106,7 @@ def unresolved_other_intent(journal, task):
                for key, value in journal.data['tasks'].items())
 
 
-def run(page, report, folder, cfg, sheet_path, apply, limit=None, again=False):
+def run(page, report, folder, cfg, sheet_path, apply, limit=None, again=False, mileage_count=0):
     tolerance = int(cfg['date_tolerance_days'])
     if tolerance < 0 or (limit is not None and limit < 1):
         raise ValueError('날짜 허용 오차와 처리 건수를 확인해 주세요.')
@@ -119,11 +119,13 @@ def run(page, report, folder, cfg, sheet_path, apply, limit=None, again=False):
                '작업지와 일치하는 경비만 수정하며, 기존 영수증은 유지합니다.\n'
                '읽기 실패·실제 중복은 해당 거래만 보류합니다.\n'
                '정확한 처리 건수는 각 경비의 상세 조회 후 결정됩니다.\n'
-               '차량 마일리지 신규 생성은 포함하지 않습니다.'
-               + (f'\n영수증 첨부/입력 수정은 각각 최대 {limit}건입니다.' if limit else ''))
+               + (f'차량 마일리지 신규 생성 대상 {mileage_count}건도 이어서 처리합니다.' if mileage_count else '차량 마일리지 신규 생성 대상은 없습니다.')
+               + (f'\n영수증 첨부/입력 수정/마일리지 신규 생성은 각각 최대 {limit}건입니다.' if limit else ''))
     print(message)
     if apply and not console.confirm_action(message, '한 건씩 확인하고 반영 시작'):
-        return RunResult(0, '사용자가 반영을 취소했습니다. Concur는 변경하지 않았습니다.')
+        result = RunResult(0, '사용자가 반영을 취소했습니다. Concur는 변경하지 않았습니다.')
+        result.cancelled = True
+        return result
     if report_key(page.url) != report.key:
         raise ContextChanged('선택한 리포트가 바뀌어 시작하지 않았습니다.')
     driver = DetailDriver(page, report.url, folder)
