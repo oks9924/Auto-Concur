@@ -17,11 +17,11 @@ from .attendee_picker import AttendeesEntry, show_picker, show_manager
 class Editor(tk.Toplevel):
     COLUMNS = ['상태', '거래일', '금액', '가맹점명', *sheet.EDITABLE]
 
-    def __init__(self, parent, source: Path, cfg: dict, on_run=None):
+    def __init__(self, parent, source: Path, cfg: dict, on_run=None, on_mileage=None):
         model = Worksheet(source)
         super().__init__(parent)
         self.withdraw()
-        self.cfg, self.model, self.on_run = dict(cfg), model, on_run
+        self.cfg, self.model, self.on_run, self.on_mileage = dict(cfg), model, on_run, on_mileage
         self.pending = None
         self.loading = False
         self.title('경비 입력 · Auto-Concur')
@@ -142,7 +142,7 @@ class Editor(tk.Toplevel):
         if self.mileage_panel is None:
             from .mileage_ui import MileagePanel
             try:
-                self.mileage_panel = MileagePanel(self.tables, self.model.target.parent)
+                self.mileage_panel = MileagePanel(self.tables, self.model.target.parent, on_concur=self.run_mileage)
                 self.tables.add(self.mileage_panel, weight=2)
             except (ValueError, OSError) as exc:
                 messagebox.showerror('마일리지 데이터 확인', str(exc), parent=self)
@@ -154,6 +154,14 @@ class Editor(tk.Toplevel):
         if panel is not None:
             return panel.add()
 
+    def run_mileage(self):
+        if self.mileage_panel is None or self.on_mileage is None:
+            return
+        if not self.mileage_panel.save():
+            return
+        callback = self.on_mileage
+        self.destroy()
+        self.master.after_idle(callback)
     def toggle_maximize(self, event=None):
         self.state('normal' if self.state() == 'zoomed' else 'zoomed')
         return 'break'
@@ -510,8 +518,8 @@ class Editor(tk.Toplevel):
                 '영수증만 첨부되는 거래도 있을 수 있으며 실제 대상 건수는 다음 리포트 확인창에서 결정됩니다.\n\n'
                 '입력을 저장한 뒤 Concur 대상 확인 단계로 이동할까요?')
         if self.mileage_panel is not None:
-            text += (f'\n\n별도 마일리지 {len(self.mileage_panel.book.rows)}건은 이 실행에 포함되지 않습니다.'
-                     '\n현재는 마일리지 입력·로컬 보관만 지원합니다.')
+            text += (f'\n\n별도 마일리지 {len(self.mileage_panel.book.rows)}건은 카드 경비 C단계에 포함되지 않습니다.'
+                     '\n마일리지는 아래 표의 [Concur 신규 생성]에서 별도로 실행합니다.')
         if not messagebox.askokcancel('실제 처리 범위 확인', text, parent=self):
             return
         if self.mileage_panel is not None and not self.mileage_panel.confirm_close():
