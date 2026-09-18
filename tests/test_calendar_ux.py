@@ -137,7 +137,7 @@ def test_editor_unknown_guide_and_bulk_calendar(root,tmp_path):
     base={**dict.fromkeys(organize.MANIFEST_COLUMNS,''),'거래일':'2026-09-17','금액':'1000','승인번호':'A','가맹점명':'test','파일명':'a.pdf','경비유형':'렌터카비'}
     path=tmp_path/'workbook.json';write_json(path,{'version':1,'rows':[base]})
     editor=Editor(root,path,settings.DEFAULTS)
-    assert '미등록 1건' in editor.guide_count.cget('text')
+    assert '미등록 1건' in editor.guide_summary.get()
     editor.filter.set('안내 미등록');assert editor.table.display_rows()==[0]
     editor.table.select_cell(0,4);editor.bulk();root.update()
     popup=[w for w in editor.winfo_children() if isinstance(w,tk.Toplevel)][-1]
