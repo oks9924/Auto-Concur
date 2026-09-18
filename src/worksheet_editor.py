@@ -104,6 +104,7 @@ class Editor(tk.Toplevel):
         self.table.extra_bindings('begin_edit_cell', self.begin_cell_edit)
         self.table.bind('<F4>', lambda event: (self.pick_extra_attendees_if_selected(), 'break')[1])
         self.table.bind('<Alt-Down>', lambda event: (self.pick_extra_attendees_if_selected(), 'break')[1])
+        self.table.MT.bind('<ButtonRelease-1>', self.attendee_cell_clicked, add='+')
         self.text_size.trace_add('write', lambda *a: self.resize_text())
         self.query.trace_add('write', lambda *a: self.apply_filter())
         self.filter.trace_add('write', lambda *a: self.apply_filter())
@@ -257,6 +258,25 @@ class Editor(tk.Toplevel):
         self.attendee_picker = picker
         return picker
 
+    def attendee_cell_clicked(self, event=None):
+        """One real mouse click on the extra-attendee cell opens its inline LOV."""
+        def open_selected():
+            selected = self.table.get_currently_selected()
+            if not selected or getattr(selected, 'type_', 'cell') not in ('cell', 'cells'):
+                return
+            try:
+                column = self.table.displayed_column_to_data(selected.column)
+                row = self.table.displayed_row_to_data(selected.row)
+            except (AttributeError, IndexError, TypeError, ValueError):
+                return
+            if self.COLUMNS[column] != sheet.EXTRA_ATTENDEE_COLUMN:
+                return
+            # A click inside an already selected cell should not recreate the same LOV.
+            if self.attendee_picker is not None and self.attendee_picker.winfo_exists():
+                return
+            self.pick_extra_attendees(row)
+        self.after_idle(open_selected)
+
     def pick_extra_attendees_if_selected(self):
         selected = self.table.get_currently_selected()
         if not selected:
@@ -269,12 +289,15 @@ class Editor(tk.Toplevel):
     def begin_cell_edit(self, event):
         column = self.table.displayed_column_to_data(event.column)
         if self.COLUMNS[column] == sheet.EXTRA_ATTENDEE_COLUMN:
-            # Double-click/Enter opens the inline LOV. Typing/F2 remains a normal
-            # tksheet edit path so a picker failure can never make the cell uneditable.
+            # One mouse click already opens the LOV. Double-click/Enter/F4 are only
+            # fallback entry points. Typing/F2 remains editable if the user wants it.
             if event.key in ('??', 'Return'):
                 row = self.table.displayed_row_to_data(event.row)
-                self.after_idle(lambda: self.pick_extra_attendees(row))
+                if self.attendee_picker is None or not self.attendee_picker.winfo_exists():
+                    self.after_idle(lambda: self.pick_extra_attendees(row))
                 return None
+            if self.attendee_picker is not None and self.attendee_picker.winfo_exists():
+                self.attendee_picker.close()
             return event.value
         if self.COLUMNS[column] in sheet.DATE_COLUMNS:
             row = self.table.displayed_row_to_data(event.row)
