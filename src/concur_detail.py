@@ -3,6 +3,7 @@
 Selectors reuse fields used by the existing Concur adapter. Unknown or ambiguous
 fields are reported for this expense, not filled from a guessed worksheet row.
 """
+from contextvars import ContextVar
 from dataclasses import replace
 import re
 import time
@@ -11,8 +12,48 @@ from urllib.parse import urlsplit
 from . import attach_receipts as ar, fix_expenses as fx
 from .concur_driver import Driver
 from .concur_formats import placeholder_order
-from .concur_values import clean, parse_amount, resolve_dates
+from .concur_values import clean, date_options, parse_amount, resolve_dates
 from .report_session import check_context
+
+
+# 이 계정이 날짜를 보여주는 순서. 한 번 확인되면 실행 내내 쓰고, 설정에도
+# 남겨서 다음 실행은 처음부터 안 멈춘다. 서로 다른 순서가 관찰되면(있을 수
+# 없는 일이다) 아무것도 믿지 않는다 - 'CONFLICT' 로 두고 사람에게 넘긴다.
+_LEARNED = ContextVar('concur_learned_order', default=None)
+
+
+def learned_order():
+    found = _LEARNED.get()
+    return found if found in ('MDY', 'DMY') else None
+
+
+def _remember(order):
+    if order not in ('MDY', 'DMY'):
+        return
+    found = _LEARNED.get()
+    if found == order:
+        return
+    _LEARNED.set('CONFLICT' if found else order)
+    if found is None:
+        _save_order(order)
+
+
+def _remember_from(raw):
+    for order in date_options(clean(raw.get('date', ''))).values():
+        _remember(order)
+
+
+def _save_order(order):
+    """확인된 순서를 설정에 남긴다. 사람이 고르던 것을 대신 채워준다."""
+    from . import settings
+    try:
+        cfg = settings.load()
+        if str(cfg.get('concur_date_order', 'AUTO')).upper() != 'AUTO':
+            return  # 사람이 정해둔 값은 건드리지 않는다
+        settings.save({**cfg, 'concur_date_order': order})
+        print(f'  (이 계정의 날짜 표시 순서를 {ORDER_NAMES[order]} 로 확인해 기억합니다)')
+    except Exception:
+        pass  # 못 남겨도 이번 실행은 그대로 간다
 
 
 class ContextChanged(ar.AttachError):
@@ -95,9 +136,42 @@ def _where(raw):
     return '(이 화면에 거래일 입력칸이 없습니다)'
 
 
+def _settle_date(raw, seed):
+    """모호한 날짜를 근거로 가른다. 못 가리면 None - 지어내지 않는다.
+
+    '10/09/2026' 은 10월 9일일 수도 9월 10일일 수도 있다. 화면 글자만으로는
+    정할 수 없지만, 다음 둘은 추측이 아니라 근거다.
+
+      1. 목록이 읽은 같은 경비의 날짜. 목록은 전체 행을 모아 읽어서 서식을
+         스스로 추론한다(13일 이상인 날짜 한 건이면 순서가 정해진다). 상세는
+         한 건씩 읽어서 그 추론이 안 걸렸다 - 여기서 이어준다.
+      2. 이 계정에서 이미 확인된 순서. 한 계정이 날짜를 두 가지로 보여주지는
+         않으므로, 같은 실행에서 모호하지 않게 읽힌 순서를 그대로 쓴다.
+
+    가린 뒤에는 그 순서를 설정에 남긴다. 다음 실행은 처음부터 안 멈춘다.
+    """
+    from .concur_values import date_options
+
+    options = date_options(clean(raw.get('date', '')))
+    if len(options) < 2:
+        return None
+
+    if seed.when in options:  # 목록과 상세가 같은 날을 가리킨다
+        _remember(options[seed.when])
+        return seed.when
+
+    known = learned_order()
+    hits = [when for when, order in options.items() if order in (known, 'SAME')]
+    return hits[0] if known and len(hits) == 1 else None
+
+
 def decode_detail(raw, seed):
     order = placeholder_order(raw.get('placeholder', ''))
     when = resolve_dates([raw], order=order)[0]
+    if when is None:
+        when = _settle_date(raw, seed)
+    elif len(date_options(clean(raw.get('date', '')))) < 2:
+        _remember_from(raw)  # 모호하지 않게 읽혔다. 이 순서를 기억해 둔다
     amount = parse_amount(raw.get('amount', ''))
     # Explicit non-KRW currencies must never match a KRW amount with equal digits.
     currency = clean(raw.get('currency', ''))

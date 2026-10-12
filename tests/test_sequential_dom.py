@@ -182,3 +182,78 @@ def test_모호하지_않으면_군말을_안_붙인다():
 
     assert _reading_hint("2026-09-10") == ""  # 년/월/일은 해석이 하나뿐
     assert _reading_hint("25/09/2026") == ""  # 25는 월이 될 수 없다
+
+
+def _상세(**kw):
+    base = dict(dateField=True, amountField=True, vendorField=True,
+                amount="KRW 17,300", currency="KRW", vendor="가게", placeholder="")
+    return {**base, **kw}
+
+
+def _목록행(when=None):
+    from src import attach_receipts as ar
+
+    return ar.Row(0, when, None, "", "ID1", "", "")
+
+
+@pytest.fixture
+def 기억없이(monkeypatch):
+    """배운 순서를 설정에 쓰지 않는다. 테스트가 사람 설정을 건드리면 안 된다."""
+    from src import concur_detail as cd
+
+    monkeypatch.setattr(cd, "_save_order", lambda order: None)
+    cd._LEARNED.set(None)
+    return cd
+
+
+def test_목록이_읽은_날짜로_모호함을_가른다(기억없이):
+    """'10/09/2026' 은 10월 9일일 수도 9월 10일일 수도 있다.
+
+    목록은 전체 행을 모아 읽어서 서식을 스스로 추론하는데, 상세는 한 건씩
+    읽어서 그 추론이 안 걸렸다. 같은 경비를 두 번 읽어 같은 날을 가리키면
+    그건 추측이 아니라 근거다.
+    """
+    from datetime import date
+
+    got = 기억없이.decode_detail(_상세(date="10/09/2026"), _목록행(date(2026, 9, 10)))
+    assert got.when == date(2026, 9, 10)
+    assert 기억없이.learned_order() == "DMY"
+
+
+def test_한_번_확인한_순서를_그_뒤에_쓴다(기억없이):
+    """한 계정이 날짜를 두 가지로 보여주지는 않는다."""
+    from datetime import date
+
+    기억없이.decode_detail(_상세(date="25/09/2026"), _목록행())  # 25일 - 월이 될 수 없다
+    assert 기억없이.learned_order() == "DMY"
+
+    got = 기억없이.decode_detail(_상세(date="03/09/2026"), _목록행())
+    assert got.when == date(2026, 9, 3)
+
+
+def test_근거가_없으면_그대로_멈춘다(기억없이):
+    """알아서 맞추되, 지어내지는 않는다. 엉뚱한 경비에 붙는 것보다 멈추는 게 낫다."""
+    from src import attach_receipts as ar
+
+    with pytest.raises(ar.AttachError) as err:
+        기억없이.decode_detail(_상세(date="03/09/2026"), _목록행())
+    assert "일/월/년이면 2026-09-03" in str(err.value)
+
+
+def test_목록과_상세가_어긋나면_믿지_않는다(기억없이):
+    """두 읽기가 다른 날을 가리키면 그중 하나는 틀린 것이다."""
+    from datetime import date
+
+    from src import attach_receipts as ar
+
+    with pytest.raises(ar.AttachError):
+        기억없이.decode_detail(_상세(date="03/09/2026"), _목록행(date(2026, 12, 25)))
+
+
+def test_서로_다른_순서가_보이면_아무것도_안_믿는다(기억없이):
+    """있을 수 없는 일이다. 일어났다면 우리 판단이 틀린 것이므로 사람에게 넘긴다."""
+    from datetime import date
+
+    기억없이.decode_detail(_상세(date="25/09/2026"), _목록행())      # DMY
+    기억없이.decode_detail(_상세(date="09/25/2026"), _목록행())      # MDY
+    assert 기억없이.learned_order() is None
