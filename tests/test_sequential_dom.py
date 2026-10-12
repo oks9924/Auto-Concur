@@ -155,3 +155,30 @@ def test_입력칸이_아예_없으면_그렇게_말한다():
                        "dateHere": [], "datePage": []},
                       ar.Row(0, None, None, "", "ID1", "", ""))
     assert "거래일 입력칸이 없습니다" in str(err.value)
+
+
+def test_모호한_날짜는_둘_다_읽어서_보여준다():
+    """실측 2026-10-12: '10/09/2026'.
+
+    10월 9일인지 9월 10일인지는 화면만 봐서는 알 수 없다. 둘 다 적어주면
+    전표 날짜와 맞는 쪽을 사람이 바로 고를 수 있다 - 설정 한 번이면 끝난다.
+    """
+    import pytest
+
+    from src import attach_receipts as ar
+    from src.concur_detail import decode_detail
+
+    with pytest.raises(ar.AttachError) as err:
+        decode_detail({"dateField": True, "date": "10/09/2026", "placeholder": "",
+                       "amountField": True, "vendorField": True},
+                      ar.Row(0, None, None, "", "ID1", "", ""))
+    말 = str(err.value)
+    assert "일/월/년이면 2026-09-10" in 말
+    assert "월/일/년이면 2026-10-09" in 말
+
+
+def test_모호하지_않으면_군말을_안_붙인다():
+    from src.concur_detail import _reading_hint
+
+    assert _reading_hint("2026-09-10") == ""  # 년/월/일은 해석이 하나뿐
+    assert _reading_hint("25/09/2026") == ""  # 25는 월이 될 수 없다

@@ -64,6 +64,25 @@ DETAIL_JS = '() => {' + fx.FIND_COMBO_FN + r'''
 }'''
 
 
+ORDER_NAMES = {'DMY': '일/월/년', 'MDY': '월/일/년', 'YMD': '년/월/일'}
+
+
+def _reading_hint(text):
+    """어느 서식으로 읽으면 며칠이 되는지. 설정을 한 번에 고르게 해준다.
+
+    '10/09/2026' 이 10월 9일인지 9월 10일인지는 화면만 봐서는 알 수 없다.
+    둘 다 적어주면 전표 날짜와 맞는 쪽을 사람이 바로 고를 수 있다.
+    """
+    from .concur_values import date_options
+
+    pairs = [(ORDER_NAMES[order], when)
+             for when, order in sorted(date_options(text).items())
+             if order in ORDER_NAMES]
+    if len(pairs) < 2:
+        return ''
+    return '\n       ' + ', '.join(f'{name}이면 {when}' for name, when in pairs)
+
+
 def _where(raw):
     """날짜 칸 후보를 한 줄로. 0개인지 여러 개인지가 원인을 가른다."""
     def shown(pool):
@@ -94,9 +113,11 @@ def decode_detail(raw, seed):
     if not raw.get('dateField'):
         problems.append('상세 거래 날짜 입력칸을 고르지 못했습니다 ' + _where(raw))
     elif when is None:
+        shown = clean(raw.get('date', ''))
         problems.append(
-            f'상세 거래 날짜 {clean(raw.get("date", ""))!r} 를 날짜로 읽지 못했습니다 '
-            f'(칸 서식 {clean(raw.get("placeholder", ""))!r}, Concur 표시 서식 확인)')
+            f'상세 거래 날짜 {shown!r} 를 날짜로 읽지 못했습니다 '
+            f'(칸 서식 {clean(raw.get("placeholder", ""))!r}, Concur 표시 서식 확인)'
+            + _reading_hint(shown))
     if not raw.get('amountField') or amount is None:
         problems.append('상세 금액 또는 통화 미확인')
     if not raw.get('vendorField'):
