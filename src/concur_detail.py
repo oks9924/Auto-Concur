@@ -3,6 +3,7 @@
 Selectors reuse fields used by the existing Concur adapter. Unknown or ambiguous
 fields are reported for this expense, not filled from a guessed worksheet row.
 """
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
 import re
@@ -20,6 +21,37 @@ from .report_session import check_context
 # 남겨서 다음 실행은 처음부터 안 멈춘다. 서로 다른 순서가 관찰되면(있을 수
 # 없는 일이다) 아무것도 믿지 않는다 - 'CONFLICT' 로 두고 사람에게 넘긴다.
 _LEARNED = ContextVar('concur_learned_order', default=None)
+
+
+# 이 실행에서 처리할 원본 거래의 날짜들. 모호한 표시를 가르는 근거로만 쓴다.
+_KNOWN_DATES = ContextVar('concur_known_dates', default=())
+
+
+@contextmanager
+def using_known_dates(dates):
+    token = _KNOWN_DATES.set(tuple(sorted({d for d in dates if d})))
+    try:
+        yield
+    finally:
+        _KNOWN_DATES.reset(token)
+
+
+def _slip_match(options, tolerance=1):
+    """후보 중 원본 거래 날짜와 맞는 것이 하나뿐이면 그것이다.
+
+    리포트는 한 달치만 올린다. '07/09/2026' 의 두 해석(7월 9일 / 9월 7일) 중
+    9월 전표만 있는 리포트에서 7월은 있을 수 없다.
+
+    둘 다 맞으면 고르지 않는다 - 그때는 날짜로 가릴 수 없다는 뜻이고, 여기서
+    아무거나 고르면 엉뚱한 경비에 영수증이 붙는다. 금액까지 맞아야 짝이
+    지어지지만, 그 판단을 이 함수가 미리 해버리면 안 된다.
+    """
+    known = _KNOWN_DATES.get()
+    if not known:
+        return None
+    hits = [when for when in options
+            if any(abs((when - day).days) <= tolerance for day in known)]
+    return hits[0] if len(hits) == 1 else None
 
 
 def learned_order():
@@ -162,7 +194,13 @@ def _settle_date(raw, seed):
 
     known = learned_order()
     hits = [when for when, order in options.items() if order in (known, 'SAME')]
-    return hits[0] if known and len(hits) == 1 else None
+    if known and len(hits) == 1:
+        return hits[0]
+
+    settled = _slip_match(options)  # 원본 거래 날짜와 맞는 해석이 하나뿐인가
+    if settled is not None:
+        _remember(options[settled])
+    return settled
 
 
 def decode_detail(raw, seed):

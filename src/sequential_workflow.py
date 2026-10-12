@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from hashlib import sha256
 
 from . import attach_receipts as ar, fix_expenses as fx, console, sheet, hangul
-from .concur_detail import DetailDriver, ContextChanged, guard_report
+from .concur_detail import using_known_dates, DetailDriver, ContextChanged, guard_report
 from .concur_values import clean
 from .concur_workflow import RunResult
 from .execution import Task, Journal, task_key, execute
@@ -125,6 +125,13 @@ def run(page, report, folder, cfg, sheet_path, apply, limit=None, again=False, c
         return RunResult(0, '사용자가 반영을 취소했습니다. Concur는 변경하지 않았습니다.')
     if report_key(page.url) != report.key:
         raise ContextChanged('선택한 리포트가 바뀌어 시작하지 않았습니다.')
+    # 원본 거래 날짜를 상세 읽기에 알려준다. Concur가 '07/09/2026' 처럼 모호하게
+    # 보여줄 때, 두 해석 중 이 달의 거래와 맞는 것이 하나뿐이면 그것으로 본다.
+    with using_known_dates(target.source.when for target in targets):
+        return _walk(page, report, folder, cfg, apply, limit, tolerance, targets, queue)
+
+
+def _walk(page, report, folder, cfg, apply, limit, tolerance, targets, queue):
     driver = DetailDriver(page, report.url, folder)
     journal = Journal(folder / 'concur-progress.json') if apply else None
     owners = binding_owners(journal, report.url)

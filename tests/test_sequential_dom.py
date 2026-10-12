@@ -257,3 +257,46 @@ def test_서로_다른_순서가_보이면_아무것도_안_믿는다(기억없�
     기억없이.decode_detail(_상세(date="25/09/2026"), _목록행())      # DMY
     기억없이.decode_detail(_상세(date="09/25/2026"), _목록행())      # MDY
     assert 기억없이.learned_order() is None
+
+
+def test_원본_거래와_맞는_해석이_하나뿐이면_그걸로_본다(기억없이):
+    """실측 2026-10-12: '07/09/2026' - 7월 9일인가 9월 7일인가.
+
+    리포트는 한 달치만 올린다. 9월 전표만 있는 리포트에 7월은 있을 수 없다.
+    """
+    from datetime import date
+
+    with 기억없이.using_known_dates([date(2026, 9, 3), date(2026, 9, 7)]):
+        got = 기억없이.decode_detail(_상세(date="07/09/2026"), _목록행())
+    assert got.when == date(2026, 9, 7)
+    assert 기억없이.learned_order() == "DMY"
+
+
+def test_둘_다_맞으면_고르지_않는다(기억없이):
+    """날짜로 가릴 수 없다는 뜻이다. 여기서 아무거나 고르면 엉뚱한 데 붙는다."""
+    from datetime import date
+
+    from src import attach_receipts as ar
+
+    with 기억없이.using_known_dates([date(2026, 7, 9), date(2026, 9, 7)]):
+        with pytest.raises(ar.AttachError):
+            기억없이.decode_detail(_상세(date="07/09/2026"), _목록행())
+
+
+def test_아무것도_안_맞으면_고르지_않는다(기억없이):
+    from datetime import date
+
+    from src import attach_receipts as ar
+
+    with 기억없이.using_known_dates([date(2026, 12, 25)]):
+        with pytest.raises(ar.AttachError):
+            기억없이.decode_detail(_상세(date="07/09/2026"), _목록행())
+
+
+def test_하루_차이는_같은_거래로_본다(기억없이):
+    """카드 매입 처리 때문에 Concur 날짜가 거래일과 하루 어긋난다."""
+    from datetime import date
+
+    with 기억없이.using_known_dates([date(2026, 9, 8)]):
+        got = 기억없이.decode_detail(_상세(date="07/09/2026"), _목록행())
+    assert got.when == date(2026, 9, 7)
