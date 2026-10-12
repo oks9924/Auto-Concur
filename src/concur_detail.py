@@ -40,7 +40,14 @@ DETAIL_JS = '() => {' + fx.FIND_COMBO_FN + r'''
     return nodes.length === 1 ? nodes[0] : null;
   };
   const value = el => el ? ('value' in el ? el.value : el.innerText || '').trim() : '';
-  const day = one('input[id^="transactionDate"], input[name="transactionDate"]');
+  const DAY = 'input[id^="transactionDate"], input[name="transactionDate"]';
+  const day = one(DAY);
+  // 왜 못 읽었는지 가르기 위한 근거. one() 은 '보이는 것이 정확히 하나'일 때만
+  // 값을 준다. 후보가 0개인 것과 2개 이상인 것은 원인이 다른데 메시지가 같았다.
+  const dayPool = (root) => [...root.querySelectorAll(DAY)].map(el => ({
+    id: el.id || el.getAttribute('name') || '', value: (el.value || '').trim(),
+    shown: visible(el)
+  }));
   const amount = one('#transactionAmount, input[name="transactionAmount"]');
   const vendor = one('#vendorName, input[name="vendorName"]');
   const currency = one('#transactionCurrencyName, [name="transactionCurrencyName"]');
@@ -51,9 +58,22 @@ DETAIL_JS = '() => {' + fx.FIND_COMBO_FN + r'''
     placeholder: day?.getAttribute('placeholder') || '',
     amount: value(amount), vendor: value(vendor), currency: value(currency),
     expenseType: value(kind), amountField: !!amount, dateField: !!day,
-    vendorField: !!vendor
+    vendorField: !!vendor,
+    dateHere: dayPool(surface()), datePage: dayPool(document)
   };
 }'''
+
+
+def _where(raw):
+    """날짜 칸 후보를 한 줄로. 0개인지 여러 개인지가 원인을 가른다."""
+    def shown(pool):
+        return [f'{x["id"]}={x["value"]!r}' for x in pool if x.get('shown')]
+    here, page = shown(raw.get('dateHere') or []), shown(raw.get('datePage') or [])
+    if here:
+        return f'(보이는 후보 {len(here)}개: {", ".join(here[:3])})'
+    if page:
+        return f'(상세 영역 밖에만 있습니다: {", ".join(page[:3])})'
+    return '(이 화면에 거래일 입력칸이 없습니다)'
 
 
 def decode_detail(raw, seed):
@@ -71,8 +91,12 @@ def decode_detail(raw, seed):
     if not (re.search(r'\bKRW\b', marked, re.I) or '₩' in marked or currency == '원'):
         amount = None  # no silent assumption that a currency-less number is KRW
     problems = []
-    if not raw.get('dateField') or when is None:
-        problems.append('상세 거래 날짜 미확인 (Concur 표시 서식 확인)')
+    if not raw.get('dateField'):
+        problems.append('상세 거래 날짜 입력칸을 고르지 못했습니다 ' + _where(raw))
+    elif when is None:
+        problems.append(
+            f'상세 거래 날짜 {clean(raw.get("date", ""))!r} 를 날짜로 읽지 못했습니다 '
+            f'(칸 서식 {clean(raw.get("placeholder", ""))!r}, Concur 표시 서식 확인)')
     if not raw.get('amountField') or amount is None:
         problems.append('상세 금액 또는 통화 미확인')
     if not raw.get('vendorField'):

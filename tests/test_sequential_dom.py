@@ -111,3 +111,47 @@ def test_target_receipt_does_not_require_unrelated_rows_to_parse(page,tmp_path):
     driver=DetailDriver(page,URL,tmp_path)
     found=driver.receipt_row(seed())
     assert found.has_receipt is True and found.receipt_file=='existing.jpeg'
+
+
+def test_날짜를_못_읽은_이유를_둘로_가른다():
+    """실측 2026-10-12: 14건 전부 '상세 거래 날짜 미확인'.
+
+    한 메시지가 두 원인을 덮고 있었다 - 입력칸을 못 고른 것과, 칸은 찾았는데
+    글자를 날짜로 못 읽은 것. 어느 쪽인지 몰라 좁힐 수가 없었다.
+    """
+    import pytest
+
+    from src import attach_receipts as ar
+    from src.concur_detail import decode_detail
+
+    seed = ar.Row(0, None, None, "", "ID1", "", "")
+
+    # 칸을 못 골랐다 (one() 은 보이는 것이 정확히 하나일 때만 준다)
+    with pytest.raises(ar.AttachError) as err:
+        decode_detail({"dateField": False, "amountField": True, "vendorField": True,
+                       "dateHere": [{"id": "transactionDate-a", "value": "2026-09-03", "shown": True},
+                                    {"id": "transactionDate-b", "value": "", "shown": True}],
+                       "datePage": []}, seed)
+    말 = str(err.value)
+    assert "입력칸을 고르지 못했습니다" in 말
+    assert "후보 2개" in 말 and "transactionDate-a" in 말
+
+    # 칸은 찾았는데 글자를 못 읽었다
+    with pytest.raises(ar.AttachError) as err:
+        decode_detail({"dateField": True, "date": "03 Sept 2026", "placeholder": "",
+                       "amountField": True, "vendorField": True}, seed)
+    말 = str(err.value)
+    assert "'03 Sept 2026'" in 말 and "날짜로 읽지 못했습니다" in 말
+
+
+def test_입력칸이_아예_없으면_그렇게_말한다():
+    import pytest
+
+    from src import attach_receipts as ar
+    from src.concur_detail import decode_detail
+
+    with pytest.raises(ar.AttachError) as err:
+        decode_detail({"dateField": False, "amountField": True, "vendorField": True,
+                       "dateHere": [], "datePage": []},
+                      ar.Row(0, None, None, "", "ID1", "", ""))
+    assert "거래일 입력칸이 없습니다" in str(err.value)
