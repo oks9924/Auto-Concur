@@ -59,6 +59,33 @@ def attendee(*drop: str) -> dict:
     return one
 
 
+def controls(user_id: str, role: str) -> list[tuple[str, str, str, dict]]:
+    """반드시 거부돼야 하는 것들. **이게 없으면 위 결과를 해석할 수 없다.**
+
+    2026-11-05 에 시험 7건이 전부 통과했는데, 그게 "전부 선택" 인지 "검사가 아예
+    안 된다" 인지 가릴 수 없었다. 대조군을 안 넣은 내 잘못이다. 일부러 틀린 것을
+    같이 보내서, 그게 거부돼야 나머지 통과가 뜻을 갖는다.
+    """
+    def attendees(one, extra=None):
+        params = {'reportId': FAKE, 'entryId': FAKE, 'attendees': [one]}
+        return {'userId': user_id, 'contextRole': role, 'params': params, **(extra or {})}
+
+    broken_field = SAVE_ATTENDEES.replace('saveAttendeesLegacy(',
+                                          'saveAttendeesLegacyNOPE(')
+    one = attendee()
+    return [
+        ('대조군: 없는 입력 필드를 넣음', 'SaveExpenseAttendees', SAVE_ATTENDEES,
+         attendees(dict(one, atnKeyNOPE='x'))),
+        ('대조군: 없는 mutation 필드를 부름', 'SaveExpenseAttendees', broken_field,
+         attendees(one)),
+        ('대조군: 숫자 자리에 글자를 넣음', 'SaveExpenseAttendees', SAVE_ATTENDEES,
+         attendees(dict(one, versionNumber='숫자아님'))),
+        ('대조군: 필수 변수를 통째로 뺌', 'SaveExpenseAttendees', SAVE_ATTENDEES,
+         {'contextRole': role,
+          'params': {'reportId': FAKE, 'entryId': FAKE, 'attendees': [one]}}),
+    ]
+
+
 def probes(user_id: str, role: str) -> list[tuple[str, str, str, dict]]:
     """(무엇을 보는가, 작전 이름, 문서, 변수). 전부 skip=true 로 나간다."""
     def attendees(one):
@@ -97,21 +124,39 @@ def run() -> int:
         print(f'\n리포트 {report.key[1]} 세션으로 모양만 시험합니다.')
         print('모든 시험이 @skip(if: true) 로 나갑니다 — resolver 는 실행되지 않습니다.\n')
 
-        found = []
-        for what, name, query, variables in probes(user_id, role):
-            assert '@skip(if: $skip)' in query, '시험 문서에 @skip 이 없습니다'
-            payload = dict(variables, skip=True)
-            try:
-                gq.call(ctx, name, query, payload)
-            except gq.GraphQLError as exc:
-                print(f'  거부  {what}')
-                print(f'          {reason(exc)}')
-                found.append({'probe': what, 'passed': False, 'reason': reason(exc)})
-            else:
-                print(f'  통과  {what}')
-                found.append({'probe': what, 'passed': True})
+        def ask(group):
+            results = []
+            for what, name, query, variables in group:
+                assert '@skip(if: $skip)' in query, '시험 문서에 @skip 이 없습니다'
+                try:
+                    gq.call(ctx, name, query, dict(variables, skip=True))
+                except gq.GraphQLError as exc:
+                    print(f'  거부  {what}')
+                    print(f'          {reason(exc)}')
+                    results.append({'probe': what, 'passed': False, 'reason': reason(exc)})
+                else:
+                    print(f'  통과  {what}')
+                    results.append({'probe': what, 'passed': True})
+            return results
 
-        print('\n"통과" 는 그 모양이 검증을 지난다는 뜻이지 업무 규칙까지 맞다는 뜻은 아닙니다.')
+        # 대조군 먼저. 이게 거부되지 않으면 나머지는 볼 필요도 없다.
+        print('-- 대조군 (전부 거부돼야 합니다) --')
+        checks = ask(controls(user_id, role))
+        valid = all(not r['passed'] for r in checks)
+        print()
+        print('-- 시험 --')
+        found = ask(probes(user_id, role))
+
+        print()
+        if not valid:
+            slipped = [r['probe'] for r in checks if r['passed']]
+            print('!! 대조군이 통과했습니다: ' + ', '.join(slipped))
+            print('!! 이 서버는 @skip 이 붙은 호출을 검사하지 않습니다.')
+            print('!! 따라서 위 "시험" 결과는 아무 뜻이 없습니다 — 필수 여부를 모릅니다.')
+        else:
+            print('대조군이 전부 거부됐으므로 위 결과는 뜻이 있습니다.')
+            print('"통과" 는 그 모양이 검증을 지난다는 뜻이지 업무 규칙까지 맞다는 뜻은 아닙니다.')
+        found = {'controlsValid': valid, 'controls': checks, 'probes': found}
         out = paths.at('inspect-out')
         out.mkdir(parents=True, exist_ok=True)
         target = out / f'probe-{datetime.now():%Y%m%d-%H%M%S}.json'
