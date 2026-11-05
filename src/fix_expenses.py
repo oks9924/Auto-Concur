@@ -1242,6 +1242,32 @@ def apply_plan(page, plan: Plan, report_url: str, *, opened: bool = False) -> st
     return ", ".join(done) if done else "이미 되어 있음"
 
 
+def _same_rate_by_api(page, plan, amounts, changed, report_url, done) -> bool:
+    """GraphQL로 '가격 동일' 명세를 만든다. 했으면 True.
+
+    먼저 상세를 저장해야 한다. 날짜 범위·위치·채널을 화면에서 넣어둔 상태라
+    저장하지 않으면 그 값이 날아가고, 명세는 저장된 날짜 위에서 만들어진다.
+    """
+    from . import concur_graphql as gq
+    if gq.disabled() or len(set(amounts)) != 1 or not amounts:
+        return False
+    if gq.itemized(page, plan.row.expense_id) is not False:
+        return False  # 이미 있거나, 있는지 모른다 - 둘 다 만들지 않는다
+    if changed:
+        _save_expense(page, plan.row, report_url, reopen=False)
+    try:
+        saved = gq.same_room_rate(page, plan.row.expense_id, amounts[0])
+    except gq.NotSent as why:
+        print(f'    (GraphQL 명세를 쓰지 못해 화면으로 갑니다: {why})')
+        return False
+    note = f'항목별 명세 {len(amounts)}건 (일일 {amounts[0]:,}원)'
+    if saved.blocking or saved.messages:
+        note += ' · Concur 예외: ' + ('; '.join(saved.messages[:2]) or '차단 예외')
+        if saved.missing:
+            note += f" (빈 필드: {', '.join(saved.missing[:4])})"
+    done.append(note)
+    return True
+
 def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> list[str]:
     """숙박비 상세와 항목별 명세를 채운다. 저장까지 여기서 한다.
 
@@ -1277,6 +1303,15 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
     if not lodging.nights:
         if changed:
             _save_expense(page, plan.row, report_url, reopen=bool(plan.attendee))
+        return done
+
+    # 명세는 GraphQL로 한 번에 만들 수 있다. 화면 경로의 콤보박스·1박 예외·
+    # 숨은 저장 버튼·패널 클릭 가로채기가 전부 이 한 호출로 대체된다.
+    #
+    # 다만 이 mutation 은 명세를 '만든다'. 조건을 하나라도 모르면 화면으로 간다.
+    #   - 1박 요금이 전부 같아야 한다 ('가격 동일' 이 작전 이름에 박혀 있다)
+    #   - 이미 명세가 있으면 안 된다. **모르면 안 만든다** (중복이 된다)
+    if _same_rate_by_api(page, plan, amounts, changed, report_url, done):
         return done
 
     # 중간에 저장하지 않는다. 객실 요금이 비어 있는 채로 저장하면 '필수 정보가

@@ -57,7 +57,7 @@ ENTRIES = '''query GetExistingExpenseEntries($userId: String!, $reportId: String
         receiptImageId
         eReceiptImageId
         isImageRequired
-        meta { hasReceiptImage hasSourceCreditCard hasSourceEReceipt }
+        meta { hasReceiptImage hasItemizations hasSourceCreditCard hasSourceEReceipt }
       }
     }
   }
@@ -143,6 +143,7 @@ class Entry:
     vendor: str = ''
     expense_type: str = ''
     has_receipt: bool | None = None
+    has_itemizations: bool | None = None
     parent_expense_id: str | None = None
     raw_date: str = ''
     raw_amount: str = ''
@@ -197,6 +198,7 @@ def entries(ctx, report_id: str, user_id: str, context_role: str) -> list[Entry]
             vendor=(summary.get('vendor') or {}).get('description') or '',
             expense_type=(summary.get('expenseType') or {}).get('name') or '',
             has_receipt=meta.get('hasReceiptImage'),
+            has_itemizations=meta.get('hasItemizations'),
             parent_expense_id=summary.get('parentExpenseId'),
             raw_date=str(summary.get('transactionDate') or ''),
             raw_amount=str((summary.get('transactionAmount') or {}).get('value', '')),
@@ -527,3 +529,69 @@ def attach_receipt(page, expense_id: str, path) -> str:
         raise MaybeSent('첨부 응답에 receiptImageId 가 없습니다')
     forget(report_id)
     return attached
+
+
+# 숙박 '가격 동일' 명세. 실측 문서(2026-11-05, 10599자)에서 우리가 쓰는 부분만
+# 남겼다 - 원본이 끌어오는 프래그먼트 일곱 개는 필요 없다.
+#
+# `roomRateExpenseTypeId` 는 원본 문서에서 `String!` 로 선언되지만 **필드 인자
+# 자체는 선택**이다(2026-11-05 시험에서 확인. 대조군 4건이 전부 거부된 유효한
+# 판이었다). 그래서 뺐다 - 그 값의 출처를 아직 못 찾았는데, 안 보내도 된다.
+CREATE_SAME_ROOM_RATE = '''mutation CreateSameRoomRateMutation($reportId: String!, $expenseId: String!, $userId: String!, $contextRole: ContextRoleType!, $roomRateObject: RoomRateAndTax!, $skip: Boolean! = false) {
+  createSameRoomRateItemizations(
+    reportId: $reportId
+    expenseId: $expenseId
+    userId: $userId
+    contextRole: $contextRole
+    roomRateObject: $roomRateObject
+  ) @skip(if: $skip) {
+    status { success }
+    entry { id transactionAmount { value currencyCode } }
+    entryExceptions {
+      countOfExceptions
+      hasBlockingExceptions
+      entryExceptions { exceptionCode isBlocking message parameters { missingFields { fields fieldIds } } }
+    }
+  }
+}'''
+
+
+def itemized(page, expense_id: str) -> bool | None:
+    """이 경비에 이미 명세가 있나. **모르면 None 이고, 모르면 만들지 않는다.**
+
+    이 mutation 은 명세를 '만든다'. 이미 있는데 또 만들면 중복이 된다. 그래서
+    아니라고 확신할 때만 쓴다.
+    """
+    try:
+        report_id = _report_id_of(page)
+        found = _cached(page.context, report_id) if report_id else None
+    except Exception:
+        return None
+    for entry in found or []:
+        if entry.expense_id == expense_id:
+            return entry.has_itemizations
+    return None
+
+
+def same_room_rate(page, expense_id: str, room_rate: int) -> Saved:
+    """'가격 동일' 숙박 명세를 만든다. 1박 요금 하나만 보낸다.
+
+    화면 경로의 콤보박스·1박 예외·숨은 저장 버튼·패널 클릭 가로채기가 전부
+    이 한 호출로 대체된다.
+    """
+    if not expense_id or not isinstance(room_rate, int) or room_rate <= 0:
+        raise NotSent('명세를 만들 경비 ID나 1박 요금이 없습니다')
+    report_id, user_id, role = ids(page)
+    args = {'reportId': report_id, 'expenseId': expense_id, 'userId': user_id,
+            'contextRole': role, 'roomRateObject': {'roomRate': room_rate}}
+    _write(page.context, 'CreateSameRoomRateMutation', CREATE_SAME_ROOM_RATE, args, dry=True)
+    data = _write(page.context, 'CreateSameRoomRateMutation', CREATE_SAME_ROOM_RATE, args, dry=False)
+    found = data.get('createSameRoomRateItemizations')
+    if not isinstance(found, dict):
+        raise MaybeSent('명세 응답에 createSameRoomRateItemizations 가 없습니다')
+    if (found.get('status') or {}).get('success') is False:
+        raise MaybeSent('Concur가 명세 생성을 실패로 표시했습니다')
+    forget(report_id)
+    result = _exceptions(found.get('entryExceptions'))
+    result.expense_id = expense_id
+    return result

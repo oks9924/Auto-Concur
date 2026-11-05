@@ -322,3 +322,31 @@ C단계가 하는 일에 **전부 대응되는 작전이 있다.**
   `CreateSameRoomRateMutation`. `UpdateExistingExpenseEntry` 도 그래서 직접 썼다.
   상한을 20000 으로 올리고, 잘리면 `/* …잘림 N자 */` 를 적는다 - 조용히 자르면
   그게 Concur 탓인 줄 안다.
+
+- **2026-11-05 3회차 기록: 잘렸던 문서 둘이 온전히 들어왔다.**
+  `GetAttendeesByPredictiveSearch` 2547자, `CreateSameRoomRateMutation` 10599자.
+  상한을 올린 것이 맞았다. 그리고 구형 라우터 이름도 드디어 나왔다 -
+  `Attendee.GetAttendeeTypes`, `Attendee.GetAttendeeData`,
+  `FormsAndFields.GetFormFields`, `FormsAndFields.GetAttendeeListFieldsForEntry`.
+  **구형 .NET 라우터는 참석자 메타데이터 경로였다.** "우리 경로가 아닐 것" 이라던
+  추측은 틀렸다.
+
+- **2026-11-05 6단계 푸시: 숙박 항목별 명세를 GraphQL로.**
+  `createSameRoomRateItemizations(reportId, expenseId, userId, contextRole,
+  roomRateObject: {roomRate})`. `roomRateExpenseTypeId` 는 뺐다 - 원본 문서에선
+  `String!` 이지만 필드 인자 자체는 선택임을 시험으로 확인했다.
+  **세 조건을 다 만족할 때만 쓴다.** 1박 요금이 전부 같을 것('가격 동일'), 이미
+  명세가 없을 것, 그리고 **있는지 모르면 만들지 않을 것** - 이 mutation 은
+  명세를 '만들어서' 중복이 되돌리기 어렵다. 판단 근거는 목록 질의의
+  `meta.hasItemizations` 다(`Entry.has_itemizations`).
+  명세 전에 상세를 저장한다. 날짜 범위·위치·채널을 화면에서 넣어둔 상태라
+  저장하지 않으면 그 값이 날아간다.
+  이 한 호출이 콤보박스·1박 예외·숨은 저장 버튼·패널 클릭 가로채기를 대체한다.
+
+- **참석자는 아직 못 간다.** 검색 서명이 드러났지만
+  `attendeesByPredictiveSearch(searchTerms, includeInactiveEmp,
+  includeAtnTypeKeys: [Int!]!, excludeKeys: [String!]!)` 에서
+  **`includeAtnTypeKeys` 값의 출처**가 남는다. 실측에서 정수 2개가 갔는데 그 값이
+  어디서 오는지는 구형 라우터의 `Attendee.GetAttendeeTypes` 로 보이고, 그
+  요청 `data` 모양은 아직 모른다. 빈 배열로 보내면 검증은 지나지만 결과가
+  비어 올 수 있다 - 참석자는 전에 실제로 데이터를 날린 자리라 그렇게 넘기지 않는다.
