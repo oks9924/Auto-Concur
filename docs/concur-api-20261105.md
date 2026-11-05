@@ -130,12 +130,49 @@ POST /spend-graphql/upload   FormData{file}  -> 202 {imageId, href, id}
 2. GraphQL은 스스로를 설명한다. `operationName` + 타입 붙은 질의문이 호출마다 붙어
    다니고, 변경은 `mutation` 으로 명시되고, 오류가 구조화돼서 온다.
 
+## 작전 이름 전체 (2회차 실측, 2026-11-05)
+
+C단계가 하는 일에 **전부 대응되는 작전이 있다.**
+
+| C단계가 하는 일 | 지금 (DOM) | GraphQL 작전 |
+|---|---|---|
+| 경비 목록 읽기 | `READ_ROWS_JS` 90줄 | `GetExistingExpenseEntries`, `GetReportExceptionsAndEntries` |
+| 경비 하나 상세 | `concur_detail.DETAIL_JS` | `GetExistingExpenseEntry` (5회) |
+| 목적·코멘트·유형 저장 | 저장 버튼 찾기·클릭 | **`UpdateExistingExpenseEntry`** |
+| 참석자 검색 | 콤보박스 + 토막 이름 대조 | `GetAttendeesByPredictiveSearch`, `GetMRUAttendees` |
+| 참석자 저장 | 추가 버튼·저장 (삭제 사고 낸 자리) | **`SaveExpenseAttendees`** |
+| 숙박 명세 | 콤보박스·1박 예외·숨은 저장버튼 | `GetNewItemizationForm` → **`CreateSameRoomRateMutation`** |
+| 영수증 첨부 | `set_input_files` + 저장 | `upload`(202) → **`AttachImage`** |
+| 영수증 붙었나 확인 | 썸네일 버튼 탐색 | `GetLineItemImage`, `GetLineItemImages` |
+| 예외(퇴짜) 확인 | 안내창 글자 읽기 | `GetExistingEntryExceptions` |
+
+곁다리로 나온 것: `SaveNewExpenseEntry`(경비 생성 — 2회차에서 사람이 수동 생성),
+`MatchAvailableExpensesToReport`·`GetAvailableExpenses`·`FindMatchingAvailableExpenses`
+(카드 피드 경비를 리포트에 붙이는 경로), `GetAvailableReceipts`·`GetProcessingReceipts`
+(영수증 풀), 그리고 폼·목록 조회들: `GetExpenseFormExpenseTypes`, `GetExpenseTypesForReport`,
+`GetRecentExpenseTypes`, `GetReceiptTypes`, `GetPaymentTypes`, `GetCurrencies`,
+`GetCountries`, `GetSiteSettings`, `GetUserPermissions`, `GetGroupSettingsForReceipts`,
+`GetReportPageData`, `GetReportPageSecondaryData`, `GetReportIdAndKey`,
+`GetRecentLists`, `GetRecentLocations`, `AddMultipleRecentLists`.
+
+### 구형 .NET 라우터는 우리 경로가 아닐 것이다
+
+`expenseRouter.ashx` 17회는 2회차에서도 이름이 안 붙었다(그 기록은 `action`/`method`
+를 남기기 전 코드로 받았다). 다만 **위 표의 아홉 가지가 전부 GraphQL 로 덮인다** —
+그래서 이 17회는 리포트 화면 껍데기나 여행(Travel) 쪽일 가능성이 높다. 같은 회차에
+`services/travel/savelog.asp` 7회가 함께 나온 것도 그 방향이다. 확정은 아니다.
+
+### 2회차에서 관측된 실패
+
+`GetNewItemizationExpenseTypesForm` 1회 `network-failed`.
+`nui/expense/nui-shell/api/logs` 500 5회 (Concur 자기 로그 전송, 우리 것 아님).
+
 ## 아직 모르는 것
 
 - **구형 `expenseRouter.ashx` 17회가 무엇을 하는가.** `{action, method, data}` 꼴
-  (Ext.Direct)인데 1회차 기록이 그 이름을 가렸다. 2회차에서 나온다. 여기가 덜
-  깨끗한 쪽이고, GraphQL로 안 올라온 기능이 있다면 그 부분은 DOM에 남긴다.
-- 영수증 `imageId` 를 엔트리에 붙이는 mutation 이름.
+  (Ext.Direct). 1·2회차 모두 이름을 못 받았다 — 그 기록을 받은 코드가 아직 그 자리를
+  가리고 있었다. 위 표가 다 덮이므로 우리 경로가 아닐 가능성이 높지만, 확인은 남았다.
+- ~~영수증 `imageId` 를 엔트리에 붙이는 mutation 이름~~ → `AttachImage` (2회차).
 - 1회차는 사람이 **수동 생성한** 숙박 경비로 명세를 시험했다. 카드 피드로 들어온
   경비는 `createExpense` 가 아니라 기존 엔트리 수정 경로를 탄다 — 실제 경로는
   카드 피드 숙박 건으로 다시 봐야 한다.
