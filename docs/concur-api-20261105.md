@@ -462,3 +462,17 @@ C단계가 하는 일에 **전부 대응되는 작전이 있다.**
   예상 경로: `mainForm.fields` 에서 `label` 이 차량인 칸 → 그 칸의 `list` id →
   `FormsAndFields.GetFormLists([listId])` → `records[{key, code, shortcode, txt}]`
   에서 `txt` 로 맞추고 `key` 를 `vehicleId` 로 쓴다. 다음 기록으로 확인한다.
+
+- **2026-11-05 6회차: 폼 칸의 모양이 합쳐져 보인다.** `mainForm.fields` 42칸에
+  `id`, `label`, `control`, `dataType`, `isRequired`, `requiredForSave`,
+  `value{listValue, dateValue, stringValue, integerValue, amountValue, booleanValue,
+  operation}`, `defaultValue{value, code, listItemId}`, `options`,
+  `list{id, level, parentId, displayFormat, ...}` 가 있다.
+  **차량 목록은 그 중 `list` / `options` 안에 있을 텐데 깊이 6에서 잘렸다.**
+
+- **기록기 상한을 전부 올렸다(세 번째이자 마지막이길).** 좁게 잡아서 세 번
+  막혔다: 질의문 4000자, 배열 첫 칸, 깊이 6. 막힐 때마다 그게 Concur 쪽 제약인
+  줄 알고 한 번씩 헛걸음했다. 이제 DEPTH 12, KEYS 120, SAMPLE 60, DOC 20000 이다.
+  **모양만 남기므로 상한이 커져도 값은 안 샌다** - 깊은 구조에서도 날짜가
+  `str:date-iso` 로만 남는 것을 테스트로 확인했다. 그래도 걸리면 `'...'` 대신
+  `(깊이 12 초과)` 라고 적어서, 다음에는 그게 내 상한인 줄 바로 알 수 있다.

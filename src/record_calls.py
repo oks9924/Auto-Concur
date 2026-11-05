@@ -56,9 +56,7 @@ STEPS = [
     '로그인하고 경비 리포트 목록 열기',
     '새 경비 > 자동차 마일리지 를 열기 (저장 안 해도 됨)',
     '차량 ID 드롭다운을 열어 목록 보기 (고르지 않아도 됨)',
-    '숙박 경비에서 숙박위치·Booking channel 드롭다운 열기',
-    '그 밖에 보고 싶은 화면',
-    '끝내기 전 마지막 확인',
+    '끝내기 (q)',
 ]
 
 # 페이지 안에서 fetch/XHR을 감싼다. 응답을 clone해서 읽으므로 원래 호출의
@@ -68,7 +66,10 @@ RECORD_JS = r"""
 (() => {
   if (window.__acRec) return;
   window.__acRec = [];
-  const CAP = 600, DEPTH = 6, KEYS = 40, BODY = 400000;
+  // 상한. 넉넉하게 잡는다 - 모양만 남기므로 커져도 값은 안 샌다. 좁게 잡았다가
+  // 세 번 막혔다(질의문 4000자, 배열 첫 칸, 깊이 6). 막힐 때마다 그게 Concur
+  // 탓인 줄 알고 한 번씩 헛걸음했다.
+  const CAP = 600, DEPTH = 12, KEYS = 120, BODY = 400000;
 
   // 문자열은 '어떤 종류인가'만 남긴다. 내용은 남기지 않는다.
   // 날짜가 기계값으로 오는지가 이 조사의 핵심이라 날짜 꼴을 세분한다.
@@ -116,7 +117,7 @@ RECORD_JS = r"""
   const shape = (v, d) => {
     if (v === null) return 'null';
     if (v === undefined) return 'undefined';
-    if (d > DEPTH) return '...';
+    if (d > DEPTH) return '(깊이 ' + DEPTH + ' 초과)';
     const t = typeof v;
     if (t === 'boolean') return 'bool';
     if (t === 'number') return Number.isInteger(v) ? 'int' : 'float';
@@ -131,7 +132,7 @@ RECORD_JS = r"""
     if (t === 'object') {
       const out = {}; const keys = Object.keys(v);
       keys.slice(0, KEYS).forEach(k => { out[k] = shape(v[k], d + 1); });
-      if (keys.length > KEYS) out['...'] = keys.length - KEYS;
+      if (keys.length > KEYS) out['(생략된 키)'] = keys.length - KEYS;
       return out;
     }
     return t;

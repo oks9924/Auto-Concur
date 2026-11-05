@@ -425,3 +425,27 @@ def test_합쳐도_값은_안_남는다(recorded, server):
         'variables': {'rows': [{'txt': '라한호텔울산'}, {'txt': '2026-09-07'}]}}})
     text = json.dumps(calls, ensure_ascii=False)
     assert '라한호텔울산' not in text and '2026-09-07' not in text
+
+
+def test_깊은_구조도_끝까지_본다(recorded, server):
+    """깊이 6에서 잘려 폼 칸의 list·options 를 못 봤다(2026-11-05)."""
+    deep = {'a': {'b': {'c': {'d': {'e': {'f': {'g': {'h': '2026-09-07'}}}}}}}}
+    calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql', 'body': {
+        'operationName': 'Deep', 'query': 'query Deep { x }', 'variables': deep}})
+    post = next(c for c in calls if c['method'] == 'POST')
+    node = post['reqBody']['variables']
+    for key in 'abcdefg':
+        node = node[key]
+    assert node['h'] == 'str:date-iso'          # 8단 아래도 보인다
+    assert '2026-09-07' not in json.dumps(calls, ensure_ascii=False)
+
+
+def test_그래도_너무_깊으면_왜_멈췄는지_적는다(recorded, server):
+    node = cur = {}
+    for i in range(20):
+        cur['x'] = {}
+        cur = cur['x']
+    cur['end'] = 1
+    calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql', 'body': {
+        'operationName': 'Deep', 'query': 'query Deep { x }', 'variables': node}})
+    assert '깊이' in json.dumps(calls, ensure_ascii=False)
