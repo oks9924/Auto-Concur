@@ -89,6 +89,31 @@ def describe(found: dict) -> list[str]:
     return lines
 
 
+# 400 의 원인이 둘로 갈린다. 둘은 결론이 완전히 다르다.
+#
+#  (가) introspection 이 꺼져 있다 -> 이 경로로는 더 알 수 없다. 다른 방법을 찾는다.
+#  (나) 서버가 '아는 작전 이름' 만 받는다 -> 이름을 바꾸면 된다. 그리고 그게
+#       사실이면 우리 쓰기 경로에도 함의가 있다(우리는 실제 작전 이름을 쓴다).
+#
+# 가르는 법: 같은 introspection 질의를 Concur 가 실제로 쓰는 작전 이름으로 한 번 더
+# 보낸다. 그래도 400 이면 (가), 통과하면 (나) 다.
+KNOWN_NAME = 'GetSiteSettings'
+
+
+def ask(ctx, name: str, query: str, variables: dict):
+    """먼저 우리 이름으로, 안 되면 Concur 가 아는 이름으로. (성공여부, 데이터, 사유)"""
+    try:
+        return True, gq.call(ctx, name, query, variables), ''
+    except gq.GraphQLError as first:
+        try:
+            data = gq.call(ctx, KNOWN_NAME, query, variables)
+        except gq.GraphQLError:
+            return False, None, str(first)
+        print(f'  ** 작전 이름을 {KNOWN_NAME} 로 바꾸니 통과했습니다 — '
+              '서버가 아는 이름만 받습니다 **')
+        return True, data, ''
+
+
 def run(names: list[str]) -> int:
     pw, ctx, page, report = open_report(automatic=True)
     try:
@@ -98,12 +123,13 @@ def run(names: list[str]) -> int:
 
         lines, raw = [], {}
         for name in names:
-            try:
-                data = gq.call(ctx, 'AutoConcurType', TYPE_QUERY, {'name': name})
-            except gq.GraphQLError as exc:
-                print(f'  {name}: {exc}')
-                if 'introspection' in str(exc).lower() or 'GraphQL introspection' in str(exc):
+            ok, data, why = ask(ctx, 'AutoConcurType', TYPE_QUERY, {'name': name})
+            if not ok:
+                print(f'  {name}: {why}')
+                if 'introspection' in why.lower():
                     print('\nintrospection 이 꺼져 있습니다. 이 경로로는 더 알 수 없습니다.')
+                    print('남은 방법: 화면에서 해당 동작을 한 번 하고 record_calls 로')
+                    print('실제로 보낸 변수를 보는 것입니다(값이 아니라 어떤 키가 갔는지).')
                     return 1
                 continue
             found = data.get('__type')
@@ -114,8 +140,8 @@ def run(names: list[str]) -> int:
             lines.extend(describe(found))
 
         # 명세 mutation 이 받는 인자도 본다.
-        try:
-            data = gq.call(ctx, 'AutoConcurArgs', FIELD_ARGS_QUERY, {'name': 'Mutation'})
+        ok, data, why = ask(ctx, 'AutoConcurArgs', FIELD_ARGS_QUERY, {'name': 'Mutation'})
+        if ok:
             found = (data.get('__type') or {})
             wanted = {'createSameRoomRateItemizations', 'updateExpense'}
             picked = {'name': 'Mutation', 'kind': 'OBJECT',
@@ -123,8 +149,8 @@ def run(names: list[str]) -> int:
             if picked['fields']:
                 raw['Mutation'] = picked
                 lines.extend(describe(picked))
-        except gq.GraphQLError as exc:
-            print(f'  Mutation: {exc}')
+        else:
+            print(f'  Mutation: {why}')
 
         print('\n'.join(lines) or '  (아무것도 읽지 못했습니다)')
         out = paths.at('inspect-out')

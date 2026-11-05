@@ -238,3 +238,38 @@ def test_필수와_선택을_가른다():
     assert 'atnKey' in lines and 'String! ' in lines and '필수' in lines
     assert 'transactionAmount' in lines and '선택' in lines
     assert '기본값=1' in lines          # 기본값이 있으면 안 보내도 된다
+
+
+def test_오류_본문을_같이_보여준다():
+    """GraphQL 은 400 본문에 이유를 적는다. 그걸 안 읽어서 한 번 헛걸음했다."""
+    class Res:
+        status, ok = 400, False
+
+        def text(self):
+            return 'GraphQL introspection is not allowed by Apollo Server'
+
+        def json(self):
+            raise ValueError
+
+    class Ctx:
+        request = type('R', (), {'post': staticmethod(lambda *a, **k: Res())})()
+
+    with pytest.raises(gq.GraphQLError, match='introspection is not allowed'):
+        gq.call(Ctx(), 'X', 'query X { x }', {})
+
+
+def test_본문을_못_읽어도_상태코드는_남는다():
+    class Res:
+        status, ok = 400, False
+
+        def text(self):
+            raise RuntimeError('gone')
+
+        def json(self):
+            raise ValueError
+
+    class Ctx:
+        request = type('R', (), {'post': staticmethod(lambda *a, **k: Res())})()
+
+    with pytest.raises(gq.GraphQLError, match='HTTP 400'):
+        gq.call(Ctx(), 'X', 'query X { x }', {})

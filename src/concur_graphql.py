@@ -68,6 +68,19 @@ class GraphQLError(Exception):
     """호출이 실패했거나 응답 모양이 예상과 다르다. 추측해서 메우지 않는다."""
 
 
+def _why(res) -> str:
+    """오류 응답의 본문을 짧게 붙인다. GraphQL 은 거기에 이유를 적는다.
+
+    이걸 안 읽어서 한 번 헛걸음했다(2026-11-05 introspection 400). 본문은 오류
+    메시지이지 거래 값이 아니므로 그대로 보여도 된다.
+    """
+    try:
+        text = (res.text() or '').strip().replace('\n', ' ')
+    except Exception:
+        return ''
+    return f' — {text[:300]}' if text else ''
+
+
 def call(ctx, name: str, query: str, variables: dict) -> dict:
     """작전 하나를 부르고 `data` 를 준다.
 
@@ -83,7 +96,7 @@ def call(ctx, name: str, query: str, variables: dict) -> dict:
     except Exception as exc:  # 네트워크·세션 문제
         raise GraphQLError(f'{name} 호출 실패: {type(exc).__name__}: {exc}') from exc
     if not res.ok:
-        raise GraphQLError(f'{name} 호출이 HTTP {res.status} 를 받았습니다')
+        raise GraphQLError(f'{name} 호출이 HTTP {res.status} 를 받았습니다' + _why(res))
     try:
         body = res.json()
     except Exception as exc:
@@ -421,7 +434,7 @@ def _write(ctx, name: str, query: str, variables: dict, *, dry: bool) -> dict:
         raise kind(f'{name} 호출 실패: {type(exc).__name__}: {exc}') from exc
     if not res.ok:
         kind = NotSent if dry else MaybeSent
-        raise kind(f'{name} 이(가) HTTP {res.status} 를 받았습니다')
+        raise kind(f'{name} 이(가) HTTP {res.status} 를 받았습니다' + _why(res))
     try:
         body = res.json()
     except Exception as exc:
@@ -496,7 +509,7 @@ def attach_receipt(page, expense_id: str, path) -> str:
         # 업로드는 경비를 건드리지 않는다. 떠 있는 이미지가 생길 뿐이라 되돌아가도 안전하다.
         raise NotSent(f'영수증 업로드 실패: {type(exc).__name__}: {exc}') from exc
     if not res.ok:
-        raise NotSent(f'영수증 업로드가 HTTP {res.status} 를 받았습니다')
+        raise NotSent(f'영수증 업로드가 HTTP {res.status} 를 받았습니다' + _why(res))
     try:
         image_id = (res.json() or {}).get('imageId')
     except Exception as exc:
