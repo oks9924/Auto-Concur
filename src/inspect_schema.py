@@ -101,13 +101,22 @@ KNOWN_NAME = 'GetSiteSettings'
 
 
 def ask(ctx, name: str, query: str, variables: dict):
-    """먼저 우리 이름으로, 안 되면 Concur 가 아는 이름으로. (성공여부, 데이터, 사유)"""
+    """먼저 우리 이름으로, 안 되면 Concur 가 아는 이름으로. (성공여부, 데이터, 사유)
+
+    **문서 안의 작전 이름까지 바꿔야 한다.** `operationName` 만 바꾸면 문서에 그런
+    작전이 없어서 서버 정책과 무관하게 400 이 난다 - 2026-11-05 에 그렇게 해서
+    가설을 검사하지 못했다. 이름만 다르고 내용은 같은 문서여야 실험이 성립한다.
+    """
     try:
         return True, gq.call(ctx, name, query, variables), ''
     except gq.GraphQLError as first:
+        renamed = query.replace(f'query {name}', f'query {KNOWN_NAME}', 1)
+        if renamed == query:
+            return False, None, str(first)
         try:
-            data = gq.call(ctx, KNOWN_NAME, query, variables)
-        except gq.GraphQLError:
+            data = gq.call(ctx, KNOWN_NAME, renamed, variables)
+        except gq.GraphQLError as second:
+            print(f'    (아는 이름 {KNOWN_NAME} 로도 막혔습니다: {second})')
             return False, None, str(first)
         print(f'  ** 작전 이름을 {KNOWN_NAME} 로 바꾸니 통과했습니다 — '
               '서버가 아는 이름만 받습니다 **')

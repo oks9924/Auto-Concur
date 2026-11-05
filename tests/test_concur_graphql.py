@@ -273,3 +273,33 @@ def test_본문을_못_읽어도_상태코드는_남는다():
 
     with pytest.raises(gq.GraphQLError, match='HTTP 400'):
         gq.call(Ctx(), 'X', 'query X { x }', {})
+
+
+def test_이름을_바꿀_때_문서_안까지_바꾼다(monkeypatch):
+    """operationName 만 바꾸면 '그런 작전 없음' 이라 서버 정책과 무관하게 400 이다.
+    그렇게 해서 가설을 검사하지 못한 적이 있다(2026-11-05)."""
+    from src import inspect_schema as si
+    sent = []
+
+    def fake_call(ctx, name, query, variables):
+        sent.append((name, query))
+        if name == 'AutoConcurType':
+            raise gq.GraphQLError('HTTP 400')
+        return {'__type': {'name': 'T'}}
+
+    monkeypatch.setattr(si.gq, 'call', fake_call)
+    ok, data, why = si.ask(None, 'AutoConcurType',
+                           'query AutoConcurType($n: String!) { __type }', {'n': 'T'})
+    assert ok and data == {'__type': {'name': 'T'}}
+    assert sent[1][0] == si.KNOWN_NAME
+    assert f'query {si.KNOWN_NAME}' in sent[1][1]      # 문서 안까지 바뀌었다
+    assert 'AutoConcurType' not in sent[1][1]
+
+
+def test_아는_이름으로도_막히면_그대로_보고한다(monkeypatch):
+    from src import inspect_schema as si
+    monkeypatch.setattr(si.gq, 'call',
+                        lambda *a, **k: (_ for _ in ()).throw(gq.GraphQLError('HTTP 400')))
+    ok, data, why = si.ask(None, 'AutoConcurType',
+                           'query AutoConcurType { __type }', {})
+    assert not ok and 'HTTP 400' in why
