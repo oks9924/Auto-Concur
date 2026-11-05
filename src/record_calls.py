@@ -139,10 +139,18 @@ RECORD_JS = r"""
 
   // 다만 클라이언트가 값을 질의문에 박아 보낼 수도 있다. 문자열·숫자
   // 리터럴을 지워서 그 경우에도 값이 새지 않게 한다.
-  const gqlDoc = s => String(s)
-    .replace(/"(?:\\.|[^"\\])*"/g, '"?"')
-    .replace(/\b\d[\d_.eE+-]*\b/g, '?')
-    .replace(/\s+/g, ' ').trim().slice(0, 4000);
+  // 상한이 4000자였는데 우리가 쓸 문서 둘이 정확히 거기 걸렸다(2026-11-05).
+  // GraphQL 문서는 프래그먼트가 앞에 오고 작전 정의가 뒤에 와서, 자르면 정작
+  // 필요한 작전 서명이 날아간다. 리터럴은 이미 지웠으므로 길어도 값은 없다.
+  // 잘렸으면 잘렸다고 적는다 - 조용히 자르면 그게 Concur 탓인 줄 안다.
+  const DOC = 20000;
+  const gqlDoc = s => {
+    const text = String(s)
+      .replace(/"(?:\\.|[^"\\])*"/g, '"?"')
+      .replace(/\b\d[\d_.eE+-]*\b/g, '?')
+      .replace(/\s+/g, ' ').trim();
+    return text.length <= DOC ? text : text.slice(0, DOC) + ' /* …잘림 ' + text.length + '자 */';
+  };
 
   // 구형 .NET 라우터(expenseRouter.ashx)는 {action, method, data} 로 부른다.
   // GraphQL의 operationName과 같은 자리다 - 무엇을 하는 호출인지가 거기 있다.

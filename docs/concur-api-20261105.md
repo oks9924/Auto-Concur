@@ -297,3 +297,28 @@ C단계가 하는 일에 **전부 대응되는 작전이 있다.**
   대조군 4건 추가: 없는 입력 필드(`atnKeyNOPE`), 없는 mutation 필드
   (`saveAttendeesLegacyNOPE`), 숫자 자리에 글자, 필수 변수 통째로 누락.
   이게 전부 거부돼야 시험 결과가 뜻을 갖는다. 하나라도 통과하면 그렇게 말한다.
+
+- **2026-11-05 시험 2회차(대조군 포함): 결과가 뜻을 갖는다.**
+  대조군 4건 전부 거부, 시험 7건 전부 통과. 두 가지가 확정됐다.
+  1. **`@skip(if: true)` 사전검증이 진짜로 검사한다.** 저장·첨부에 붙여둔 안전장치가
+     실제로 작동한다는 뜻이다 - 이게 확인 안 됐으면 그 장치는 장식이었다.
+  2. 참석자의 `versionNumber`·`transactionAmount`·`instanceCount` 와 명세의
+     `roomRateExpenseTypeId` 가 **전부 선택**이다.
+  다만 "검증을 지난다" 와 "업무 규칙에 맞다" 는 다르다. 예를 들어
+  `transactionAmount` 를 안 보냈을 때 Concur 가 알아서 나누는지 0으로 두는지는
+  이걸로 알 수 없다.
+
+- **2026-11-05 숙박 `fields` 키가 드러났다.** `SaveNewExpenseEntry` 의 실제 요청에
+  `fields: {expenseTypeId, hotelCheckinDate, hotelCheckoutDate, transactionDate,
+  vendorName, locationId, paymentTypeId, custom10{listItemId, value}, ...}` 가 있다.
+  즉 **숙박 날짜는 `updateExpense` 의 `fields` 로 넣을 수 있다** - 달력 위젯도
+  날짜 범위 입력칸도 필요 없다. 다만 숙박위치는 `locationId`(hex), Booking Channel 은
+  `custom10{listItemId, value}`(hex) 라 **이름→ID 조회가 따로 필요하다.**
+
+- **2026-11-05 기록기 상한이 진짜 병목이었다.** 질의문을 4000자에서 자르고 있었는데,
+  GraphQL 문서는 **프래그먼트가 앞에 오고 작전 정의가 뒤에 와서** 자르면 정작 필요한
+  작전 서명이 날아간다. 우리가 쓸 문서 둘이 정확히 거기 걸렸다:
+  `GetAttendeesByPredictiveSearch`(프래그먼트가 4000자를 다 먹음),
+  `CreateSameRoomRateMutation`. `UpdateExistingExpenseEntry` 도 그래서 직접 썼다.
+  상한을 20000 으로 올리고, 잘리면 `/* …잘림 N자 */` 를 적는다 - 조용히 자르면
+  그게 Concur 탓인 줄 안다.

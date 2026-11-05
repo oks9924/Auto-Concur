@@ -322,3 +322,25 @@ def test_구형_NET_라우터도_이름을_남긴다(recorded, server):
     text = json.dumps(calls, ensure_ascii=False)
     for secret in ('2026-09-07', '450000', '라한호텔울산'):
         assert secret not in text, f'{secret} 가 기록에 남았습니다'
+
+
+def test_긴_질의문도_온전히_남긴다(recorded, server):
+    """상한이 4000자였을 때 우리가 쓸 문서 둘이 정확히 거기 걸렸다(2026-11-05).
+    GraphQL 문서는 프래그먼트가 앞, 작전 정의가 뒤라서 자르면 서명이 날아간다."""
+    big = ('fragment Big on T { ' + ' '.join(f'field{i}' for i in range(900)) + ' }'
+           ' query GetThing($id: ID!) { thing(id: $id) { ...Big } }')
+    assert len(big) > 4000
+    calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql',
+                               'body': {'operationName': 'GetThing', 'query': big}})
+    doc = next(c for c in calls if c['method'] == 'POST')['reqBody']['query']
+    assert '잘림' not in doc
+    assert 'query GetThing($id: ID!)' in doc      # 뒤쪽 작전 서명이 살아 있다
+
+
+def test_정말_긴_것은_잘렸다고_적는다(recorded, server):
+    huge = 'query X { ' + ' '.join(f'f{i}' for i in range(6000)) + ' }'
+    assert len(huge) > 20000
+    calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql',
+                               'body': {'operationName': 'X', 'query': huge}})
+    doc = next(c for c in calls if c['method'] == 'POST')['reqBody']['query']
+    assert '잘림' in doc and '자 */' in doc
