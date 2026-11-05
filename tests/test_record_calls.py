@@ -121,7 +121,7 @@ def test_날짜가_ISO면_ISO라고_적는다(recorded, server):
       await fetch('{server}/nui/expense/reports/A1B2C3D4E5F6/expenses');
     }}""")
     entry = next(c for c in calls if c['method'] == 'GET')
-    first = entry['resBody']['entries']['[0]']
+    first = entry['resBody']['entries']['[*]']
     assert first['transactionDate'] == 'str:date-iso'
     assert first['transactionAmount'] == 'int'
     assert entry['resBody']['shownDate'] == 'str:date-slash'
@@ -162,7 +162,7 @@ def test_쓰기는_메서드와_본문_모양을_남긴다(recorded, server):
     assert put['path'] == '/nui/expense/entry/{id}'
     assert put['reqBody']['transactionDate'] == 'str:date-iso'
     assert put['reqBody']['transactionAmount'] == 'int'
-    assert put['reqBody']['attendees']['[0]']['name'] == 'str:len9-32'
+    assert put['reqBody']['attendees']['[*]']['name'] == 'str:len9-32'
     assert 'x-csrf-token' in put['reqHeaders']   # 토큰 이름만, 값은 없다
     assert put['status'] == 200
 
@@ -176,7 +176,7 @@ def test_XHR도_같이_기록한다(recorded, server):
     }}""")
     xhr = next(c for c in calls if c['via'] == 'xhr')
     assert xhr['method'] == 'GET' and xhr['status'] == 200
-    assert xhr['resBody']['entries']['[0]']['transactionDate'] == 'str:date-iso'
+    assert xhr['resBody']['entries']['[*]']['transactionDate'] == 'str:date-iso'
     assert 'x-requested-with' in xhr['reqHeaders']
 
 
@@ -282,7 +282,7 @@ def test_GraphQL_응답도_모양만_남긴다(recorded, server):
     calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql', 'body': {
         'operationName': 'GetReportEntries', 'query': 'query GetReportEntries { x }'}})
     post = next(c for c in calls if c['method'] == 'POST')
-    entry = post['resBody']['data']['entries']['[0]']
+    entry = post['resBody']['data']['entries']['[*]']
     assert entry['transactionDate'] == 'str:date-iso'
     assert entry['transactionAmount'] == 'int'
 
@@ -318,7 +318,7 @@ def test_구형_NET_라우터도_이름을_남긴다(recorded, server):
     assert post['op'] == 'Itemization.saveItemizations'
     assert post['reqBody']['action'] == 'Itemization'
     assert post['reqBody']['method'] == 'saveItemizations'
-    assert post['reqBody']['data']['[0]']['transactionDate'] == 'str:date-iso'
+    assert post['reqBody']['data']['[*]']['transactionDate'] == 'str:date-iso'
     text = json.dumps(calls, ensure_ascii=False)
     for secret in ('2026-09-07', '450000', '라한호텔울산'):
         assert secret not in text, f'{secret} 가 기록에 남았습니다'
@@ -388,3 +388,40 @@ def test_XHR_헤더_값도_같은_규칙이다(recorded, server):
     xhr = next(c for c in calls if c['via'] == 'xhr')
     assert xhr['reqHeaderValues']['camelcase'] == 'true'
     assert 'SECRET-XHR' not in json.dumps(calls, ensure_ascii=False)
+
+
+# --- 배열 모양 병합 ---------------------------------------------------------
+# 첫 칸만 보면 안 된다. 폼의 fields 는 42칸인데 칸마다 모양이 달라서, 차량 칸이
+# 거기 있어도 안 보였다(2026-11-05).
+
+def test_배열은_칸마다_다른_모양을_합쳐_본다(recorded, server):
+    calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql', 'body': {
+        'operationName': 'GetForm',
+        'query': 'query GetForm { x }',
+        'variables': {'fields': [
+            {'id': 'comment', 'label': '코멘트', 'list': None},
+            {'id': 'vehicleId', 'label': '차량 ID', 'list': 'L1', 'isRequired': True},
+        ]}}})
+    post = next(c for c in calls if c['method'] == 'POST')
+    merged = post['reqBody']['variables']['fields']
+    assert merged['[n]'] == 2
+    # 둘째 칸에만 있던 키가 보인다
+    assert 'isRequired' in merged['[*]'] and merged['[*]']['isRequired'] == 'bool'
+    # 값이 다른 키는 둘 다 적는다
+    assert set(merged['[*]']['list'].split('|')) == {'null', 'str:len1-8'}
+
+
+def test_빈_배열은_개수만(recorded, server):
+    calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql', 'body': {
+        'operationName': 'GetForm', 'query': 'query GetForm { x }',
+        'variables': {'rows': []}}})
+    post = next(c for c in calls if c['method'] == 'POST')
+    assert post['reqBody']['variables']['rows'] == {'[n]': 0}
+
+
+def test_합쳐도_값은_안_남는다(recorded, server):
+    calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql', 'body': {
+        'operationName': 'GetForm', 'query': 'query GetForm { x }',
+        'variables': {'rows': [{'txt': '라한호텔울산'}, {'txt': '2026-09-07'}]}}})
+    text = json.dumps(calls, ensure_ascii=False)
+    assert '라한호텔울산' not in text and '2026-09-07' not in text

@@ -54,11 +54,11 @@ START_URL = 'https://travel.siemens.cloud'
 # 어느 호출이 어느 동작의 것인지 나중에 가를 수 있다. 건너뛰려면 그냥 Enter.
 STEPS = [
     '로그인하고 경비 리포트 목록 열기',
-    '참석자 칸을 열어 이름 검색 (저장 안 해도 됨)',
-    '숙박 경비에서 숙박위치·Booking channel 고르기',
-    '자동차 마일리지 경비 하나 만들기',
-    '비즈니스 목적 또는 코멘트를 바꿔서 저장',
-    '영수증 하나 첨부',
+    '새 경비 > 자동차 마일리지 를 열기 (저장 안 해도 됨)',
+    '차량 ID 드롭다운을 열어 목록 보기 (고르지 않아도 됨)',
+    '숙박 경비에서 숙박위치·Booking channel 드롭다운 열기',
+    '그 밖에 보고 싶은 화면',
+    '끝내기 전 마지막 확인',
 ]
 
 # 페이지 안에서 fetch/XHR을 감싼다. 응답을 clone해서 읽으므로 원래 호출의
@@ -90,6 +90,25 @@ RECORD_JS = r"""
   ];
   const bucket = n => n === 0 ? '0' : n <= 8 ? '1-8' : n <= 32 ? '9-32'
                     : n <= 128 ? '33-128' : '128+';
+
+  // 배열에서 합쳐 볼 칸 수. 폼은 40칸이 넘어서 넉넉히 본다.
+  const SAMPLE = 60;
+
+  // 두 모양을 합친다. 키는 합집합, 값이 다르면 'int|null' 처럼 둘 다 적는다.
+  const merge = (a, b) => {
+    if (a === undefined) return b;
+    if (b === undefined) return a;
+    const plain = x => typeof x === 'string';
+    if (plain(a) && plain(b)) {
+      return a === b ? a : [...new Set([...a.split('|'), ...b.split('|')])].sort().join('|');
+    }
+    if (plain(a) || plain(b)) return plain(a) ? b : a;   // 객체 쪽을 남긴다
+    const out = {};
+    for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      out[k] = merge(a[k], b[k]);
+    }
+    return out;
+  };
   const strKind = s => {
     for (const [re, name] of KINDS) if (re.test(s)) return 'str:' + name;
     return 'str:len' + bucket(s.length);
@@ -103,7 +122,11 @@ RECORD_JS = r"""
     if (t === 'number') return Number.isInteger(v) ? 'int' : 'float';
     if (t === 'string') return strKind(v);
     if (Array.isArray(v)) {
-      return v.length ? {'[n]': v.length, '[0]': shape(v[0], d + 1)} : {'[n]': 0};
+      // 첫 칸만 보면 안 된다. 폼의 fields 는 42칸인데 칸마다 모양이 달라서,
+      // 차량 칸이 거기 있어도 안 보였다(2026-11-05). 앞쪽 몇 칸을 합쳐서 본다.
+      if (!v.length) return {'[n]': 0};
+      const seen = v.slice(0, SAMPLE).map(x => shape(x, d + 1));
+      return {'[n]': v.length, '[*]': seen.reduce(merge)};
     }
     if (t === 'object') {
       const out = {}; const keys = Object.keys(v);

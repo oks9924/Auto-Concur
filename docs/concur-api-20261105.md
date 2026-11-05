@@ -443,3 +443,22 @@ C단계가 하는 일에 **전부 대응되는 작전이 있다.**
   필요하다. 그리고 `transactionAmount` - 마일리지 금액은 거리 x 정책 요율이라
   우리가 계산해 보내면 정책 요율을 덮을 수 있다. 빼고 보내서 Concur 가 계산하는지
   응답(`entry.transactionAmount`)으로 확인하는 길이 있지만, 아직 안 했다.
+
+- **2026-11-05 마일리지 조회 설계: 넷이 아니라 둘이면 된다.**
+  화면이 하는 방식을 따라가면 된다. `GetNewExpenseEntry(reportId, expenseTypeId,
+  userId, contextRole)` 가 **`mainForm.fields` 42칸을 defaults 와 함께** 준다
+  (`id, label, value{listValue}, defaultValue, isRequired, requiredForSave, list,
+  control, dataType`). 즉 `countryCode`·`paymentTypeId`·`receiptTypeId`·
+  `exchangeRate`·`custom13` 을 따로 조회할 필요 없이 **폼의 기본값을 그대로 쓰고
+  우리 값(차량·날짜·출발/도착지·거리)만 덮으면 된다.**
+  남는 조회는 둘이다: 경비유형 이름→코드(`GetExpenseTypesForReport` 가
+  `{id, code, name, text}` 를 준다), 그리고 **차량 이름→`vehicleId`**.
+
+- **차량 목록의 출처를 아직 못 봤다. 원인은 내 기록기였다.**
+  배열을 `[0]` 한 칸만 기록해서, 42칸짜리 폼에서 차량 칸이 거기 있어도 안 보였다.
+  `FormsAndFields.GetFormLists` 가 여러 목록을 돌려주는 것도 첫 키만 보였다.
+  → 앞쪽 60칸의 모양을 **합쳐서** 기록하도록 고쳤다(`[0]` 대신 `[*]`). 키는
+  합집합이고 값이 다르면 `null|str:len1-8` 처럼 둘 다 적는다. 값은 여전히 안 남는다.
+  예상 경로: `mainForm.fields` 에서 `label` 이 차량인 칸 → 그 칸의 `list` id →
+  `FormsAndFields.GetFormLists([listId])` → `records[{key, code, shortcode, txt}]`
+  에서 `txt` 로 맞추고 `key` 를 `vehicleId` 로 쓴다. 다음 기록으로 확인한다.
