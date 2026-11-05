@@ -995,9 +995,23 @@ def _fill_room_rates(page, amounts: list[int]) -> str:
     return f"일일 객실 요금 {len(amounts)}행 (합 {sum(amounts):,}원)"
 
 
+def strip_domain(name: str) -> str:
+    """'kyungsik.oh@siemens.com' -> 'kyungsik.oh'.
+
+    사람은 주소록에서 복사한 메일 주소를 그대로 붙여넣는다. 그런데 Concur
+    검색은 계정 이름으로 하고, 이름 대조도 검색어를 토막 내서 본다 -
+    'siemens' 와 'com' 이 섞이면 'Oh Kyungsik' 과 안 맞는다.
+
+    @ 앞이 비어 있으면 그대로 둔다. 조용히 빈 값으로 만들면 참석자가 통째로
+    사라지는데, 그건 전에 한 번 실제로 낸 사고다.
+    """
+    head, _, _ = name.partition("@")
+    return head.strip() or name.strip()
+
+
 def parse_attendees(value: str) -> list[str]:
-    """쉼표로 나눈다. 빈 항목은 버린다."""
-    return [x.strip() for x in (value or "").split(",") if x.strip()]
+    """쉼표로 나눈다. 빈 항목은 버리고, 메일 주소는 계정 이름만 남긴다."""
+    return [strip_domain(x) for x in (value or "").split(",") if x.strip()]
 
 
 def _attendee_input(page) -> str:

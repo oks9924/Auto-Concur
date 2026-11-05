@@ -352,3 +352,37 @@ def test_건너뛴_이유에_영수증_파일_이름을_적는다():
 
     소스 = inspect.getsource(ar.attach_phase)
     assert "row.receipt_file" in 소스
+
+
+def test_메일_주소를_적어도_계정_이름으로_넣는다():
+    """주소록에서 복사한 메일 주소를 그대로 붙여넣는 일이 많다.
+
+    Concur 검색은 계정 이름으로 하고, 이름 대조도 검색어를 토막 내서 본다.
+    'siemens' 와 'com' 이 섞이면 'Oh Kyungsik' 과 안 맞는다.
+    """
+    from src.fix_expenses import name_matches, parse_attendees
+
+    assert parse_attendees("kyungsik.oh@siemens.com") == ["kyungsik.oh"]
+    assert parse_attendees("kyungsik.oh@siemens.com, hong.gildong@siemens.com") == [
+        "kyungsik.oh", "hong.gildong"
+    ]
+    # 메일 주소를 안 쓰던 작업지는 그대로다
+    assert parse_attendees("kyungsik.oh, hong.gildong") == ["kyungsik.oh", "hong.gildong"]
+    assert parse_attendees("Oh Kyungsik") == ["Oh Kyungsik"]
+
+    # 떼어낸 뒤에는 화면 이름과 맞는다
+    assert name_matches(parse_attendees("kyungsik.oh@siemens.com")[0], "Oh Kyungsik")
+    assert not name_matches("kyungsik.oh@siemens.com", "Oh Kyungsik")  # 떼기 전에는 안 맞았다
+
+
+def test_골뱅이_앞이_비면_건드리지_않는다():
+    """조용히 빈 값으로 만들면 참석자가 통째로 사라진다. 전에 낸 사고다."""
+    from src.fix_expenses import parse_attendees
+
+    assert parse_attendees("@siemens.com") == ["@siemens.com"]
+    assert parse_attendees("") == []
+
+
+def test_같은_사람을_메일과_계정으로_적어도_한_번만(tmp_path):
+    누구, _ = _한건(tmp_path, "kyungsik.oh", "kyungsik.oh@siemens.com, kim.minsu@siemens.com")
+    assert 누구 == "kyungsik.oh, kim.minsu"
