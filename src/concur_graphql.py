@@ -317,3 +317,200 @@ def _fill(page, rows: list) -> list:
         for line in clashed[:6]:
             print('    ' + line)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# 쓰기 (2026-11-05). 저장과 영수증 첨부만.
+#
+# ## 질의문을 직접 썼다
+#
+# 읽기는 실측 질의문을 그대로 썼지만 `UpdateExistingExpenseEntry` 는 기록이 4000자에서
+# 잘려서 재생할 수 없다. 그래서 **관측된 필드 이름만으로 최소 문서를 만들었다.**
+# 원본이 끌어오는 거대한 프래그먼트와 `CDS_addRecentExpenseTypes`(policyId 필요)는
+# 우리에게 필요 없다. 고른 필드는 전부 기록된 문서 본문에 실제로 있던 것이다.
+#
+# 보강 근거: DOM 쪽 셀렉터가 `#businessPurpose` / `textarea#comment` 이고
+# GraphQL 의 `fields` 도 `businessPurpose` / `comment` 다. 이름이 같다.
+#
+# ## 보내기 전에 한 번 검증한다
+#
+# `@skip(if: $skip)` 로 같은 문서·같은 변수를 보내면 **문서와 변수는 검증되고
+# resolver 는 실행되지 않는다.** 즉 쓰지 않고 모양만 확인할 수 있다. 실행당 한 번
+# 돌려서, 내가 만든 문서가 틀렸으면 아무것도 건드리기 전에 안다.
+#
+# ## 실패했을 때 되돌아가지 않는다
+#
+# 보내기 전에 막힌 것(NotSent)과 보낸 뒤 결과를 모르는 것(MaybeSent)은 다르다.
+# 전자는 화면 경로로 넘어가도 안전하지만, 후자는 **재시도도 폴백도 하지 않는다** -
+# 둘 다 이중 저장이 될 수 있다. `concur_ui.click_target` 이 "클릭 결과를 확인할 수
+# 없으면 재클릭하지 않는다" 로 같은 판단을 이미 하고 있다.
+
+UPLOAD_ENDPOINT = 'https://www-eu2.api.concursolutions.com/spend-graphql/upload'
+
+UPDATE_FIELDS = '''mutation UpdateExistingExpenseEntry($reportId: ID!, $expenseId: ID!, $contextRole: ContextRoleType!, $userId: ID!, $fields: UpdateExpenseFieldsInput!, $skip: Boolean! = false) {
+  updateExpense(
+    dataContext: {reportId: $reportId, expenseId: $expenseId, fields: $fields, shouldCopyDownFields: false}
+    userContext: {userId: $userId, contextType: $contextRole}
+  ) @skip(if: $skip) {
+    id
+    entry { id transactionDate transactionAmount { value currencyCode } }
+    entryExceptions {
+      countOfExceptions
+      hasBlockingExceptions
+      entryExceptions { exceptionCode isBlocking message parameters { missingFields { fields fieldIds } } }
+    }
+  }
+}'''
+
+# 이건 실측 문서 그대로다(__typename 만 덜어냈다).
+ATTACH_IMAGE = '''mutation AttachImage($userId: String!, $contextRole: ContextRoleType!, $reportId: String!, $expenseId: String!, $imageId: String!, $skip: Boolean! = false) {
+  employee(userId: $userId, contextRole: $contextRole) {
+    expenseReport(reportId: $reportId) {
+      entry(expenseId: $expenseId) {
+        attachImage(imageId: $imageId) @skip(if: $skip) { id receiptImageId }
+      }
+    }
+  }
+}'''
+
+
+class NotSent(GraphQLError):
+    """보내기 전에 막혔다. 아무것도 쓰이지 않았으므로 화면 경로로 넘어가도 안전하다."""
+
+
+class MaybeSent(GraphQLError):
+    """보냈는데 결과를 확신할 수 없다. 재시도도 폴백도 하지 않는다 - 이중 저장이 된다."""
+
+
+@dataclass
+class Saved:
+    expense_id: str
+    blocking: bool
+    messages: tuple[str, ...]
+    missing: tuple[str, ...]
+
+
+def _exceptions(node) -> Saved:
+    """저장 응답에 같이 오는 예외를 읽는다. 응답이 곧 검증이다."""
+    found = node or {}
+    rows = found.get('entryExceptions') or []
+    messages, missing = [], []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get('message'):
+            messages.append(str(row['message']))
+        fields = ((row.get('parameters') or {}).get('missingFields') or {})
+        for name in (fields.get('fields') or []):
+            missing.append(str(name))
+    return Saved('', bool(found.get('hasBlockingExceptions')),
+                 tuple(messages), tuple(dict.fromkeys(missing)))
+
+
+def _write(ctx, name: str, query: str, variables: dict, *, dry: bool) -> dict:
+    """쓰기 호출. 보냈는지 못 보냈는지를 예외 종류로 가린다."""
+    payload = dict(variables, skip=dry)
+    try:
+        res = ctx.request.post(
+            ENDPOINT, data={'operationName': name, 'query': query, 'variables': payload},
+            headers={'content-type': 'application/json', 'accept': 'application/json'},
+            timeout=30000)
+    except Exception as exc:
+        # 보냈는지 모른다. 타임아웃이 이미 서버에 닿은 뒤였을 수 있다.
+        kind = NotSent if dry else MaybeSent
+        raise kind(f'{name} 호출 실패: {type(exc).__name__}: {exc}') from exc
+    if not res.ok:
+        kind = NotSent if dry else MaybeSent
+        raise kind(f'{name} 이(가) HTTP {res.status} 를 받았습니다')
+    try:
+        body = res.json()
+    except Exception as exc:
+        kind = NotSent if dry else MaybeSent
+        raise kind(f'{name} 응답을 JSON으로 읽지 못했습니다') from exc
+    errors = (body or {}).get('errors')
+    if errors:
+        first = errors[0].get('message') if isinstance(errors[0], dict) else str(errors[0])
+        kind = NotSent if dry else MaybeSent
+        raise kind(f'{name} 이(가) 오류를 돌려줬습니다: {first}')
+    data = (body or {}).get('data')
+    if not isinstance(data, dict):
+        kind = NotSent if dry else MaybeSent
+        raise kind(f'{name} 응답에 data 가 없습니다')
+    return data
+
+
+def ids(page) -> tuple[str, str, str]:
+    """(reportId, userId, contextRole). 실패는 NotSent 다 - 아직 안 보냈다."""
+    report_id = _report_id_of(page)
+    if not report_id:
+        raise NotSent('지금 화면에서 리포트 ID를 알 수 없습니다')
+    try:
+        user_id, role = identify(page.context, report_id)
+    except GraphQLError as exc:
+        raise NotSent(str(exc)) from exc
+    return report_id, user_id, role
+
+
+def save_fields(page, expense_id: str, fields: dict) -> Saved:
+    """경비의 필드를 저장한다. 보낸 필드만 바뀐다(희소 업데이트).
+
+    `fields` 는 예: {'businessPurpose': '...', 'comment': '...'}
+    """
+    if not expense_id or not fields:
+        raise NotSent('저장할 경비 ID나 필드가 없습니다')
+    report_id, user_id, role = ids(page)
+    args = {'reportId': report_id, 'expenseId': expense_id, 'userId': user_id,
+            'contextRole': role, 'fields': fields}
+    # 쓰기 전에 문서·변수를 검증한다. resolver 는 실행되지 않는다.
+    _write(page.context, 'UpdateExistingExpenseEntry', UPDATE_FIELDS, args, dry=True)
+    data = _write(page.context, 'UpdateExistingExpenseEntry', UPDATE_FIELDS, args, dry=False)
+    found = data.get('updateExpense')
+    if not isinstance(found, dict):
+        raise MaybeSent('저장 응답에 updateExpense 가 없습니다')
+    forget(report_id)  # 목록 캐시가 묵은 값을 들고 있지 않게 한다
+    result = _exceptions(found.get('entryExceptions'))
+    result.expense_id = expense_id
+    return result
+
+
+def attach_receipt(page, expense_id: str, path) -> str:
+    """영수증 파일을 올리고 경비에 붙인다. 붙은 이미지 ID를 돌려준다."""
+    from pathlib import Path
+    target = Path(path)
+    if not expense_id:
+        raise NotSent('붙일 경비 ID가 없습니다')
+    if not target.is_file():
+        raise NotSent(f'영수증 파일이 없습니다: {target}')
+    report_id, user_id, role = ids(page)
+
+    suffix = target.suffix.lower()
+    mime = {'.pdf': 'application/pdf', '.png': 'image/png', '.gif': 'image/gif',
+            '.tif': 'image/tiff', '.tiff': 'image/tiff'}.get(suffix, 'image/jpeg')
+    try:
+        res = page.context.request.post(
+            UPLOAD_ENDPOINT,
+            multipart={'file': {'name': target.name, 'mimeType': mime,
+                                'buffer': target.read_bytes()}},
+            timeout=60000)
+    except Exception as exc:
+        # 업로드는 경비를 건드리지 않는다. 떠 있는 이미지가 생길 뿐이라 되돌아가도 안전하다.
+        raise NotSent(f'영수증 업로드 실패: {type(exc).__name__}: {exc}') from exc
+    if not res.ok:
+        raise NotSent(f'영수증 업로드가 HTTP {res.status} 를 받았습니다')
+    try:
+        image_id = (res.json() or {}).get('imageId')
+    except Exception as exc:
+        raise NotSent('영수증 업로드 응답을 읽지 못했습니다') from exc
+    if not image_id:
+        raise NotSent('영수증 업로드 응답에 imageId 가 없습니다')
+
+    args = {'reportId': report_id, 'expenseId': expense_id, 'userId': user_id,
+            'contextRole': role, 'imageId': image_id}
+    _write(page.context, 'AttachImage', ATTACH_IMAGE, args, dry=True)
+    data = _write(page.context, 'AttachImage', ATTACH_IMAGE, args, dry=False)
+    entry = (((data.get('employee') or {}).get('expenseReport') or {}).get('entry') or {})
+    attached = (entry.get('attachImage') or {}).get('receiptImageId')
+    if not attached:
+        raise MaybeSent('첨부 응답에 receiptImageId 가 없습니다')
+    forget(report_id)
+    return attached

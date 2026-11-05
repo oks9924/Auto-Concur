@@ -3,6 +3,7 @@ import re
 from decimal import Decimal, InvalidOperation
 
 from . import attach_receipts as ar, fix_expenses as fx, concur_ui as ui
+from . import concur_graphql as gq
 from .report_session import check_context
 from .concur_formats import amount_check_js, range_matches
 from .concur_values import parse_amount, same_text
@@ -43,14 +44,53 @@ class Driver:
 
     def attach(self, slip, row):
         self.guard()
+        if not gq.disabled():
+            try:
+                gq.attach_receipt(self.page, row.expense_id, slip.path)
+                return
+            except gq.NotSent as why:
+                # 아직 아무것도 경비에 붙지 않았다. 화면 경로로 간다.
+                print(f'    (GraphQL 첨부를 쓰지 못해 화면으로 붙입니다: {why})')
+        self._attach_by_screen(slip, row)
+
+    def _attach_by_screen(self, slip, row):
         ar.open_expense(self.page, slip, row, self.report_url, self.folder)
         self.page.set_input_files(ar.UPLOAD_INPUT, str(slip.path))
         # 업로드가 저장 가능한 상태가 될 때까지 공통 클릭 준비 로직이 기다린다.
         self.page.wait_for_timeout(3000)
         fx._save_expense(self.page, row, self.report_url, reopen=False)
 
+    # 목적·코멘트만 바꾸는 계획은 GraphQL 로 보낸다. 유형 변경은 policyId 가
+    # 필요하고(그걸 주는 작전을 아직 못 잡았다), 참석자는 별도 mutation 에
+    # versionNumber 가 필요하고, 숙박 명세는 roomRateExpenseTypeId 가 필요하다.
+    # 그 셋은 화면 경로를 그대로 쓴다.
+    @staticmethod
+    def _fields_only(plan):
+        if plan.type_code or plan.attendee or plan.lodging:
+            return None
+        fields = {}
+        if plan.purpose:
+            fields['businessPurpose'] = plan.purpose
+        if plan.comment:
+            fields['comment'] = plan.comment
+        return fields or None
+
     def apply_edit(self, plan):
         self.guard()
+        fields = None if gq.disabled() else self._fields_only(plan)
+        if fields:
+            try:
+                saved = gq.save_fields(self.page, plan.row.expense_id, fields)
+                done = ', '.join(f'{k}->{v[:20]}' for k, v in fields.items())
+                if saved.blocking or saved.messages:
+                    # 저장 응답이 예외를 같이 준다. 화면 글자를 읽지 않아도 안다.
+                    note = '; '.join(saved.messages[:3]) or '차단 예외'
+                    if saved.missing:
+                        note += f" (빈 필드: {', '.join(saved.missing[:5])})"
+                    return f'{done} · Concur 예외: {note}'
+                return done
+            except gq.NotSent as why:
+                print(f'    (GraphQL 저장을 쓰지 못해 화면으로 저장합니다: {why})')
         return fx.apply_plan(self.page, plan, self.report_url)
 
     def open_for_verification(self, row):

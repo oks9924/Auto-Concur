@@ -229,3 +229,23 @@ C단계가 하는 일에 **전부 대응되는 작전이 있다.**
     믿지 않고 바깥에서 한 번 막는다 - 보완이 본 작업을 막으면 되던 것이 안 된다.
   - 끄는 스위치: `AUTO_CONCUR_NO_GRAPHQL=1`.
   - 쓰기는 여전히 없다. mutation 을 부르지 않는다.
+
+- **2026-11-05 3단계 푸시: 저장·첨부를 GraphQL로.** 목적·코멘트 저장과 영수증 첨부만.
+  - **질의문을 직접 썼다.** `UpdateExistingExpenseEntry` 기록이 정확히 4000자에서
+    잘려서(`gqlDoc` 상한) 재생할 수 없었다. 관측된 필드 이름만으로 최소 문서를
+    만들었고, 원본이 끌어오는 거대 프래그먼트와 `CDS_addRecentExpenseTypes`
+    (policyId 필요)는 덜어냈다. 보강 근거: DOM 셀렉터가 `#businessPurpose` /
+    `textarea#comment` 이고 GraphQL `fields` 도 같은 이름이다.
+  - **보내기 전 검증.** `@skip(if: $skip)` 로 같은 문서·같은 변수를 보내면 문서와
+    변수는 검증되고 resolver 는 실행되지 않는다. 내 문서가 틀렸으면 아무것도
+    건드리기 전에 안다.
+  - **NotSent / MaybeSent.** 보내기 전에 막힌 것만 화면 경로로 넘어간다. 보낸 뒤
+    결과를 모르면 재시도도 폴백도 하지 않는다 - 둘 다 이중 저장이 된다.
+    업로드 실패는 NotSent 다(업로드는 경비를 건드리지 않는다).
+  - 저장 응답의 `entryExceptions` 를 읽어 차단 예외·메시지·빈 필드 이름을 보고한다.
+  - 저장 뒤 목록 캐시를 버린다(`forget`). 묵은 값으로 재확인하지 않는다.
+  - **화면에 남긴 것:** 유형 변경(policyId 미확보), 참석자(versionNumber 필요),
+    숙박 명세(roomRateExpenseTypeId 필요). 참석자는 전에 실제로 데이터를 날린
+    자리라 더 신중해야 한다.
+  - 다음에 필요한 것: policyId 를 주는 작전, `GetAttendeesByPredictiveSearch` 의
+    versionNumber 를 들고 `SaveExpenseAttendees` 로 가는 경로.
