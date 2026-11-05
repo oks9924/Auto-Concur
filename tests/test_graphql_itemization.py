@@ -179,3 +179,25 @@ def test_끄면_화면으로_간다(monkeypatch):
     calls = wire(monkeypatch, itemized=False)
     assert fx._same_rate_by_api(Page([]), plan_of(), [150000], True, 'u', []) is False
     assert calls == []
+
+
+def test_요금이_다르면_왜_화면으로_갔는지_말한다(monkeypatch, capsys):
+    """흔한 경우다. 20만원 3박이면 [66667, 66667, 66666] 이다.
+    조용히 넘어가면 '이관이 안 되네' 로 보인다."""
+    wire(monkeypatch, itemized=False)
+    assert fx._same_rate_by_api(Page([]), plan_of(200000),
+                                [66667, 66667, 66666], True, 'u', []) is False
+    assert '1박 요금이 달라' in capsys.readouterr().out
+
+
+def test_실제_분배가_같은지_다른지로_갈린다(monkeypatch):
+    """합은 늘 맞지만 요금이 같은 경우와 다른 경우가 섞여 있다."""
+    from src.sheet import nightly_split
+    for total, nights, expect in ((300000, 3, True), (200000, 3, False),
+                                  (450000, 3, True), (17000, 3, False)):
+        amounts = nightly_split(total, nights)
+        assert sum(amounts) == total
+        calls = wire(monkeypatch, itemized=False)
+        used = fx._same_rate_by_api(Page([]), plan_of(total), amounts, True, 'u', [])
+        assert used is expect, (total, nights, amounts)
+        assert bool(calls) is expect

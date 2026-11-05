@@ -1249,7 +1249,13 @@ def _same_rate_by_api(page, plan, amounts, changed, report_url, done) -> bool:
     저장하지 않으면 그 값이 날아가고, 명세는 저장된 날짜 위에서 만들어진다.
     """
     from . import concur_graphql as gq
-    if gq.disabled() or len(set(amounts)) != 1 or not amounts:
+    if gq.disabled() or not amounts:
+        return False
+    if len(set(amounts)) != 1:
+        # 흔한 경우다. 20만원 3박이면 [66667, 66667, 66666] 이라 1박 요금이 다르다.
+        # 이 작전은 '가격 동일' 전용이라 66667 을 보내면 3박 합이 200,001원이 되어
+        # 경비 총액을 넘긴다. 쓰면 안 되는 호출이므로 화면 경로로 간다.
+        print(f'     (1박 요금이 달라 화면으로 갑니다: {amounts[0]:,}~{amounts[-1]:,}원)')
         return False
     if gq.itemized(page, plan.row.expense_id) is not False:
         return False  # 이미 있거나, 있는지 모른다 - 둘 다 만들지 않는다
