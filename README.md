@@ -118,6 +118,36 @@ python -m src.update_concur --dir ./downloads --apply --limit 1
 
 브라우저는 Playwright Chromium → Edge → Chrome 순서입니다. 기존 `CONCUR_BROWSER` 환경변수로 선택할 수 있습니다. 브라우저만 바꾼다고 화면 전환 문제의 해결이 보장되는 것은 아닙니다.
 
+## 조사: Concur가 실제로 주고받는 호출 (변경 없음)
+
+```text
+python -m src.record_calls
+```
+
+지금 C단계는 **화면에 그려진 글자를 읽고 그 위를 클릭합니다.** 그래서 날짜 표시 서식,
+숨은 저장 버튼, 패널이 클릭을 가로채는 것 같은 표현 계층 문제가 전부 우리 문제가 됩니다.
+한 계층 아래(화면이 쓰는 JSON 호출)로 내려갈 수 있는지 보려면 먼저 그 계층이 있는지
+확인해야 하고, 이 도구가 그것만 확인합니다.
+
+**아무것도 바꾸지 않습니다.** 호출을 재생하지도, 저장을 누르지도 않습니다. 평소처럼
+손으로 작업하시면 그동안 오간 호출의 *모양* 만 적습니다. 단계마다 Enter를 누르면 기록에
+표시가 들어가서 어느 호출이 어느 동작의 것인지 나중에 가를 수 있습니다.
+
+**값은 적지 않습니다.** 기록은 페이지 안에서 모양으로 바뀐 뒤에 나오므로 실제 거래 값은
+파일에 닿지 않습니다. 남는 것은 이런 모양입니다.
+
+```json
+{"method":"PUT","path":"/nui/expense/entry/{id}",
+ "reqBody":{"transactionDate":"str:date-iso","transactionAmount":"int"}}
+```
+
+`transactionDate`가 `str:date-iso`인지 `str:date-slash`인지가 알아야 할 전부입니다.
+가맹점명·금액·승인번호·참석자 이름은 `str:len9-32` 같은 길이 구간으로만 남습니다.
+결과는 `inspect-out/calls-*.jsonl`에 떨어집니다(gitignore 됨).
+
+평소 C단계와 같은 브라우저 프로필을 씁니다. 이미 로그인돼 있어 편하지만 **둘을 동시에
+띄우면 Chromium이 프로필을 못 열고 죽습니다.** 하나씩 돌리세요.
+
 ## 테스트와 배포
 
 ```text
