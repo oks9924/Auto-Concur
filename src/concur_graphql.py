@@ -595,3 +595,60 @@ def same_room_rate(page, expense_id: str, room_rate: int) -> Saved:
     result = _exceptions(found.get('entryExceptions'))
     result.expense_id = expense_id
     return result
+
+
+# 1박 요금이 제각각인 명세. 실측 문서(2026-11-05, 10612자)에서 쓰는 부분만 남겼다.
+#
+# `SameRoomRate` 와 다른 점은 `roomRateObject` 가 **리스트**라는 것 하나다.
+# 20만원 3박이면 [{66667}, {66667}, {66666}] 을 보낸다 - `nightly_split` 결과
+# 그대로다. 합이 경비 총액과 정확히 맞으므로 '가격 동일' 로 보낼 때처럼 1원이
+# 넘치거나 모자라지 않는다.
+CREATE_DIFFERENT_ROOM_RATE = '''mutation CreateDifferentRoomRateMutation($reportId: String!, $expenseId: String!, $userId: String!, $contextRole: ContextRoleType!, $roomRateObject: [RoomRateAndTax!]!, $skip: Boolean! = false) {
+  createDifferentRoomRateItemizations(
+    reportId: $reportId
+    expenseId: $expenseId
+    userId: $userId
+    contextRole: $contextRole
+    roomRateObject: $roomRateObject
+  ) @skip(if: $skip) {
+    status { success }
+    entry { id transactionAmount { value currencyCode } }
+    entryExceptions {
+      countOfExceptions
+      hasBlockingExceptions
+      entryExceptions { exceptionCode isBlocking message parameters { missingFields { fields fieldIds } } }
+    }
+  }
+}'''
+
+
+def itemize(page, expense_id: str, nightly: list[int]) -> Saved:
+    """숙박 명세를 만든다. 1박 요금이 같으면 Same, 다르면 Different 로 간다.
+
+    `nightly` 는 `sheet.nightly_split` 결과다 - 합이 경비 총액과 정확히 맞는다.
+    """
+    if not expense_id or not nightly or any(
+            not isinstance(n, int) or isinstance(n, bool) or n <= 0 for n in nightly):
+        raise NotSent('명세를 만들 경비 ID나 1박 요금이 없습니다')
+    report_id, user_id, role = ids(page)
+    args = {'reportId': report_id, 'expenseId': expense_id, 'userId': user_id,
+            'contextRole': role}
+    if len(set(nightly)) == 1:
+        name, query = 'CreateSameRoomRateMutation', CREATE_SAME_ROOM_RATE
+        args['roomRateObject'] = {'roomRate': nightly[0]}
+        root = 'createSameRoomRateItemizations'
+    else:
+        name, query = 'CreateDifferentRoomRateMutation', CREATE_DIFFERENT_ROOM_RATE
+        args['roomRateObject'] = [{'roomRate': n} for n in nightly]
+        root = 'createDifferentRoomRateItemizations'
+    _write(page.context, name, query, args, dry=True)
+    data = _write(page.context, name, query, args, dry=False)
+    found = data.get(root)
+    if not isinstance(found, dict):
+        raise MaybeSent(f'명세 응답에 {root} 가 없습니다')
+    if (found.get('status') or {}).get('success') is False:
+        raise MaybeSent('Concur가 명세 생성을 실패로 표시했습니다')
+    forget(report_id)
+    result = _exceptions(found.get('entryExceptions'))
+    result.expense_id = expense_id
+    return result

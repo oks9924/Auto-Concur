@@ -1243,7 +1243,7 @@ def apply_plan(page, plan: Plan, report_url: str, *, opened: bool = False) -> st
 
 
 def _same_rate_by_api(page, plan, amounts, changed, report_url, done) -> bool:
-    """GraphQL로 '가격 동일' 명세를 만든다. 했으면 True.
+    """GraphQL로 숙박 명세를 만든다. 했으면 True.
 
     먼저 상세를 저장해야 한다. 날짜 범위·위치·채널을 화면에서 넣어둔 상태라
     저장하지 않으면 그 값이 날아가고, 명세는 저장된 날짜 위에서 만들어진다.
@@ -1251,22 +1251,19 @@ def _same_rate_by_api(page, plan, amounts, changed, report_url, done) -> bool:
     from . import concur_graphql as gq
     if gq.disabled() or not amounts:
         return False
-    if len(set(amounts)) != 1:
-        # 흔한 경우다. 20만원 3박이면 [66667, 66667, 66666] 이라 1박 요금이 다르다.
-        # 이 작전은 '가격 동일' 전용이라 66667 을 보내면 3박 합이 200,001원이 되어
-        # 경비 총액을 넘긴다. 쓰면 안 되는 호출이므로 화면 경로로 간다.
-        print(f'     (1박 요금이 달라 화면으로 갑니다: {amounts[0]:,}~{amounts[-1]:,}원)')
-        return False
     if gq.itemized(page, plan.row.expense_id) is not False:
         return False  # 이미 있거나, 있는지 모른다 - 둘 다 만들지 않는다
     if changed:
         _save_expense(page, plan.row, report_url, reopen=False)
     try:
-        saved = gq.same_room_rate(page, plan.row.expense_id, amounts[0])
+        saved = gq.itemize(page, plan.row.expense_id, amounts)
     except gq.NotSent as why:
         print(f'    (GraphQL 명세를 쓰지 못해 화면으로 갑니다: {why})')
         return False
-    note = f'항목별 명세 {len(amounts)}건 (일일 {amounts[0]:,}원)'
+    same = len(set(amounts)) == 1
+    rate = (f'일일 {amounts[0]:,}원' if same
+            else f'일일 {amounts[-1]:,}~{amounts[0]:,}원')
+    note = f'항목별 명세 {len(amounts)}건 ({rate})'
     if saved.blocking or saved.messages:
         note += ' · Concur 예외: ' + ('; '.join(saved.messages[:2]) or '차단 예외')
         if saved.missing:
@@ -1313,10 +1310,10 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
 
     # 명세는 GraphQL로 한 번에 만들 수 있다. 화면 경로의 콤보박스·1박 예외·
     # 숨은 저장 버튼·패널 클릭 가로채기가 전부 이 한 호출로 대체된다.
+    # 요금이 같으면 '가격 동일', 다르면 '가격 다름' 작전으로 간다.
     #
-    # 다만 이 mutation 은 명세를 '만든다'. 조건을 하나라도 모르면 화면으로 간다.
-    #   - 1박 요금이 전부 같아야 한다 ('가격 동일' 이 작전 이름에 박혀 있다)
-    #   - 이미 명세가 있으면 안 된다. **모르면 안 만든다** (중복이 된다)
+    # 다만 이 mutation 은 명세를 '만든다'. 이미 있으면 중복이 되므로,
+    # **없다고 확신할 때만** 쓴다 - 모르면 화면으로 간다.
     if _same_rate_by_api(page, plan, amounts, changed, report_url, done):
         return done
 

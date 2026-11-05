@@ -52,6 +52,11 @@ IDENTIFIED = Res({'data': {'employee': {
     'userId': 'U1', 'contextRole': 'TRAVELER',
     'expenseReport': {'reportId': 'R1', 'rptKey': 'K1'}}}})
 
+DIFFERENT = Res({'data': {'createDifferentRoomRateItemizations': {
+    'status': {'success': True}, 'entry': {'id': 'E1'},
+    'entryExceptions': {'countOfExceptions': 0, 'hasBlockingExceptions': False,
+                        'entryExceptions': []}}}})
+
 MADE = Res({'data': {'createSameRoomRateItemizations': {
     'status': {'success': True}, 'entry': {'id': 'E1'},
     'entryExceptions': {'countOfExceptions': 0, 'hasBlockingExceptions': False,
@@ -64,18 +69,38 @@ def writes(page):
 
 # --- mutation 자체 -----------------------------------------------------------
 
-def test_1박_요금_하나만_보낸다():
+def test_요금이_같으면_가격_동일_작전():
     page = Page([IDENTIFIED, Res({'data': {}}), MADE])
-    gq.same_room_rate(page, 'E1', 150000)
+    gq.itemize(page, 'E1', [150000, 150000, 150000])
     body = writes(page)[0]['data']
     assert body['operationName'] == 'CreateSameRoomRateMutation'
     assert body['variables']['roomRateObject'] == {'roomRate': 150000}
     assert 'roomRateExpenseTypeId' not in body['variables']
 
 
+def test_요금이_다르면_가격_다름_작전():
+    """20만원 3박이면 [66667, 66667, 66666] 이다. 흔한 경우다."""
+    page = Page([IDENTIFIED, Res({'data': {}}), DIFFERENT])
+    gq.itemize(page, 'E1', [66667, 66667, 66666])
+    body = writes(page)[0]['data']
+    assert body['operationName'] == 'CreateDifferentRoomRateMutation'
+    assert body['variables']['roomRateObject'] == [
+        {'roomRate': 66667}, {'roomRate': 66667}, {'roomRate': 66666}]
+
+
+def test_가격_다름은_합이_경비_총액과_맞는다():
+    """'가격 동일' 로 보내면 66667 x 3 = 200,001 로 1원이 넘친다. 그래서 갈랐다."""
+    from src.sheet import nightly_split
+    nightly = nightly_split(200000, 3)
+    page = Page([IDENTIFIED, Res({'data': {}}), DIFFERENT])
+    gq.itemize(page, 'E1', nightly)
+    rates = [x['roomRate'] for x in writes(page)[0]['data']['variables']['roomRateObject']]
+    assert sum(rates) == 200000
+
+
 def test_보내기_전에_검증한다():
     page = Page([IDENTIFIED, Res({'data': {}}), MADE])
-    gq.same_room_rate(page, 'E1', 150000)
+    gq.itemize(page, 'E1', [150000])
     dry = [kw for kw in page.sent if kw.get('data', {}).get('variables', {}).get('skip') is True]
     assert len(dry) == 1 and len(writes(page)) == 1
 
@@ -84,13 +109,13 @@ def test_Concur가_실패라고_하면_성공으로_치지_않는다():
     page = Page([IDENTIFIED, Res({'data': {}}), Res({'data': {
         'createSameRoomRateItemizations': {'status': {'success': False}}}})])
     with pytest.raises(gq.MaybeSent, match='실패로 표시'):
-        gq.same_room_rate(page, 'E1', 150000)
+        gq.itemize(page, 'E1', [150000])
 
 
 def test_요금이_0이면_보내지_않는다():
     page = Page([])
     with pytest.raises(gq.NotSent):
-        gq.same_room_rate(page, 'E1', 0)
+        gq.itemize(page, 'E1', [0])
     assert page.sent == []
 
 
@@ -105,13 +130,13 @@ def wire(monkeypatch, *, itemized, made=None):
     monkeypatch.setattr(gq, 'itemized', lambda page, eid: itemized)
     calls = []
 
-    def fake(page, eid, rate):
-        calls.append((eid, rate))
+    def fake(page, eid, nightly):
+        calls.append((eid, list(nightly)))
         if made is not None:
             raise made
         return gq.Saved(eid, False, (), ())
 
-    monkeypatch.setattr(gq, 'same_room_rate', fake)
+    monkeypatch.setattr(gq, 'itemize', fake)
     monkeypatch.setattr(fx, '_save_expense', lambda *a, **k: None)
     return calls
 
@@ -120,15 +145,18 @@ def test_요금이_같으면_GraphQL로_만든다(monkeypatch):
     calls = wire(monkeypatch, itemized=False)
     done = []
     assert fx._same_rate_by_api(Page([]), plan_of(), [150000, 150000], True, 'u', done) is True
-    assert calls == [('E1', 150000)]
+    assert calls == [('E1', [150000, 150000])]
     assert '항목별 명세 2건' in done[0] and '150,000원' in done[0]
 
 
-def test_요금이_다르면_화면으로_간다(monkeypatch):
-    """'가격 동일' 이 작전 이름에 박혀 있다. 다르면 이 길이 아니다."""
+def test_요금이_달라도_GraphQL로_만든다(monkeypatch):
+    """전에는 화면으로 넘겼다. 이제 '가격 다름' 작전이 있다."""
     calls = wire(monkeypatch, itemized=False)
-    assert fx._same_rate_by_api(Page([]), plan_of(), [150000, 149999], True, 'u', []) is False
-    assert calls == []
+    done = []
+    assert fx._same_rate_by_api(Page([]), plan_of(200000),
+                                [66667, 66667, 66666], True, 'u', done) is True
+    assert calls == [('E1', [66667, 66667, 66666])]
+    assert '66,666~66,667원' in done[0]
 
 
 def test_이미_명세가_있으면_안_만든다(monkeypatch):
@@ -174,30 +202,12 @@ def test_바꾼_것이_없으면_저장하지_않는다(monkeypatch):
     assert saved == []
 
 
-def test_끄면_화면으로_간다(monkeypatch):
-    monkeypatch.setenv('AUTO_CONCUR_NO_GRAPHQL', '1')
-    calls = wire(monkeypatch, itemized=False)
-    assert fx._same_rate_by_api(Page([]), plan_of(), [150000], True, 'u', []) is False
-    assert calls == []
-
-
-def test_요금이_다르면_왜_화면으로_갔는지_말한다(monkeypatch, capsys):
-    """흔한 경우다. 20만원 3박이면 [66667, 66667, 66666] 이다.
-    조용히 넘어가면 '이관이 안 되네' 로 보인다."""
-    wire(monkeypatch, itemized=False)
-    assert fx._same_rate_by_api(Page([]), plan_of(200000),
-                                [66667, 66667, 66666], True, 'u', []) is False
-    assert '1박 요금이 달라' in capsys.readouterr().out
-
-
-def test_실제_분배가_같은지_다른지로_갈린다(monkeypatch):
-    """합은 늘 맞지만 요금이 같은 경우와 다른 경우가 섞여 있다."""
+def test_실제_분배가_그대로_간다(monkeypatch):
+    """합은 늘 경비 총액과 맞아야 한다. 같든 다르든."""
     from src.sheet import nightly_split
-    for total, nights, expect in ((300000, 3, True), (200000, 3, False),
-                                  (450000, 3, True), (17000, 3, False)):
-        amounts = nightly_split(total, nights)
-        assert sum(amounts) == total
+    for total, nights in ((300000, 3), (200000, 3), (17000, 3), (450000, 3), (100000, 2)):
+        nightly = nightly_split(total, nights)
         calls = wire(monkeypatch, itemized=False)
-        used = fx._same_rate_by_api(Page([]), plan_of(total), amounts, True, 'u', [])
-        assert used is expect, (total, nights, amounts)
-        assert bool(calls) is expect
+        assert fx._same_rate_by_api(Page([]), plan_of(total), nightly, True, 'u', []) is True
+        assert calls == [('E1', nightly)]
+        assert sum(calls[0][1]) == total

@@ -187,15 +187,17 @@ C단계가 경비 목록을 읽을 때 **화면과 GraphQL을 둘 다 읽어 맞
 | **비즈니스 목적 / 코멘트 저장** | GraphQL `UpdateExistingExpenseEntry` |
 | **경비유형 변경** | GraphQL (같은 mutation의 `fields.expenseTypeId`) |
 | **영수증 첨부** | GraphQL `upload` → `AttachImage` |
-| **숙박 항목별 명세** | GraphQL `CreateSameRoomRateMutation` (조건부 — 아래) |
+| **숙박 항목별 명세** | GraphQL — 요금이 같으면 `SameRoomRate`, 다르면 `DifferentRoomRate` |
 | 숙박 날짜·위치·채널 | 화면 (위치·채널이 이름이 아니라 ID라 조회가 더 필요합니다) |
-| 참석자 | 화면 (`includeAtnTypeKeys`의 출처가 아직 없습니다) |
+| 참석자 | 화면 (`includeAtnTypeKeys`의 출처가 아직 남았습니다) |
 
-**명세는 세 조건을 다 만족할 때만** GraphQL로 갑니다. 하나라도 아니면 화면 경로입니다.
+**20만원 3박처럼 요금이 안 나눠떨어져도 됩니다.** `nightly_split`이 주는
+`[66667, 66667, 66666]`(합은 정확히 20만원)을 `CreateDifferentRoomRateMutation`에
+리스트로 그대로 넘깁니다. '가격 동일'로 66,667을 보내면 3박 합이 200,001원이 되어
+총액을 넘기므로, 요금이 하나라도 다르면 반드시 이쪽으로 갑니다.
 
-- 1박 요금이 전부 같아야 합니다 (`SameRoomRate`가 작전 이름에 박혀 있습니다)
-- 이미 명세가 있으면 안 됩니다. 이 mutation은 명세를 **만들기** 때문입니다
-- **있는지 모르면 만들지 않습니다.** 중복 명세는 되돌리기 어렵습니다
+**이미 명세가 있으면 만들지 않습니다.** 이 mutation은 명세를 **만들기** 때문에 중복이
+되돌리기 어렵습니다. **있는지 모를 때도 만들지 않고** 화면 경로로 갑니다.
 
 `roomRateExpenseTypeId`는 안 보냅니다. 원본 문서에선 `String!`이지만 **필드 인자 자체는
 선택**임을 시험으로 확인했습니다(대조군 4건이 전부 거부된 유효한 판에서).

@@ -360,3 +360,33 @@ C단계가 하는 일에 **전부 대응되는 작전이 있다.**
   **남은 것: '가격 다름' 쪽 작전.** 세 번의 기록 모두 `CreateSameRoomRateMutation`
   뿐이고(사용자가 '가격 동일' 로만 해봤다), 요금이 제각각인 명세를 만드는 작전은
   아직 본 적이 없다. 그것 하나면 숙박이 완전히 넘어간다.
+
+- **2026-11-05 4회차 기록: 두 구멍이 다 메워졌다.**
+  - **`CreateDifferentRoomRateMutation`** (10612자, 온전). `SameRoomRate` 와 다른
+    점은 `roomRateObject` 가 **리스트**라는 것 하나다:
+    `[RoomRateAndTax!]!` ← `[{roomRate: 66667}, {roomRate: 66667}, {roomRate: 66666}]`.
+    `nightly_split` 결과를 그대로 넘기면 합이 경비 총액과 정확히 맞는다.
+  - **구형 라우터 이름이 전부 나왔다.** `Attendee.GetAttendeeTypes`,
+    `Attendee.GetAttendeesForProdCode`, `Attendee.GetPermitAttendeeImport`,
+    `FormsAndFields.GetFormFields`, `FormsAndFields.GetListInfo`,
+    `FormsAndFields.GetFormLists`, `FormsAndFields.GetAttendeeListFieldsForEntry`,
+    `Country.GetCountriesList`. 전부 참석자·폼 메타데이터다.
+  - `Attendee.GetAttendeeTypes` 의 요청은
+    `{action: "Attendee", method: "GetAttendeeTypes", data: {forEmpKey}}` 이고
+    응답은 `{attendee_GetAttendeeTypes: {records: [{atnTypeKey, atnTypeCode, name,
+    isIncluded, ...}], recordCount}}` 다. **`includeAtnTypeKeys` 의 출처가 이것이다.**
+  - 이 회차에는 사용자가 숙박 날짜를 바꾸고 명세를 한 번 지웠다
+    (`DeleteExpenseEntries`). 삭제는 이관 대상이 아니다.
+
+- **2026-11-05 7단계 푸시: 요금이 달라도 명세를 GraphQL로.**
+  `gq.itemize(page, expense_id, nightly)` 하나로 갈린다 - `len(set(nightly)) == 1`
+  이면 Same, 아니면 Different. 20만원 3박 같은 흔한 경우가 이제 화면으로 안 떨어진다.
+
+- **참석자에 남은 것.** 경로는 이제 다 보인다:
+  `Attendee.GetAttendeeTypes`(구형 라우터) → `atnTypeKey` 목록 →
+  `attendeesByPredictiveSearch(searchTerms, includeInactiveEmp, includeAtnTypeKeys,
+  excludeKeys)` → `SaveExpenseAttendees`.
+  남은 불확실: 구형 라우터가 보내는 커스텀 헤더(`camelcase`, `fixjson`, `x-nui`)의
+  값을 모른다. 응답 모양을 바꾸는 스위치로 보여서, 안 보내면 키가 다르게 올 수 있다.
+  `forEmpKey` 가 GraphQL 의 `userId` 와 같은 값인지도 미확인(둘 다 len33-128).
+  참석자는 전에 실제로 데이터를 날린 자리라 그 둘을 추측으로 넘기지 않는다.
