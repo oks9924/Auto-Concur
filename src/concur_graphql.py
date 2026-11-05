@@ -194,3 +194,126 @@ def entries(ctx, report_id: str, user_id: str, context_role: str) -> list[Entry]
 def top_level(found: list[Entry]) -> list[Entry]:
     """명세 자식 행은 뺀다. 화면 목록에는 부모만 나온다."""
     return [e for e in found if not e.parent_expense_id]
+
+
+# ---------------------------------------------------------------------------
+# 빈 자리 보완 (2026-11-05)
+#
+# 화면 읽기를 대체하지 않는다. **비어 있는 자리만** 채우고, 두 경로가 서로 다른
+# 값을 말하면 어느 쪽도 고르지 않고 비운다.
+#
+# 왜 이렇게 하나: 경비는 한 달에 한 번이라 "표본을 쌓아 판단" 이 몇 달짜리가 된다.
+# 그래서 지금 붙이는데, 대체가 아니라 **교차검증**으로 붙인다. 어긋나면 값을 비우고
+# 기존 대상별 보류(`target_matching`)가 그 거래만 붙잡게 한다 - 화면 혼자 결정하는
+# 지금보다 보수적이다.
+#
+# 비어 있는 것과 어긋나는 것은 다르다. 화면이 못 읽은 것은 모순이 아니라 공백이다.
+
+import os
+import time
+
+_CACHE: dict[str, tuple[float, list[Entry] | None]] = {}
+
+# 저장 직후 재조회가 묵은 값을 보지 않을 만큼 짧게. 그러면서 ready_report 의
+# '3회 연속 같은 결과' 판정(500ms 간격 = 1.5초)보다 훨씬 길어야 한다 - 짧으면
+# 폴링 중에 결과가 바뀌어 목록이 영원히 안정되지 않는다.
+_TTL = 20.0
+_TOLD: set[str] = set()
+
+
+def disabled() -> bool:
+    """끌 수 있어야 한다. 문서 없는 계층에 기대는 보완이다."""
+    return bool(os.environ.get('AUTO_CONCUR_NO_GRAPHQL'))
+
+
+def _say_once(key: str, message: str) -> None:
+    if key not in _TOLD:
+        _TOLD.add(key)
+        print(message)
+
+
+def _cached(ctx, report_id: str) -> list[Entry] | None:
+    now = time.monotonic()
+    hit = _CACHE.get(report_id)
+    if hit and now - hit[0] < _TTL:
+        return hit[1]
+    try:
+        user_id, role = identify(ctx, report_id)
+        found = entries(ctx, report_id, user_id, role)
+    except GraphQLError as exc:
+        # 진단이 본 작업을 막으면 안 된다. 화면 값으로 그냥 간다.
+        _say_once('fail', f'  (GraphQL 보완을 쓰지 못했습니다: {exc})')
+        _CACHE[report_id] = (now, None)
+        return None
+    _CACHE[report_id] = (now, found)
+    return found
+
+
+def forget(report_id: str | None = None) -> None:
+    """저장 뒤처럼 값이 바뀐 것을 아는 시점에 캐시를 버린다."""
+    _CACHE.pop(report_id, None) if report_id else _CACHE.clear()
+
+
+def _report_id_of(page) -> str | None:
+    from .report_session import report_key
+    from urllib.parse import urlsplit
+    parts = urlsplit(page.url)
+    path = parts.path.split('/expenses/')[0].rstrip('/')
+    key = report_key(f'{parts.scheme}://{parts.netloc}{path}')
+    return key[1] if key else None
+
+
+def fill_gaps(page, rows: list) -> list:
+    """화면이 못 읽은 날짜·금액·영수증만 채운다. 어긋나면 비운다.
+
+    rows 는 `attach_receipts.Row` 목록이다. 제자리에서 고치고 그대로 돌려준다.
+
+    **무슨 일이 있어도 예외를 올려보내지 않는다.** 이건 보완이고, 보완이 본
+    작업을 막으면 지금까지 되던 것이 안 되게 된다. 그걸 '모든 접근을 다
+    감쌌겠지' 로 믿지 않고 여기서 한 번 막는다.
+    """
+    try:
+        return _fill(page, rows)
+    except Exception as exc:
+        _say_once('guard', f'  (GraphQL 보완을 건너뜁니다: {type(exc).__name__}: {exc})')
+        return rows
+
+
+def _fill(page, rows: list) -> list:
+    if disabled() or not rows:
+        return rows
+    # 빈 자리가 있을 때만 묻지 않는다. 그러면 값이 다 찬 행의 '어긋남' 을 놓치고,
+    # 교차검증이라는 목적 자체가 없어진다. 비용은 아래 캐시가 막는다 - 같은
+    # 리포트를 _TTL 초 안에 다시 묻지 않으므로, 500ms 폴링 루프에서도 호출이
+    # 늘지 않는다.
+    report_id = _report_id_of(page)
+    if not report_id:
+        return rows
+    found = _cached(page.context, report_id)
+    if not found:
+        return rows
+    by_id = {e.expense_id: e for e in found if e.expense_id}
+    filled, clashed = [], []
+    for row in rows:
+        api = by_id.get(row.expense_id or '')
+        if api is None:
+            continue
+        for what, attribute in (('날짜', 'when'), ('금액', 'amount'), ('영수증', 'has_receipt')):
+            mine, theirs = getattr(row, attribute), getattr(api, attribute)
+            if theirs is None:
+                continue
+            if mine is None:
+                setattr(row, attribute, theirs)
+                filled.append(f'{row.expense_id[:8]} {what}')
+            elif mine != theirs:
+                # 어느 쪽도 고르지 않는다. 비우면 대상별 보류가 받아 간다.
+                setattr(row, attribute, None)
+                clashed.append(f'{row.expense_id[:8]} {what}: 화면 {mine} / GraphQL {theirs}')
+    if filled:
+        print(f'  (GraphQL이 화면의 빈 값 {len(filled)}건을 채웠습니다: '
+              + ', '.join(filled[:6]) + (' ...' if len(filled) > 6 else '') + ')')
+    if clashed:
+        print(f'  (두 경로가 어긋난 {len(clashed)}건은 값을 비웠습니다 — 해당 거래만 보류됩니다)')
+        for line in clashed[:6]:
+            print('    ' + line)
+    return rows

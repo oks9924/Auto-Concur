@@ -263,7 +263,10 @@ def read_rows(page) -> list[Row]:
                         has_receipt=raw.get("receipt"), raw_date=raw.get("date", ""),
                         raw_amount=raw.get("amount", "") or raw.get("label", ""),
                         receipt_file=raw.get("receiptFile", ""), read_problem=raw.get("readProblem", "")))
-    return rows
+    # 화면이 못 읽은 자리만 GraphQL로 채운다. 어긋나면 비워서 대상별 보류로 넘긴다.
+    # 대체가 아니라 교차검증이다. 자세한 근거는 concur_graphql.fill_gaps 주석.
+    from . import concur_graphql
+    return concur_graphql.fill_gaps(page, rows)
 
 
 def rows_when_ready(page, tries: int = 90, wait_ms: int = 500,
