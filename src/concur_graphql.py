@@ -106,7 +106,15 @@ def identify(ctx, report_id: str) -> tuple[str, str]:
     user_id, role = employee.get('userId'), employee.get('contextRole')
     if not user_id or not role:
         raise GraphQLError('세션의 userId·contextRole 을 받지 못했습니다')
-    found = (employee.get('expenseReport') or {}).get('reportId')
+    report = employee.get('expenseReport')
+    if not report or not report.get('reportId'):
+        # 제일 있을 법한 실패다. 주소창의 ID가 GraphQL이 받는 reportId가 아니라
+        # rptKey 쪽일 수 있다. 그러면 사람이 다음에 뭘 봐야 하는지 알아야 한다.
+        raise GraphQLError(
+            f'이 리포트 ID로 조회가 되지 않았습니다: {report_id}\n'
+            '  주소창의 ID가 GraphQL이 받는 reportId가 아닐 수 있습니다(rptKey 쪽).\n'
+            '  아무것도 바꾸지 않았습니다 - 이 출력을 그대로 전해 주세요.')
+    found = report.get('reportId')
     if found != report_id:
         # 다른 리포트를 읽고 있으면 비교 자체가 무의미하다.
         raise GraphQLError(f'리포트가 다릅니다: 요청 {report_id} / 응답 {found}')

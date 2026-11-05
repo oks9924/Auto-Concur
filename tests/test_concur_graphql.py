@@ -93,6 +93,14 @@ def test_세션에서_userId_와_역할을_받는다():
     assert kw['data']['variables']['userId'] is None     # 세션이 스스로 답한다
 
 
+def test_리포트가_안_잡히면_다음_할_일을_알려준다():
+    """주소창의 ID가 GraphQL의 reportId가 아닐 수 있다. 제일 있을 법한 실패다."""
+    ctx = FakeContext({'data': {'employee': {
+        'userId': 'U1', 'contextRole': 'TRAVELER', 'expenseReport': None}}})
+    with pytest.raises(gq.GraphQLError, match='rptKey'):
+        gq.identify(ctx, 'R1')
+
+
 def test_다른_리포트가_오면_멈춘다():
     """엉뚱한 리포트를 읽으면 비교가 무의미하다. check_context 와 같은 규율이다."""
     ctx = FakeContext({'data': {'employee': {
