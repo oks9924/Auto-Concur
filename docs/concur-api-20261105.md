@@ -503,3 +503,27 @@ C단계가 하는 일에 **전부 대응되는 작전이 있다.**
     기존 영수증 보수 경로가 받아 간다.
   - 울타리(`test_graphql_scope`)에서 `createExpense`/`SaveNewExpenseEntry` 를 금지어
     에서 풀고 허용 목록에 넣었다. 제출·삭제·승인은 그대로 금지다.
+
+- **2026-11-05 8회차: 숙박 상세가 열렸다.** `GetExistingExpenseEntry` 10278자 온전.
+  `existingExpenseForm(dataContext: {expenseId, reportId}, userContext: {userId,
+  contextType}) { mainForm { fields { ... } } }` 이고, 폼 칸의 `value` 는 유니온이라
+  인라인 프래그먼트가 필요하다: `ListValue{listValue: value{code id value}}`,
+  `ListItemValue{code id listItemValue: value}`, `DateValue{dateValue: value}`,
+  `StringValue{stringValue: value}`, `LocationListValue{locationValue: value{id name
+  city ...}}`.
+  **저장소가 이미 알고 있었다:** 숙박위치는 `custom10`, Booking channel 은
+  `custom16` 이고 **둘 다 목록 칸**이다(`HINT_LOCATION`/`HINT_CHANNEL`). 지리적
+  `locationId` 는 우리가 쓰는 칸이 아니었다 - 위치 검색 작전을 찾던 것은 헛수고였다.
+
+- **2026-11-05 10단계 푸시: 숙박 상세를 GraphQL로.** 날짜·위치·채널이 전부
+  `updateExpense` 의 `fields` 로 간다. 화면의 날짜 범위 입력칸과 콤보박스 둘이
+  사라진다. 목록 칸은 `{listItemId, value}` 로 받고 둘 다 선택지의 `id` 다(실측).
+  틀려도 기존 `verify_edit` 가 화면에서 두 콤보를 다시 읽어 대조하므로 조용히
+  잘못 들어가지 않는다.
+  순서: (앞 단계에서 화면으로 바꾼 게 있으면) 저장 → 숙박 필드 → 명세. 명세는
+  저장된 날짜 위에서 만들어져야 한다.
+
+- **같은 실수를 세 번 했다: 새 경로가 예외를 올려보내 기존 화면 경로를 막았다.**
+  `fill_gaps`, 마일리지 생성, 숙박. 매번 기존 테스트가 잡아줬다. 이제 셋 다
+  같은 모양이다 - `MaybeSent`(보냈는데 결과 모름)만 올려보내고 **그 밖의 어떤
+  예외도 삼키고 화면 경로로 간다.** 새 길은 옵션이지 전제가 아니다.

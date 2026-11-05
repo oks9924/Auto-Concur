@@ -189,7 +189,13 @@ C단계가 경비 목록을 읽을 때 **화면과 GraphQL을 둘 다 읽어 맞
 | **영수증 첨부** | GraphQL `upload` → `AttachImage` |
 | **숙박 항목별 명세** | GraphQL — 요금이 같으면 `SameRoomRate`, 다르면 `DifferentRoomRate` |
 | **참석자** | GraphQL `GetAttendeesByPredictiveSearch` → `SaveExpenseAttendees` |
-| 숙박 날짜·위치·채널 | 화면 (위치·채널이 이름이 아니라 ID라 조회가 더 필요합니다) |
+| **숙박 날짜·위치·채널** | GraphQL (`hotelCheckinDate`/`hotelCheckoutDate`/`custom10`/`custom16`) |
+
+숙박위치와 Booking channel은 둘 다 목록 칸이고, 선택지가 **경비 상세 폼 안에**
+`options {id, code, value}`로 들어 있습니다 — 목록을 따로 받아올 필요가 없습니다.
+날짜는 ISO 문자열이라 **화면의 날짜 범위 입력칸**("날짜 범위 닫기"로 죽던 길)과
+**콤보박스 둘**이 한 호출로 대체됩니다. 하나라도 못 고르면 반만 넣지 않고 화면으로
+갑니다.
 | **자동차 마일리지** | GraphQL `SaveNewExpenseEntry` (이 도구가 하는 유일한 **생성**입니다) |
 
 **마일리지는 조회를 따로 만들지 않습니다.** 화면이 하는 방식 그대로입니다 —

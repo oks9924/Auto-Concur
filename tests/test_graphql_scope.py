@@ -24,6 +24,7 @@ ALLOWED = {
     'SaveExpenseAttendees',            # 쓰기: 기존 경비의 참석자
     'GetExpenseTypesForReport',        # 읽기: 경비유형 이름 -> id
     'GetNewExpenseEntry',              # 읽기: 새 경비 폼 (기본값·차량 옵션)
+    'GetExistingExpenseEntry',         # 읽기: 기존 경비 폼 (숙박위치·채널 옵션)
     'SaveNewExpenseEntry',             # 쓰기: 마일리지 경비 생성 (유일한 생성)
 }
 

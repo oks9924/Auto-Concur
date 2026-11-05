@@ -972,3 +972,87 @@ def create_mileage(page, type_name: str, vehicle: str, when, origin: str,
         result.messages = result.messages + (
             '금액이 계산되지 않았습니다 (거리·요율 설정을 확인해 주세요)',)
     return result
+
+
+# ---------------------------------------------------------------------------
+# 숙박 상세 (2026-11-05). 날짜·숙박위치·Booking channel.
+#
+# 숙박위치(`custom10`)와 Booking channel(`custom16`)은 둘 다 목록 칸이고, 선택지가
+# 폼 안에 `options {id, code, value}` 로 들어 있다. 차량 때와 같다 - 목록을 따로
+# 받아올 필요가 없다.
+#
+# 날짜는 `hotelCheckinDate`/`hotelCheckoutDate` 로 ISO 문자열이다. 화면의 날짜 범위
+# 입력칸(과 "날짜 범위 닫기" 로 죽던 길)이 통째로 사라진다.
+
+EXISTING_FORM = '''query GetExistingExpenseEntry($expenseIdAsID: ID!, $reportIdAsID: ID!, $userIdAsID: ID!, $contextRole: ContextRoleType!, $showAttendeeField: Boolean! = false) {
+  existingExpenseForm(
+    dataContext: {expenseId: $expenseIdAsID, reportId: $reportIdAsID}
+    userContext: {userId: $userIdAsID, contextType: $contextRole}
+  ) {
+    expenseId
+    mainForm(showAttendeeField: $showAttendeeField) {
+      fields {
+        id
+        label
+        control
+        dataType
+        isRequired
+        requiredForSave
+        options { id code value }
+        value {
+          ... on ListValue { listValue: value { code id value } }
+          ... on ListItemValue { code id listItemValue: value }
+          ... on DateValue { dateValue: value }
+          ... on StringValue { stringValue: value }
+        }
+      }
+    }
+  }
+}'''
+
+
+def existing_form_fields(page, expense_id: str) -> list[dict]:
+    report_id, user_id, role = ids(page)
+    data = call(page.context, 'GetExistingExpenseEntry', EXISTING_FORM,
+                {'expenseIdAsID': expense_id, 'reportIdAsID': report_id,
+                 'userIdAsID': user_id, 'contextRole': role})
+    form = ((data.get('existingExpenseForm') or {}).get('mainForm') or {})
+    fields = form.get('fields')
+    if not isinstance(fields, list) or not fields:
+        raise NotSent('경비 상세 폼의 입력 칸을 받지 못했습니다')
+    return fields
+
+
+def list_choice(fields: list[dict], field_id: str, label: str) -> str:
+    """목록 칸에서 표시 이름으로 고른다. 유일할 때만. 없으면 멈춘다."""
+    one = next((f for f in fields if f.get('id') == field_id), None)
+    if one is None:
+        raise NotSent(f'폼에 {field_id} 칸이 없습니다')
+    want = (label or '').strip().casefold()
+    hit = [o for o in (one.get('options') or [])
+           if want in {str(o.get(k) or '').strip().casefold() for k in ('value', 'code')}]
+    if len(hit) != 1:
+        count = len(one.get('options') or [])
+        raise NotSent(f"{one.get('label') or field_id} 에서 {label!r} 를 "
+                      f'{count}개 중 유일하게 고르지 못했습니다')
+    return hit[0]['id']
+
+
+def lodging_fields(page, expense_id: str, checkin, checkout,
+                   location: str = '', channel: str = '') -> dict:
+    """숙박 상세에 넣을 `fields`. 하나라도 못 고르면 멈춘다 - 반만 넣지 않는다."""
+    wanted = {}
+    if checkin and checkout:
+        wanted['hotelCheckinDate'] = checkin.isoformat()
+        wanted['hotelCheckoutDate'] = checkout.isoformat()
+    if location or channel:
+        fields = existing_form_fields(page, expense_id)
+        # 목록 칸은 {listItemId, value} 로 받는다(실측). 둘 다 선택지의 id 다.
+        for field_id, label in (('custom10', location), ('custom16', channel)):
+            if not label:
+                continue
+            chosen = list_choice(fields, field_id, label)
+            wanted[field_id] = {'listItemId': chosen, 'value': chosen}
+    if not wanted:
+        raise NotSent('숙박 상세에 넣을 값이 없습니다')
+    return wanted

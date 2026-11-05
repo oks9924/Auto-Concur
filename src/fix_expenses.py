@@ -1242,24 +1242,50 @@ def apply_plan(page, plan: Plan, report_url: str, *, opened: bool = False) -> st
     return ", ".join(done) if done else "이미 되어 있음"
 
 
-def _same_rate_by_api(page, plan, amounts, changed, report_url, done) -> bool:
-    """GraphQL로 숙박 명세를 만든다. 했으면 True.
+def _lodging_by_api(page, plan, amounts, changed, report_url, done) -> bool:
+    """숙박 상세와 명세를 GraphQL로 넣는다. 했으면 True.
 
-    먼저 상세를 저장해야 한다. 날짜 범위·위치·채널을 화면에서 넣어둔 상태라
-    저장하지 않으면 그 값이 날아가고, 명세는 저장된 날짜 위에서 만들어진다.
+    날짜·숙박위치·Booking channel 이 전부 `updateExpense` 의 `fields` 로 간다.
+    화면의 날짜 범위 입력칸("날짜 범위 닫기" 로 죽던 길)과 콤보박스 둘이
+    사라진다. 명세는 그 다음이다 - 저장된 날짜 위에서 만들어져야 한다.
+
+    앞 단계(유형·목적·코멘트)를 화면에서 바꿨으면 먼저 저장한다. 그래야 그
+    값이 날아가지 않는다.
     """
     from . import concur_graphql as gq
-    if gq.disabled() or not amounts:
+
+    # 보낸 뒤 결과를 모르는 것(MaybeSent)만 올려보낸다. 그 밖의 어떤 예외도
+    # 기존 화면 경로를 막아서는 안 된다 - 이걸 세 번 틀려서 구조로 막는다
+    # (fill_gaps, _create_by_api, 그리고 여기).
+    try:
+        return _lodging_api_inner(page, plan, amounts, changed, report_url, done)
+    except gq.MaybeSent:
+        raise
+    except Exception as why:
+        print(f'    (GraphQL 숙박을 쓰지 못해 화면으로 갑니다: {why})')
         return False
-    if gq.itemized(page, plan.row.expense_id) is not False:
-        return False  # 이미 있거나, 있는지 모른다 - 둘 다 만들지 않는다
+
+
+def _lodging_api_inner(page, plan, amounts, changed, report_url, done) -> bool:
+    from . import concur_graphql as gq
+    lodging = plan.lodging
+    if gq.disabled() or lodging is None:
+        return False
+    if amounts and gq.itemized(page, plan.row.expense_id) is not False:
+        return False  # 이미 명세가 있거나, 있는지 모른다 - 둘 다 만들지 않는다
+    wanted = gq.lodging_fields(page, plan.row.expense_id, lodging.checkin,
+                               lodging.checkout, lodging.location, lodging.channel)
     if changed:
         _save_expense(page, plan.row, report_url, reopen=False)
-    try:
-        saved = gq.itemize(page, plan.row.expense_id, amounts)
-    except gq.NotSent as why:
-        print(f'    (GraphQL 명세를 쓰지 못해 화면으로 갑니다: {why})')
-        return False
+    gq.save_fields(page, plan.row.expense_id, wanted)
+    if lodging.nights:
+        done.append(f'숙박 {_md(lodging.checkin)}~{_md(lodging.checkout)} ({lodging.nights}박)')
+    for name, value in (('숙박 위치', lodging.location), ('Booking channel', lodging.channel)):
+        if value:
+            done.append(name)
+    if not amounts:
+        return True
+    saved = gq.itemize(page, plan.row.expense_id, amounts)
     same = len(set(amounts)) == 1
     rate = (f'일일 {amounts[0]:,}원' if same
             else f'일일 {amounts[-1]:,}~{amounts[0]:,}원')
@@ -1285,6 +1311,10 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
     amounts = nightly_split(plan.row.amount or 0, lodging.nights) if lodging.nights else []
     done = []
 
+    # 날짜·위치·채널·명세를 GraphQL로 한 번에 넣는다. 되면 화면은 손대지 않는다.
+    if _lodging_by_api(page, plan, amounts, changed, report_url, done):
+        return done
+
     _open_tab(page, TAB_DETAILS, "상세 정보")
     # 실시간으로 찍는다. 실패했을 때 날짜를 넣고 실패한 건지 넣지도 못한 건지
     # 알 수 없어서 몇 번을 헤맸다 (실측 2026-09-09).
@@ -1306,15 +1336,6 @@ def _apply_lodging(page, plan: Plan, report_url: str, changed: bool = False) -> 
     if not lodging.nights:
         if changed:
             _save_expense(page, plan.row, report_url, reopen=bool(plan.attendee))
-        return done
-
-    # 명세는 GraphQL로 한 번에 만들 수 있다. 화면 경로의 콤보박스·1박 예외·
-    # 숨은 저장 버튼·패널 클릭 가로채기가 전부 이 한 호출로 대체된다.
-    # 요금이 같으면 '가격 동일', 다르면 '가격 다름' 작전으로 간다.
-    #
-    # 다만 이 mutation 은 명세를 '만든다'. 이미 있으면 중복이 되므로,
-    # **없다고 확신할 때만** 쓴다 - 모르면 화면으로 간다.
-    if _same_rate_by_api(page, plan, amounts, changed, report_url, done):
         return done
 
     # 중간에 저장하지 않는다. 객실 요금이 비어 있는 채로 저장하면 '필수 정보가
