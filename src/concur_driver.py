@@ -60,15 +60,24 @@ class Driver:
         self.page.wait_for_timeout(3000)
         fx._save_expense(self.page, row, self.report_url, reopen=False)
 
-    # 목적·코멘트만 바꾸는 계획은 GraphQL 로 보낸다. 유형 변경은 policyId 가
-    # 필요하고(그걸 주는 작전을 아직 못 잡았다), 참석자는 별도 mutation 에
-    # versionNumber 가 필요하고, 숙박 명세는 roomRateExpenseTypeId 가 필요하다.
-    # 그 셋은 화면 경로를 그대로 쓴다.
+    # 한 번의 updateExpense 로 보낼 수 있는 계획인지 본다.
+    #
+    # 유형 변경이 여기 들어온다: `fields.expenseTypeId` 하나면 되고 policyId 는
+    # 필요 없다 - 그걸 쓰던 `CDS_addRecentExpenseTypes` 를 우리 문서에서 뺐다.
+    # 저장소가 이미 들고 있는 코드(`PARKG`·`01143`·`LODNG`)가 기록의
+    # `expenseTypeId` 모양(digits / 1-8자)과 같다. 그리고 저장 뒤 `verify_edit`
+    # 가 화면에서 유형을 다시 읽어 대조하므로 독립 확인이 남아 있다.
+    #
+    # 참석자는 별도 mutation 에 참석자별 versionNumber 와 금액 분배가 필요하고,
+    # 숙박 명세는 roomRateExpenseTypeId 가 필요하다. 둘 다 아직 근거가 없어서
+    # 화면 경로를 그대로 쓴다.
     @staticmethod
     def _fields_only(plan):
-        if plan.type_code or plan.attendee or plan.lodging:
+        if plan.attendee or plan.lodging:
             return None
         fields = {}
+        if plan.type_code:
+            fields['expenseTypeId'] = plan.type_code
         if plan.purpose:
             fields['businessPurpose'] = plan.purpose
         if plan.comment:
@@ -81,7 +90,10 @@ class Driver:
         if fields:
             try:
                 saved = gq.save_fields(self.page, plan.row.expense_id, fields)
-                done = ', '.join(f'{k}->{v[:20]}' for k, v in fields.items())
+                shown = dict(fields)
+                if 'expenseTypeId' in shown:
+                    shown['expenseTypeId'] = plan.type_label or plan.type_code
+                done = ', '.join(f'{k}->{v[:20]}' for k, v in shown.items())
                 if saved.blocking or saved.messages:
                     # 저장 응답이 예외를 같이 준다. 화면 글자를 읽지 않아도 안다.
                     note = '; '.join(saved.messages[:3]) or '차단 예외'

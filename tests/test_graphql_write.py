@@ -213,11 +213,34 @@ def test_목적_코멘트만이면_GraphQL로_간다(monkeypatch):
     assert calls == [('E1', {'businessPurpose': '내부 회의', 'comment': '참석자 2명'})]
 
 
+def test_유형_변경도_같은_mutation_으로_간다(monkeypatch):
+    """fields.expenseTypeId 하나면 된다. policyId 는 우리 문서에 없다."""
+    calls = []
+    monkeypatch.setattr(gq, 'save_fields',
+                        lambda page, eid, fields: calls.append(fields)
+                        or gq.Saved(eid, False, (), ()))
+    monkeypatch.setattr('src.fix_expenses.apply_plan',
+                        lambda *a, **k: pytest.fail('화면 경로로 갔습니다'))
+    driver = Driver(Page([]), 'https://eu2.concursolutions.com/nui/expense/reports/R1', None)
+    driver.guard = lambda: None
+    driver.apply_edit(plan_of(type_code='LODNG', type_label='숙박비', comment='x'))
+    assert calls == [{'expenseTypeId': 'LODNG', 'comment': 'x'}]
+
+
+def test_유형_보고는_코드가_아니라_이름으로_한다(monkeypatch):
+    monkeypatch.setattr(gq, 'save_fields',
+                        lambda page, eid, fields: gq.Saved(eid, False, (), ()))
+    driver = Driver(Page([]), 'https://eu2.concursolutions.com/nui/expense/reports/R1', None)
+    driver.guard = lambda: None
+    done = driver.apply_edit(plan_of(type_code='01143', type_label='사무용품'))
+    assert '사무용품' in done and '01143' not in done
+
+
 @pytest.mark.parametrize('extra', [
-    {'type_code': '1'},            # 유형 변경은 policyId 가 필요하다
-    {'attendee': '홍길동'},          # 참석자는 별도 mutation + versionNumber
+    {'attendee': '홍길동'},          # 별도 mutation + 참석자별 versionNumber·금액
+    {'lodging': object()},          # roomRateExpenseTypeId 가 필요하다
 ])
-def test_나머지는_화면_경로를_그대로_쓴다(monkeypatch, extra):
+def test_참석자와_숙박은_화면_경로를_그대로_쓴다(monkeypatch, extra):
     monkeypatch.setattr(gq, 'save_fields',
                         lambda *a, **k: pytest.fail('GraphQL로 갔습니다'))
     went = []

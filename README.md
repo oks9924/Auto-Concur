@@ -185,10 +185,15 @@ C단계가 경비 목록을 읽을 때 **화면과 GraphQL을 둘 다 읽어 맞
 | 작업 | 경로 |
 |---|---|
 | **비즈니스 목적 / 코멘트 저장** | GraphQL `UpdateExistingExpenseEntry` |
+| **경비유형 변경** | GraphQL (같은 mutation의 `fields.expenseTypeId`) |
 | **영수증 첨부** | GraphQL `upload` → `AttachImage` |
-| 경비유형 변경 | 화면 (policyId가 필요하고 그걸 주는 작전을 아직 못 잡았습니다) |
-| 참석자 | 화면 (별도 mutation에 attendee별 versionNumber가 필요합니다) |
-| 숙박 항목별 명세 | 화면 (roomRateExpenseTypeId가 필요합니다) |
+| 참석자 | 화면 (참석자별 `versionNumber`와 금액 분배 규칙이 아직 없습니다) |
+| 숙박 항목별 명세 | 화면 (`roomRateExpenseTypeId`의 출처가 아직 없습니다) |
+
+유형 변경에 `policyId`는 필요 없습니다. 그걸 쓰던 `CDS_addRecentExpenseTypes`를 우리
+문서에서 뺐기 때문입니다. 저장소가 이미 들고 있는 코드(`PARKG`·`01143`·`LODNG`)가
+실측된 `expenseTypeId` 모양과 같고, 저장 뒤 `verify_edit`가 화면에서 유형을 다시 읽어
+대조하므로 독립 확인이 남아 있습니다.
 
 **보내기 전에 검증합니다.** 같은 문서·같은 변수를 `@skip(if: true)`로 한 번 보내면
 문서와 변수는 검증되고 resolver는 실행되지 않습니다. 즉 쓰지 않고 모양만 확인합니다.
@@ -202,6 +207,17 @@ C단계가 경비 목록을 읽을 때 **화면과 GraphQL을 둘 다 읽어 맞
 구조화돼서 오므로 안내창 글자를 읽지 않습니다. 빈 필드 이름도 같이 옵니다.
 
 끄려면 `AUTO_CONCUR_NO_GRAPHQL=1` — 읽기 보완과 같은 스위치입니다.
+
+### 남은 둘은 스키마에 직접 묻습니다
+
+```text
+python -m src.inspect_schema
+```
+
+지금까지는 *화면이 보낸 것*을 보고 모양을 짐작했습니다. 그래서 어떤 필드가 **필수인지
+비워도 되는지**는 알 수 없었습니다 — 참석자별 금액이나 명세의 요금이 그렇습니다.
+GraphQL introspection이 열려 있으면 **서버가 직접** 알려줍니다. 꺼져 있으면 한 번
+돌려서 그걸 알게 됩니다. 어느 쪽이든 질의만 보내고 mutation은 부르지 않습니다.
 
 ## 읽기 비교만 따로 보기 (변경 없음)
 

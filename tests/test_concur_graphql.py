@@ -213,3 +213,28 @@ def test_요약은_못_읽은_행_수를_센다():
     lines = report_lines([dom('E1', None, None)], [api('E1', date(2026, 9, 7), 1)], children=2)
     assert '명세 자식 2행은 제외' in lines[0]
     assert '화면 1행 · GraphQL 0행' in lines[1]
+
+
+# --- 스키마 조회 (읽기 전용) -------------------------------------------------
+
+def test_타입_포장을_읽는_꼴로_편다():
+    from src.inspect_schema import render
+    assert render({'kind': 'NON_NULL', 'ofType': {'kind': 'SCALAR', 'name': 'String'}}) == 'String!'
+    assert render({'kind': 'LIST', 'ofType': {'kind': 'NON_NULL',
+                   'ofType': {'kind': 'INPUT_OBJECT', 'name': 'AttendeeInput'}}}) == '[AttendeeInput!]'
+    assert render(None) == '?'
+
+
+def test_필수와_선택을_가른다():
+    from src.inspect_schema import describe
+    lines = '\n'.join(describe({'name': 'T', 'kind': 'INPUT_OBJECT', 'inputFields': [
+        {'name': 'atnKey', 'defaultValue': None,
+         'type': {'kind': 'NON_NULL', 'ofType': {'kind': 'SCALAR', 'name': 'String'}}},
+        {'name': 'transactionAmount', 'defaultValue': None,
+         'type': {'kind': 'SCALAR', 'name': 'Float'}},
+        {'name': 'instanceCount', 'defaultValue': '1',
+         'type': {'kind': 'NON_NULL', 'ofType': {'kind': 'SCALAR', 'name': 'Int'}}},
+    ]}))
+    assert 'atnKey' in lines and 'String! ' in lines and '필수' in lines
+    assert 'transactionAmount' in lines and '선택' in lines
+    assert '기본값=1' in lines          # 기본값이 있으면 안 보내도 된다

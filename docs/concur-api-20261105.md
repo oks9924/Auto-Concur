@@ -249,3 +249,22 @@ C단계가 하는 일에 **전부 대응되는 작전이 있다.**
     자리라 더 신중해야 한다.
   - 다음에 필요한 것: policyId 를 주는 작전, `GetAttendeesByPredictiveSearch` 의
     versionNumber 를 들고 `SaveExpenseAttendees` 로 가는 경로.
+
+- **2026-11-05 4단계 푸시: 유형 변경 이관 + 스키마 조회 도구.**
+  - **유형 변경은 `policyId` 가 필요 없었다.** 그걸 쓰던 `CDS_addRecentExpenseTypes`
+    를 우리 최소 문서에서 이미 뺐기 때문이다. `fields.expenseTypeId` 하나면 된다.
+    저장소의 코드(`PARKG`·`01143`·`LODNG`)가 실측 `expenseTypeId` 모양(digits /
+    1-8자)과 같다. 저장 뒤 `verify_edit` 가 화면에서 유형을 다시 읽어 대조하므로
+    독립 확인이 남는다.
+  - **남은 둘의 구멍이 무엇인지 확정했다.**
+    - 참석자: `GetAttendeesByPredictiveSearch` 가 `atnKey`·`atnTypeCode`·
+      `versionNumber` 를 주고 `SaveExpenseAttendees` 가 그걸 받는다. 경로는 다 있다.
+      구멍은 참석자별 `transactionAmount`·`instanceCount` 다 - 화면이 보낸 것은
+      봤지만 **필수인지, 값을 어떻게 나누는지** 모른다. 그리고 `saveAttendeesLegacy`
+      는 목록을 통째로 교체한다 - 전에 참석자가 다 지워진 사고가 이 성질이다.
+    - 숙박 명세: `roomRateExpenseTypeId` 의 출처인
+      `GetNewItemizationExpenseTypesForm` 응답이 2회차에서 `network-failed` 라 비었다.
+  - **`python -m src.inspect_schema` 를 만들었다.** 두 구멍 다 "어떤 필드가 필수인가"
+    여서, 화면이 보낸 것을 더 모으는 것보다 스키마에 직접 묻는 쪽이 확정적이다.
+    읽기 전용이고 mutation 을 부르지 않는다. introspection 이 꺼져 있으면 한 번
+    돌려서 그걸 알게 된다.
