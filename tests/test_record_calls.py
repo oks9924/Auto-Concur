@@ -304,3 +304,21 @@ def test_잡음은_화면에만_안_띄운다():
     assert noisy({'host': 'eu2.concursolutions.com', 'path': '/nui/expense/nui-shell/api/logs'})
     assert noisy({'host': 'eu-mobile.events.data.microsoft.com', 'path': '/OneCollector/1.0/'})
     assert not noisy({'host': 'www-eu2.api.concursolutions.com', 'path': '/spend-graphql/graphql'})
+
+
+def test_구형_NET_라우터도_이름을_남긴다(recorded, server):
+    """expenseRouter.ashx 는 {action, method, data} 로 부른다. GraphQL의
+    operationName과 같은 자리라 같이 남겨야 어느 호출인지 가릴 수 있다."""
+    calls = recorded(POST_JS, {'url': server + '/expense/expenseDotNet/Proxy/expenseRouter.ashx',
+                               'body': {'action': 'Itemization', 'method': 'saveItemizations',
+                                        'data': [{'transactionDate': '2026-09-07',
+                                                  'amount': 450000,
+                                                  'vendor': '라한호텔울산'}]}})
+    post = next(c for c in calls if c['method'] == 'POST')
+    assert post['op'] == 'Itemization.saveItemizations'
+    assert post['reqBody']['action'] == 'Itemization'
+    assert post['reqBody']['method'] == 'saveItemizations'
+    assert post['reqBody']['data']['[0]']['transactionDate'] == 'str:date-iso'
+    text = json.dumps(calls, ensure_ascii=False)
+    for secret in ('2026-09-07', '450000', '라한호텔울산'):
+        assert secret not in text, f'{secret} 가 기록에 남았습니다'

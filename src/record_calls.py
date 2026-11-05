@@ -144,12 +144,16 @@ RECORD_JS = r"""
     .replace(/\b\d[\d_.eE+-]*\b/g, '?')
     .replace(/\s+/g, ' ').trim().slice(0, 4000);
 
+  // 구형 .NET 라우터(expenseRouter.ashx)는 {action, method, data} 로 부른다.
+  // GraphQL의 operationName과 같은 자리다 - 무엇을 하는 호출인지가 거기 있다.
+  const NAMES = ['operationName', 'action', 'method'];
+
   const describe = v => {
     const out = shape(v, 0);
     if (v && typeof v === 'object' && !Array.isArray(v) && out && typeof out === 'object') {
-      if (typeof v.operationName === 'string' && IDENT.test(v.operationName)) {
-        out.operationName = v.operationName;
-      }
+      NAMES.forEach(key => {
+        if (typeof v[key] === 'string' && IDENT.test(v[key])) out[key] = v[key];
+      });
       if (typeof v.query === 'string') out.query = gqlDoc(v.query);
     }
     return out;
@@ -163,8 +167,13 @@ RECORD_JS = r"""
     const got = parsed(text);
     if (!got.ok) return null;
     const first = Array.isArray(got.v) ? got.v[0] : got.v;
-    const name = first && first.operationName;
-    return typeof name === 'string' && IDENT.test(name) ? name : null;
+    if (!first || typeof first !== 'object') return null;
+    const pick = key => typeof first[key] === 'string' && IDENT.test(first[key]) ? first[key] : null;
+    const name = pick('operationName');
+    if (name) return name;
+    // 구형 라우터는 action.method 로 하나를 가린다.
+    const action = pick('action'), method = pick('method');
+    return method ? (action ? action + '.' + method : method) : null;
   };
 
   const fromText = (text, type) => {
