@@ -344,3 +344,47 @@ def test_정말_긴_것은_잘렸다고_적는다(recorded, server):
                                'body': {'operationName': 'X', 'query': huge}})
     doc = next(c for c in calls if c['method'] == 'POST')['reqBody']['query']
     assert '잘림' in doc and '자 */' in doc
+
+
+# --- 헤더 값 --------------------------------------------------------------
+# 구형 .NET 라우터가 camelcase/fixjson/x-nui 를 보내는데 그 값을 모르면 같은
+# 호출을 만들 수 없다. 응답 모양을 바꾸는 스위치라서다. 그래서 그것만 남긴다.
+
+def test_프로토콜_스위치_헤더는_값까지_남긴다(recorded, server):
+    calls = recorded("""async (a) => {
+      await fetch(a.url, {method: 'POST', headers: {
+        'Content-Type': 'application/json', 'camelcase': 'true',
+        'fixjson': 'true', 'x-nui': 'true'}, body: '{}'});
+    }""", {'url': server + '/expense/expenseDotNet/Proxy/expenseRouter.ashx'})
+    post = next(c for c in calls if c['method'] == 'POST')
+    assert post['reqHeaderValues']['camelcase'] == 'true'
+    assert post['reqHeaderValues']['fixjson'] == 'true'
+    assert post['reqHeaderValues']['x-nui'] == 'true'
+
+
+def test_그_밖의_헤더는_이름만_남는다(recorded, server):
+    """cookie·authorization 류는 값이 절대 안 남아야 한다."""
+    calls = recorded("""async (a) => {
+      await fetch(a.url, {method: 'POST', headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer SECRET-TOKEN-VALUE',
+        'X-Api-Key': 'SECRET-KEY'}, body: '{}'});
+    }""", {'url': server + '/x'})
+    post = next(c for c in calls if c['method'] == 'POST')
+    assert 'authorization' in post['reqHeaders']        # 이름은 남고
+    assert 'authorization' not in post['reqHeaderValues']
+    assert 'x-api-key' not in post['reqHeaderValues']
+    assert 'SECRET' not in json.dumps(calls, ensure_ascii=False)
+
+
+def test_XHR_헤더_값도_같은_규칙이다(recorded, server):
+    calls = recorded("""(a) => {
+      const x = new XMLHttpRequest();
+      x.open('POST', a.url);
+      x.setRequestHeader('camelcase', 'true');
+      x.setRequestHeader('X-Secret', 'SECRET-XHR');
+      x.send('{}');
+    }""", {'url': server + '/x'})
+    xhr = next(c for c in calls if c['via'] == 'xhr')
+    assert xhr['reqHeaderValues']['camelcase'] == 'true'
+    assert 'SECRET-XHR' not in json.dumps(calls, ensure_ascii=False)

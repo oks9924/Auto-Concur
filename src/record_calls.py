@@ -54,10 +54,10 @@ START_URL = 'https://travel.siemens.cloud'
 # 어느 호출이 어느 동작의 것인지 나중에 가를 수 있다. 건너뛰려면 그냥 Enter.
 STEPS = [
     '로그인하고 경비 리포트 목록 열기',
-    '경비 하나 열기 (상세 화면)',
+    '참석자 칸을 열어 이름 검색 (저장 안 해도 됨)',
+    '숙박 경비에서 숙박위치·Booking channel 고르기',
+    '자동차 마일리지 경비 하나 만들기',
     '비즈니스 목적 또는 코멘트를 바꿔서 저장',
-    '참석자 한 명 추가해서 저장',
-    '숙박 경비에 항목별 명세 입력해서 저장',
     '영수증 하나 첨부',
 ]
 
@@ -136,6 +136,21 @@ RECORD_JS = r"""
   // 있고, 그 둘은 스키마(필드 이름)이지 거래 값이 아니다 - 값은 variables로
   // 따로 간다. 그래서 이 둘만 그대로 남긴다.
   const IDENT = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
+
+  // 값까지 남기는 헤더. **프로토콜 스위치만** 넣는다 - 응답 모양을 바꾸는
+  // 것들이라 값을 모르면 같은 호출을 만들 수 없다(구형 .NET 라우터가 그렇다).
+  // cookie/authorization 같은 것은 절대 여기 들어오지 않는다. 이름은 전부
+  // 남기고 값은 이 목록만이다.
+  const SHOW = ['camelcase', 'fixjson', 'x-nui', 'x-requested-with',
+                'accept', 'content-type', 'accept-language'];
+  const headerValues = (pairs) => {
+    const out = {};
+    for (const [name, value] of pairs) {
+      const key = String(name).toLowerCase();
+      if (SHOW.includes(key)) out[key] = String(value).slice(0, 80);
+    }
+    return out;
+  };
 
   // 다만 클라이언트가 값을 질의문에 박아 보낼 수도 있다. 문자열·숫자
   // 리터럴을 지워서 그 경우에도 값이 새지 않게 한다.
@@ -234,12 +249,14 @@ RECORD_JS = r"""
         const raw = isRequest ? input.url : String(input);
         const method = String((init && init.method) || (isRequest && input.method) || 'GET').toUpperCase();
         const headers = new Headers((init && init.headers) || (isRequest ? input.headers : undefined) || {});
-        const names = []; headers.forEach((v, k) => names.push(String(k).toLowerCase()));
+        const names = [], pairs = [];
+        headers.forEach((v, k) => { names.push(String(k).toLowerCase()); pairs.push([k, v]); });
         const body = init && 'body' in init ? init.body : undefined;
         const sent = body !== undefined ? reqBody(body, headers.get('content-type') || '')
                    : isRequest ? 'in-request-object' : null;
         rec = Object.assign({via: 'fetch', method}, place(raw),
-                            {op: opName(body), reqHeaders: [...new Set(names)].sort(), reqBody: sent});
+                            {op: opName(body), reqHeaders: [...new Set(names)].sort(),
+                             reqHeaderValues: headerValues(pairs), reqBody: sent});
       } catch (e) { rec = null; }
       const out = originalFetch.apply(this, arguments);
       try {
@@ -265,7 +282,7 @@ RECORD_JS = r"""
   XMLHttpRequest.prototype.open = function (method, url) {
     try {
       this.__ac = Object.assign({via: 'xhr', method: String(method || 'GET').toUpperCase()},
-                                place(url), {reqHeaders: [], ctype: ''});
+                                place(url), {reqHeaders: [], pairs: [], ctype: ''});
     } catch (e) { this.__ac = null; }
     return XO.apply(this, arguments);
   };
@@ -273,6 +290,7 @@ RECORD_JS = r"""
     try {
       if (this.__ac) {
         this.__ac.reqHeaders.push(String(name).toLowerCase());
+        this.__ac.pairs.push([name, value]);
         if (/^content-type$/i.test(name)) this.__ac.ctype = String(value);
       }
     } catch (e) {}
@@ -285,7 +303,9 @@ RECORD_JS = r"""
         rec.reqBody = reqBody(body, rec.ctype);
         rec.op = opName(body);
         rec.reqHeaders = [...new Set(rec.reqHeaders)].sort();
+        rec.reqHeaderValues = headerValues(rec.pairs);
         delete rec.ctype;
+        delete rec.pairs;
         this.addEventListener('loadend', () => {
           try {
             rec.status = xhr.status;
