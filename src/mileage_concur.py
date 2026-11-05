@@ -85,6 +85,8 @@ EXACT_TEXT_JS = "(names) => {" + SURFACE_HELPERS + r"""
   return null;
 }"""
 
+MILEAGE_TYPE_NAME = '자동차 마일리지'
+
 MILEAGE_TYPE_JS = "() => {" + SURFACE_HELPERS + r"""
   const root=surface();
   const names=['자동차 마일리지','차량 마일리지','마일리지'];
@@ -500,8 +502,50 @@ def _fill_and_save(page, report_url, row, map_path, draft_id, before):
         raise UncertainMileageCreate(str(exc), draft_id or _expense_id(page.url)) from exc
 
 
+def _create_by_api(page, report_url, row, map_path):
+    """GraphQL로 마일리지를 만든다. 만들었으면 경비 ID, 못 하면 None.
+
+    **만들기라서 화면 경로보다 더 조인다.** 폼이 '저장에 필요하다'고 한 칸 중
+    하나라도 값을 못 만들면 아무것도 보내지 않는다. 금액은 보내지 않는다 -
+    거리 x 정책 요율이라 우리가 계산하면 회사 요율을 덮어쓴다.
+
+    지도는 만든 뒤에 붙인다. 업로드가 실패해도 경비는 이미 제대로 생겼고,
+    영수증 보수 경로가 기존대로 받아 간다.
+    """
+    from . import concur_graphql as gq
+    if gq.disabled():
+        return None
+    try:
+        page.goto(report_url, wait_until='domcontentloaded')
+        check_context(page, report_url)
+        saved = gq.create_mileage(
+            page, MILEAGE_TYPE_NAME, row['vehicle'], row['date'], row['origin'],
+            row['destination'], row['distance'],
+            passengers=row.get('passengers'), description=row.get('description', ''))
+    except gq.MaybeSent:
+        # 보냈는데 결과를 모른다. 화면으로 또 만들면 경비가 둘이 된다.
+        raise
+    except Exception as why:
+        # 보내기 전에 막혔다. 지금까지 되던 화면 경로가 그대로 돌아야 한다 -
+        # 새 길이 본 작업을 막으면 안 된다는 것을 fill_gaps 에서 한 번 배웠다.
+        print(f'    (GraphQL 생성을 쓰지 못해 화면으로 만듭니다: {why})')
+        return None
+    for line in saved.messages[:3]:
+        print(f'    (Concur: {line})')
+    if map_path:
+        try:
+            gq.attach_receipt(page, saved.expense_id, map_path)
+        except gq.GraphQLError as why:
+            print(f'    (지도 첨부는 못 했습니다: {why})')
+    return saved.expense_id
+
+
 def create_one(page, report_url, row, map_path, before_ids=None):
     """Create exactly one mileage expense and prove one new report id appeared."""
+    made = _create_by_api(page, report_url, row, map_path)
+    if made:
+        return made
+
     page.goto(report_url, wait_until='domcontentloaded')
     check_context(page, report_url)
     before = _report_ids(page) if before_ids is None else set(before_ids)

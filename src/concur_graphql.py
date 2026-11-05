@@ -763,3 +763,212 @@ def save_attendees(page, expense_id: str, chosen: list[dict], amounts: list[int]
     _write(page.context, 'SaveExpenseAttendees', SAVE_ATTENDEES, args, dry=False)
     forget(report_id)
     return Saved(expense_id, False, (), ())
+
+
+# ---------------------------------------------------------------------------
+# 자동차 마일리지 생성 (2026-11-05).
+#
+# **이건 '고치기' 가 아니라 '만들기' 다.** 틀리면 없던 재무 기록이 생기고 사람이
+# 찾아 지워야 한다. 그래서 더 조인다 - 폼이 '저장에 필요하다'고 한 칸 중 하나라도
+# 값을 만들지 못하면 **아무것도 보내지 않고** 화면 경로로 간다.
+#
+# 조회를 따로 만들지 않는다. 화면이 하는 방식 그대로다:
+#   1. GetExpenseTypesForReport  -> 마일리지 경비유형 이름 -> id
+#   2. GetNewExpenseEntry(그 id) -> 폼 42칸. 기본값도 차량 옵션도 여기 다 있다
+#   3. 폼의 기본값에 우리 값(차량·날짜·출발/도착지·거리)만 덮는다
+#   4. SaveNewExpenseEntry
+#
+# 차량은 그 폼의 `vehicleId` 칸 `options[{id, value}]` 에서 표시 이름으로 고른다.
+# 목록을 따로 받아올 필요가 없다.
+
+REPORT_POLICY = '''query GetReportIdAndKey($userId: String, $contextRole: ContextRoleType, $reportId: String) {
+  employee(userId: $userId, contextRole: $contextRole) {
+    expenseReport(reportId: $reportId) {
+      reportId
+      reportDetails { id policy { id } }
+    }
+  }
+}'''
+
+EXPENSE_TYPES = '''query GetExpenseTypesForReport($userId: ID!, $contextRole: ContextRoleType!, $policyId: ID!, $reportId: ID!, $reportOwnerUserId: ID!) {
+  expenseTypesForReport(
+    userId: $userId
+    contextRole: $contextRole
+    policyId: $policyId
+    reportId: $reportId
+    reportOwnerUserId: $reportOwnerUserId
+  ) { id code name text }
+}'''
+
+NEW_EXPENSE_FORM = '''query GetNewExpenseEntry($reportId: String!, $userId: String!, $expenseTypeId: ID!, $contextRole: ContextRoleType!) {
+  employee(userId: $userId, contextRole: $contextRole) {
+    expenseReport(reportId: $reportId) {
+      newExpenseForm(expenseTypeId: $expenseTypeId) {
+        mainForm {
+          fields {
+            id
+            label
+            control
+            dataType
+            isRequired
+            requiredForSave
+            options { id code value }
+            value {
+              listValue { id code value }
+              dateValue
+              stringValue
+              integerValue
+              booleanValue
+              operation
+              value
+              amountValue { value currencyCode }
+            }
+            defaultValue { value code listItemId }
+          }
+        }
+      }
+    }
+  }
+}'''
+
+CREATE_EXPENSE = '''mutation SaveNewExpenseEntry($reportId: ID!, $contextRole: ContextRoleType!, $userId: ID!, $fields: CreateExpenseFieldsInput!, $skip: Boolean! = false) {
+  createExpense(
+    dataContext: {reportId: $reportId, fields: $fields}
+    userContext: {userId: $userId, contextType: $contextRole}
+  ) @skip(if: $skip) {
+    id
+    entry { id transactionDate transactionAmount { value currencyCode } }
+    entryExceptions {
+      countOfExceptions
+      hasBlockingExceptions
+      entryExceptions { exceptionCode isBlocking message parameters { missingFields { fields fieldIds } } }
+    }
+  }
+}'''
+
+
+def policy_id(page, report_id: str, user_id: str, role: str) -> str:
+    data = call(page.context, 'GetReportIdAndKey', REPORT_POLICY,
+                {'userId': user_id, 'contextRole': role, 'reportId': report_id})
+    found = (((data.get('employee') or {}).get('expenseReport') or {})
+             .get('reportDetails') or {}).get('policy') or {}
+    if not found.get('id'):
+        raise NotSent('리포트의 정책 ID를 받지 못했습니다')
+    return found['id']
+
+
+def expense_type_id(page, name: str, report_id: str, user_id: str, role: str) -> str:
+    """경비유형 표시 이름 -> id. **유일하게 맞을 때만** 준다."""
+    pid = policy_id(page, report_id, user_id, role)
+    data = call(page.context, 'GetExpenseTypesForReport', EXPENSE_TYPES,
+                {'userId': user_id, 'contextRole': role, 'policyId': pid,
+                 'reportId': report_id, 'reportOwnerUserId': user_id})
+    types = data.get('expenseTypesForReport') or []
+    want = (name or '').strip().casefold()
+    hit = [t for t in types
+           if want in {str(t.get(k) or '').strip().casefold() for k in ('name', 'text', 'code')}]
+    if len(hit) != 1:
+        raise NotSent(f'경비유형 {name!r} 를 {len(types)}개 중 유일하게 고르지 못했습니다')
+    return hit[0]['id']
+
+
+def new_form_fields(page, expense_type_id_: str, report_id: str,
+                    user_id: str, role: str) -> list[dict]:
+    data = call(page.context, 'GetNewExpenseEntry', NEW_EXPENSE_FORM,
+                {'reportId': report_id, 'userId': user_id, 'contextRole': role,
+                 'expenseTypeId': expense_type_id_})
+    form = ((((data.get('employee') or {}).get('expenseReport') or {})
+             .get('newExpenseForm') or {}).get('mainForm') or {})
+    fields = form.get('fields')
+    if not isinstance(fields, list) or not fields:
+        raise NotSent('새 경비 폼의 입력 칸을 받지 못했습니다')
+    return fields
+
+
+def option_of(fields: list[dict], field_id: str, label: str):
+    """폼 칸의 options 에서 표시 이름으로 고른다. 유일할 때만."""
+    one = next((f for f in fields if f.get('id') == field_id), None)
+    if one is None:
+        raise NotSent(f'폼에 {field_id} 칸이 없습니다')
+    want = (label or '').strip().casefold()
+    hit = [o for o in (one.get('options') or [])
+           if str(o.get('value') or '').strip().casefold() == want]
+    if len(hit) != 1:
+        count = len(one.get('options') or [])
+        raise NotSent(f'{field_id} 에서 {label!r} 를 {count}개 중 유일하게 고르지 못했습니다')
+    return hit[0]['id']
+
+
+def _field_value(one: dict):
+    """폼 칸이 들고 있는 값을 입력 모양으로 바꾼다. 없으면 None."""
+    value = one.get('value') or {}
+    listed = value.get('listValue') or {}
+    if listed.get('id'):
+        return listed['id']
+    for key in ('dateValue', 'stringValue', 'integerValue'):
+        if value.get(key) not in (None, ''):
+            return value[key]
+    if value.get('booleanValue') is not None:
+        return value['booleanValue']
+    amount = value.get('amountValue') or {}
+    if amount.get('value') is not None:
+        return {'value': amount['value'], 'currencyCode': amount.get('currencyCode')}
+    if value.get('operation') is not None and value.get('value') is not None:
+        return {'operation': value['operation'], 'value': value['value']}
+    fallback = (one.get('defaultValue') or {}).get('value')
+    return fallback if fallback not in (None, '') else None
+
+
+def create_mileage(page, type_name: str, vehicle: str, when, origin: str,
+                   destination: str, distance, passengers=None,
+                   description: str = '') -> Saved:
+    """마일리지 경비를 만든다. 금액은 보내지 않는다 - Concur 가 요율로 계산한다.
+
+    우리가 계산해 보내면 **회사 정책 요율을 덮어쓸 수 있다.** 대신 응답의
+    `entry.transactionAmount` 로 계산됐는지 확인하고, 0이면 그대로 알린다.
+    """
+    report_id, user_id, role = ids(page)
+    type_id = expense_type_id(page, type_name, report_id, user_id, role)
+    fields = new_form_fields(page, type_id, report_id, user_id, role)
+
+    ours = {
+        'expenseTypeId': type_id,
+        'vehicleId': option_of(fields, 'vehicleId', vehicle),
+        'transactionDate': when.isoformat() if hasattr(when, 'isoformat') else str(when),
+        'startLocation': origin,
+        'endLocation': destination,
+        'totalDistance': int(distance),
+    }
+    if passengers not in (None, ''):
+        ours['passengerCount'] = int(passengers)
+    if description:
+        ours['comment'] = description
+    # 폼이 '저장에 필요하다'고 한 칸은 폼의 값을 그대로 쓴다. 하나라도 값을
+    # 만들지 못하면 반쯤 만든 경비를 남기지 않도록 여기서 멈춘다.
+    missing = []
+    for one in fields:
+        key = one.get('id')
+        if not key or key in ours or not one.get('requiredForSave'):
+            continue
+        got = _field_value(one)
+        if got is None:
+            missing.append(f"{key}({one.get('label') or ''})")
+        else:
+            ours[key] = got
+    if missing:
+        raise NotSent('새 경비 폼의 필수 칸을 채우지 못했습니다: ' + ', '.join(missing[:6]))
+
+    args = {'reportId': report_id, 'userId': user_id, 'contextRole': role, 'fields': ours}
+    _write(page.context, 'SaveNewExpenseEntry', CREATE_EXPENSE, args, dry=True)
+    data = _write(page.context, 'SaveNewExpenseEntry', CREATE_EXPENSE, args, dry=False)
+    made = data.get('createExpense')
+    if not isinstance(made, dict) or not made.get('id'):
+        raise MaybeSent('생성 응답에 createExpense.id 가 없습니다')
+    forget(report_id)
+    result = _exceptions(made.get('entryExceptions'))
+    result.expense_id = made['id']
+    amount = ((made.get('entry') or {}).get('transactionAmount') or {}).get('value')
+    if not amount:
+        result.messages = result.messages + (
+            '금액이 계산되지 않았습니다 (거리·요율 설정을 확인해 주세요)',)
+    return result

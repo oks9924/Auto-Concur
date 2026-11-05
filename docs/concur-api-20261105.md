@@ -476,3 +476,30 @@ C단계가 하는 일에 **전부 대응되는 작전이 있다.**
   **모양만 남기므로 상한이 커져도 값은 안 샌다** - 깊은 구조에서도 날짜가
   `str:date-iso` 로만 남는 것을 테스트로 확인했다. 그래도 걸리면 `'...'` 대신
   `(깊이 12 초과)` 라고 적어서, 다음에는 그게 내 상한인 줄 바로 알 수 있다.
+
+- **2026-11-05 7회차: 차량 옵션이 폼 안에 그대로 있었다.** 깊이를 올리니
+  `mainForm.fields[].options` 가 `[{id: "str:digits", code, value: "표시 이름"}]` 로
+  보인다. `vehicleId` 가 digits 였으니 **그게 그대로 차량 ID 다.**
+  즉 `FormsAndFields.GetFormLists` 로 목록을 따로 받아올 필요가 없다 -
+  조회 넷이 필요하다던 처음 판단도, 둘이면 된다던 그 다음 판단도 과했다.
+  폼 칸에는 `list{id, level, parentId, displayFormat}`, `value{listValue, dateValue,
+  stringValue, integerValue, booleanValue, operation, value, amountValue}`,
+  `defaultValue{value, code, listItemId}`, `isRequired`, `requiredForSave` 가 있다.
+
+- **2026-11-05 9단계 푸시: 마일리지 생성을 GraphQL로.** 이 도구가 하는 **유일한
+  생성**이다. 그래서 고치기보다 더 조인다.
+  1. `GetExpenseTypesForReport` 로 마일리지 유형 이름 → id (유일할 때만)
+  2. `GetNewExpenseEntry(그 id)` 로 폼 42칸
+  3. 폼의 `requiredForSave` 칸은 폼이 들고 있는 값을 그대로 쓰고, 우리 값만 덮는다
+  4. `SaveNewExpenseEntry`
+  - **하나라도 값을 못 만들면 아무것도 보내지 않는다.** 반쯤 만든 경비는 사람이
+    찾아 지워야 한다.
+  - **금액(`transactionAmount`)을 보내지 않는다.** 거리 x 정책 요율이라 우리가
+    계산하면 회사 요율을 덮어쓴다. 응답의 `entry.transactionAmount` 로 계산됐는지
+    보고, 0이면 그대로 알린다.
+  - `MaybeSent` 면 화면으로 또 만들지 않는다 - 경비가 둘이 된다. 그 밖의 예외는
+    전부 삼키고 화면 경로로 간다(`fill_gaps` 에서 배운 것).
+  - 지도는 만든 뒤 `upload` → `AttachImage` 로 붙인다. 실패해도 경비는 제대로 생겼고
+    기존 영수증 보수 경로가 받아 간다.
+  - 울타리(`test_graphql_scope`)에서 `createExpense`/`SaveNewExpenseEntry` 를 금지어
+    에서 풀고 허용 목록에 넣었다. 제출·삭제·승인은 그대로 금지다.
