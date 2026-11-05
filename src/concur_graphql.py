@@ -573,30 +573,6 @@ def itemized(page, expense_id: str) -> bool | None:
     return None
 
 
-def same_room_rate(page, expense_id: str, room_rate: int) -> Saved:
-    """'가격 동일' 숙박 명세를 만든다. 1박 요금 하나만 보낸다.
-
-    화면 경로의 콤보박스·1박 예외·숨은 저장 버튼·패널 클릭 가로채기가 전부
-    이 한 호출로 대체된다.
-    """
-    if not expense_id or not isinstance(room_rate, int) or room_rate <= 0:
-        raise NotSent('명세를 만들 경비 ID나 1박 요금이 없습니다')
-    report_id, user_id, role = ids(page)
-    args = {'reportId': report_id, 'expenseId': expense_id, 'userId': user_id,
-            'contextRole': role, 'roomRateObject': {'roomRate': room_rate}}
-    _write(page.context, 'CreateSameRoomRateMutation', CREATE_SAME_ROOM_RATE, args, dry=True)
-    data = _write(page.context, 'CreateSameRoomRateMutation', CREATE_SAME_ROOM_RATE, args, dry=False)
-    found = data.get('createSameRoomRateItemizations')
-    if not isinstance(found, dict):
-        raise MaybeSent('명세 응답에 createSameRoomRateItemizations 가 없습니다')
-    if (found.get('status') or {}).get('success') is False:
-        raise MaybeSent('Concur가 명세 생성을 실패로 표시했습니다')
-    forget(report_id)
-    result = _exceptions(found.get('entryExceptions'))
-    result.expense_id = expense_id
-    return result
-
-
 # 1박 요금이 제각각인 명세. 실측 문서(2026-11-05, 10612자)에서 쓰는 부분만 남겼다.
 #
 # `SameRoomRate` 와 다른 점은 `roomRateObject` 가 **리스트**라는 것 하나다.
