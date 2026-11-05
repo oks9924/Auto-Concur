@@ -145,6 +145,13 @@ python -m src.record_calls
 가맹점명·금액·승인번호·참석자 이름은 `str:len9-32` 같은 길이 구간으로만 남습니다.
 결과는 `inspect-out/calls-*.jsonl`에 떨어집니다(gitignore 됨).
 
+**Concur는 GraphQL을 씁니다**(2026-11-05 실측: `www-eu2.api.concursolutions.com/spend-graphql/graphql`).
+호출이 전부 한 주소로 가는 POST라서 경로는 아무것도 알려주지 않습니다. 무엇을 하는
+호출인지는 `operationName`과 질의문에 있고 그 둘은 스키마(필드 이름)이지 거래 값이
+아니므로 - 값은 `variables`로 따로 갑니다 - 그 둘만 그대로 남깁니다. 요약도 경로가
+아니라 작전 이름으로 가릅니다. 질의문에 값이 인라인으로 박혀 오는 경우를 대비해
+문자열·숫자 리터럴은 지웁니다.
+
 평소 C단계와 같은 브라우저 프로필을 씁니다. 이미 로그인돼 있어 편하지만 **둘을 동시에
 띄우면 Chromium이 프로필을 못 열고 죽습니다.** 하나씩 돌리세요.
 

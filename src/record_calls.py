@@ -131,6 +131,42 @@ RECORD_JS = r"""
     return {host: u.host, path, query};
   };
 
+  // Concur는 GraphQL을 쓴다. 호출이 전부 한 주소로 가는 POST라서 경로는
+  // 아무것도 알려주지 않는다. 무엇을 하는 호출인지는 operationName과 질의문에
+  // 있고, 그 둘은 스키마(필드 이름)이지 거래 값이 아니다 - 값은 variables로
+  // 따로 간다. 그래서 이 둘만 그대로 남긴다.
+  const IDENT = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
+
+  // 다만 클라이언트가 값을 질의문에 박아 보낼 수도 있다. 문자열·숫자
+  // 리터럴을 지워서 그 경우에도 값이 새지 않게 한다.
+  const gqlDoc = s => String(s)
+    .replace(/"(?:\\.|[^"\\])*"/g, '"?"')
+    .replace(/\b\d[\d_.eE+-]*\b/g, '?')
+    .replace(/\s+/g, ' ').trim().slice(0, 4000);
+
+  const describe = v => {
+    const out = shape(v, 0);
+    if (v && typeof v === 'object' && !Array.isArray(v) && out && typeof out === 'object') {
+      if (typeof v.operationName === 'string' && IDENT.test(v.operationName)) {
+        out.operationName = v.operationName;
+      }
+      if (typeof v.query === 'string') out.query = gqlDoc(v.query);
+    }
+    return out;
+  };
+
+  const parsed = text => { try { return {ok: true, v: JSON.parse(text)}; } catch (e) { return {ok: false}; } };
+
+  // 요약에서 호출을 가를 이름. GraphQL이면 작전 이름, 아니면 없다.
+  const opName = text => {
+    if (typeof text !== 'string') return null;
+    const got = parsed(text);
+    if (!got.ok) return null;
+    const first = Array.isArray(got.v) ? got.v[0] : got.v;
+    const name = first && first.operationName;
+    return typeof name === 'string' && IDENT.test(name) ? name : null;
+  };
+
   const fromText = (text, type) => {
     if (text == null) return null;
     if (text.length > BODY) return 'too-large:' + text.length;
@@ -139,7 +175,12 @@ RECORD_JS = r"""
       try { return {'form-keys': [...new Set([...new URLSearchParams(text).keys()])].sort()}; }
       catch (e) { return 'form-unreadable'; }
     }
-    try { return shape(JSON.parse(text), 0); } catch (e) {}
+    const got = parsed(text);
+    if (got.ok) {
+      return Array.isArray(got.v)
+        ? {'[n]': got.v.length, '[0]': got.v.length ? describe(got.v[0]) : 'null'}
+        : describe(got.v);
+    }
     return /json/i.test(type || '') ? 'json-parse-failed' : 'text:len' + bucket(text.length);
   };
 
@@ -177,10 +218,11 @@ RECORD_JS = r"""
         const method = String((init && init.method) || (isRequest && input.method) || 'GET').toUpperCase();
         const headers = new Headers((init && init.headers) || (isRequest ? input.headers : undefined) || {});
         const names = []; headers.forEach((v, k) => names.push(String(k).toLowerCase()));
-        const sent = init && 'body' in init ? reqBody(init.body, headers.get('content-type') || '')
+        const body = init && 'body' in init ? init.body : undefined;
+        const sent = body !== undefined ? reqBody(body, headers.get('content-type') || '')
                    : isRequest ? 'in-request-object' : null;
         rec = Object.assign({via: 'fetch', method}, place(raw),
-                            {reqHeaders: [...new Set(names)].sort(), reqBody: sent});
+                            {op: opName(body), reqHeaders: [...new Set(names)].sort(), reqBody: sent});
       } catch (e) { rec = null; }
       const out = originalFetch.apply(this, arguments);
       try {
@@ -224,6 +266,7 @@ RECORD_JS = r"""
       const rec = this.__ac, xhr = this;
       if (rec) {
         rec.reqBody = reqBody(body, rec.ctype);
+        rec.op = opName(body);
         rec.reqHeaders = [...new Set(rec.reqHeaders)].sort();
         delete rec.ctype;
         this.addEventListener('loadend', () => {
@@ -263,24 +306,43 @@ def drain(ctx) -> list[dict]:
     return found
 
 
+# 화면과 무관한 잡음. 기록에는 남기고 화면에만 안 띄운다 - 사람이 자기 동작과
+# 호출을 눈으로 맞출 수 있어야 하는데, 텔레메트리가 그 사이를 메우면 못 맞춘다.
+NOISE = ('events.data.microsoft.com', 'qualtrics.com', 'trustarc.com',
+         '/api/logs', '/log/metric', '/newMessageCount')
+
+
+def noisy(rec: dict) -> bool:
+    where = f"{rec.get('host', '')}{rec.get('path', '')}"
+    return any(mark in where for mark in NOISE)
+
+
+def where_of(rec: dict) -> str:
+    """무엇을 하는 호출인가. GraphQL이면 경로가 아니라 작전 이름이 답이다."""
+    op = rec.get('op')
+    return f"{rec.get('host', '?')}{rec.get('path', '')}" + (f"  [{op}]" if op else '')
+
+
 def label(rec: dict) -> str:
-    where = f"{rec.get('host', '?')}{rec.get('path', '')}"
     query = rec.get('query') or []
-    return (f"{rec.get('method', '?'):6} {rec.get('status', '-')!s:>3} {where}"
+    return (f"{rec.get('method', '?'):6} {rec.get('status', '-')!s:>3} {where_of(rec)}"
             + (f" ?{','.join(query)}" if query else ''))
 
 
 def summary(records: list[dict]) -> list[str]:
-    """같은 엔드포인트를 묶어서 센다. 쓰기(비 GET)를 위에 둔다."""
+    """같은 호출을 묶어서 센다. 쓰기(비 GET)를 위에 둔다.
+
+    GraphQL은 전부 한 주소로 가는 POST라서 경로로 묶으면 78건이 한 줄이 된다.
+    작전 이름으로 갈라야 무엇을 하는 호출인지 보인다.
+    """
     groups: Counter = Counter()
     for rec in records:
         if 'method' not in rec:
             continue
-        groups[(rec.get('method'), rec.get('host', '?'), rec.get('path', ''),
-                str(rec.get('status', '-')))] += 1
-    rows = sorted(groups.items(), key=lambda kv: (kv[0][0] == 'GET', kv[0][1], kv[0][2]))
-    return [f"  {method:6} {status:>3} {host}{path}  {count}회"
-            for (method, host, path, status), count in rows]
+        groups[(rec.get('method'), where_of(rec), str(rec.get('status', '-')))] += 1
+    rows = sorted(groups.items(), key=lambda kv: (kv[0][0] == 'GET', kv[0][1]))
+    return [f"  {method:6} {status:>3} {where}  {count}회"
+            for (method, where, status), count in rows]
 
 
 def _read_lines(sink: queue.Queue) -> None:
@@ -334,7 +396,7 @@ def record(url: str, channel: str | None = None) -> Path:
             while not stop:
                 for rec in drain(ctx):
                     write(rec)
-                    if rec.get('method') != 'GET':
+                    if rec.get('method') != 'GET' and not noisy(rec):
                         print('    ' + label(rec))
                 while not keys.empty():
                     if keys.get() == 'q':

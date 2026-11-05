@@ -16,7 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 from playwright.sync_api import sync_playwright, Error
 
-from src.record_calls import RECORD_JS, DRAIN_JS, summary
+from src.record_calls import RECORD_JS, DRAIN_JS, summary, noisy
 
 # 기록에 절대 남아서는 안 되는 값들. 실제 전표에서 나올 만한 모양으로 둔다.
 SECRETS = ['2026-09-07', '09/07/2026', '450000', '라한호텔울산', '12345678',
@@ -71,7 +71,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self._read()
-        self._json({'saved': True})
+        # GraphQL은 응답을 data 아래에 싼다. 실제 모양으로 돌려준다.
+        if 'graphql' in self.path:
+            self._json({'data': PAYLOAD})
+        else:
+            self._json({'saved': True})
 
 
 @pytest.fixture(scope='module')
@@ -103,8 +107,8 @@ def recorded(page_factory, server):
     page = ctx.new_page()
     page.goto(server + '/')
 
-    def run(script):
-        page.evaluate(script)
+    def run(script, arg=None):
+        page.evaluate(script, arg)
         page.wait_for_timeout(300)
         return page.evaluate(DRAIN_JS)
 
@@ -225,3 +229,78 @@ def test_요약은_쓰기를_먼저_보여준다():
     lines = summary(records)
     assert 'PUT' in lines[0] and '/b' in lines[0]
     assert 'GET' in lines[1] and '2회' in lines[1]
+
+
+# --- GraphQL (Concur가 실제로 쓰는 것) ---------------------------------------
+# 호출이 전부 한 주소로 가는 POST라서 경로는 아무것도 알려주지 않는다.
+# operationName과 질의문이 '무엇을 하는 호출인가'를 말해주고, 거래 값은
+# variables로 따로 간다. 그래서 앞의 둘은 남기고 variables는 모양만 남긴다.
+
+POST_JS = """async (a) => {
+  await fetch(a.url, {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(a.body)});
+}"""
+
+MUTATION = ('mutation UpdateExpenseEntry($input: EntryInput!) '
+            '{ updateExpenseEntry(input: $input) { entryId transactionDate } }')
+
+
+def test_GraphQL_작전_이름과_질의문은_남긴다(recorded, server):
+    calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql', 'body': {
+        'operationName': 'UpdateExpenseEntry', 'query': MUTATION,
+        'variables': {'input': {'entryId': 'E1A2B3C4D5E6F708',
+                                'transactionDate': '2026-09-07',
+                                'transactionAmount': 450000,
+                                'vendorDescription': '라한호텔울산'}}}})
+    post = next(c for c in calls if c['method'] == 'POST')
+    assert post['op'] == 'UpdateExpenseEntry'
+    body = post['reqBody']
+    assert body['operationName'] == 'UpdateExpenseEntry'
+    assert 'updateExpenseEntry' in body['query'] and 'EntryInput' in body['query']
+    assert body['variables']['input']['transactionDate'] == 'str:date-iso'
+    assert body['variables']['input']['transactionAmount'] == 'int'
+    text = json.dumps(calls, ensure_ascii=False)
+    for secret in SECRETS:
+        assert secret not in text, f'{secret} 가 기록에 남았습니다'
+
+
+def test_질의문에_값을_박아_보내도_값은_안_남는다(recorded, server):
+    """variables 없이 리터럴로 보내는 클라이언트도 있다. 그 경우도 막는다."""
+    inlined = ('mutation SaveEntry { saveEntry(date: "2026-09-07", amount: 450000, '
+               'vendor: "라한호텔울산") { ok } }')
+    calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql', 'body': {
+        'operationName': 'SaveEntry', 'query': inlined}})
+    post = next(c for c in calls if c['method'] == 'POST')
+    assert post['op'] == 'SaveEntry'
+    assert 'saveEntry' in post['reqBody']['query']      # 필드 이름은 남고
+    text = json.dumps(calls, ensure_ascii=False)
+    for secret in ('2026-09-07', '450000', '라한호텔울산'):
+        assert secret not in text, f'{secret} 가 질의문에 남았습니다'
+
+
+def test_GraphQL_응답도_모양만_남긴다(recorded, server):
+    calls = recorded(POST_JS, {'url': server + '/spend-graphql/graphql', 'body': {
+        'operationName': 'GetReportEntries', 'query': 'query GetReportEntries { x }'}})
+    post = next(c for c in calls if c['method'] == 'POST')
+    entry = post['resBody']['data']['entries']['[0]']
+    assert entry['transactionDate'] == 'str:date-iso'
+    assert entry['transactionAmount'] == 'int'
+
+
+def test_요약은_작전_이름으로_가른다():
+    one = {'method': 'POST', 'host': 'a', 'path': '/graphql', 'status': 200}
+    records = [
+        dict(one, op='GetEntries'), dict(one, op='GetEntries'),
+        dict(one, op='SaveEntry'),
+        {'method': 'GET', 'host': 'a', 'path': '/x', 'status': 200},
+    ]
+    lines = summary(records)
+    assert any('[GetEntries]' in line and '2회' in line for line in lines)
+    assert any('[SaveEntry]' in line and '1회' in line for line in lines)
+    assert 'GET' in lines[-1]
+
+
+def test_잡음은_화면에만_안_띄운다():
+    assert noisy({'host': 'eu2.concursolutions.com', 'path': '/nui/expense/nui-shell/api/logs'})
+    assert noisy({'host': 'eu-mobile.events.data.microsoft.com', 'path': '/OneCollector/1.0/'})
+    assert not noisy({'host': 'www-eu2.api.concursolutions.com', 'path': '/spend-graphql/graphql'})
