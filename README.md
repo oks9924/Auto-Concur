@@ -188,8 +188,17 @@ C단계가 경비 목록을 읽을 때 **화면과 GraphQL을 둘 다 읽어 맞
 | **경비유형 변경** | GraphQL (같은 mutation의 `fields.expenseTypeId`) |
 | **영수증 첨부** | GraphQL `upload` → `AttachImage` |
 | **숙박 항목별 명세** | GraphQL — 요금이 같으면 `SameRoomRate`, 다르면 `DifferentRoomRate` |
+| **참석자** | GraphQL `GetAttendeesByPredictiveSearch` → `SaveExpenseAttendees` |
 | 숙박 날짜·위치·채널 | 화면 (위치·채널이 이름이 아니라 ID라 조회가 더 필요합니다) |
-| 참석자 | 화면 (`includeAtnTypeKeys`의 출처가 아직 남았습니다) |
+| 자동차 마일리지 | 화면 (경비 **생성**이라 유형·차량·국가 코드 조회가 더 필요합니다) |
+
+**참석자는 메일 주소로 정확히 맞춥니다.** 작업지에 `kyungsik.oh@siemens.com`이라고
+적으면 검색 결과의 `emailAddress`와 대조합니다 — 화면 이름을 토막 내서 맞추던 것보다
+확실합니다. 그리고 `versionNumber`를 같이 보내므로, 남이 먼저 바꿨으면 우리가 덮지
+않습니다.
+
+**한 명이라도 유일하게 못 고르면 아무도 보내지 않습니다.** `saveAttendeesLegacy`는
+목록을 **통째로 교체**하기 때문입니다 — 반쯤 고른 목록을 보내면 나머지가 지워집니다.
 
 **20만원 3박처럼 요금이 안 나눠떨어져도 됩니다.** `nightly_split`이 주는
 `[66667, 66667, 66666]`(합은 정확히 20만원)을 `CreateDifferentRoomRateMutation`에

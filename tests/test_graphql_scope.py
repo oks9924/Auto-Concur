@@ -20,6 +20,8 @@ ALLOWED = {
     'AttachImage',                     # 쓰기: 기존 경비에 영수증
     'CreateSameRoomRateMutation',      # 쓰기: 기존 경비의 명세
     'CreateDifferentRoomRateMutation',
+    'GetAttendeesByPredictiveSearch',  # 읽기: 참석자 후보
+    'SaveExpenseAttendees',            # 쓰기: 기존 경비의 참석자
 }
 
 # 돌이킬 수 없거나 승인 흐름을 움직이는 것들. 실수로도 들어오면 안 된다.
@@ -65,5 +67,5 @@ def test_쓰기는_전부_사전검증을_거친다():
     """보내기 전에 @skip(if: true) 로 한 번 검증한다. 그 호출이 빠진 쓰기가 없어야 한다."""
     text = (SRC / 'concur_graphql.py').read_text(encoding='utf-8')
     writes = re.findall(r'_write\(page\.context, [^)]*dry=(True|False)\)', text)
-    assert writes.count('True') == writes.count('False') == 3, writes
-    assert len(writes) == 6, '쓰기마다 검증이 하나씩 붙어야 합니다'
+    assert writes.count('True') == writes.count('False') == 4, writes
+    assert len(writes) == 8, '쓰기마다 검증이 하나씩 붙어야 합니다'

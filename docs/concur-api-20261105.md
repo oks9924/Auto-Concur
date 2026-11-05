@@ -408,3 +408,38 @@ C단계가 하는 일에 **전부 대응되는 작전이 있다.**
   사전검증과 구조화된 예외 보고를 그대로 붙인다.
   (참고: 화면 경로도 중간에 실패하면 반쯤 채운 새 경비가 남는다. mutation 한 번은
   그 반쯤 상태가 없다.)
+
+- **2026-11-05 5회차 기록: 구형 라우터 헤더 값이 나왔다.**
+  `{camelcase: "Y", fixjson: "Y", x-nui: "Y", content-type: "application/json"}`.
+  이것 하나가 참석자를 막고 있었다.
+  (사용자 관찰: 숙박위치·Booking channel 드롭다운을 만질 때 화면에 아무 변화가
+  없었다. 실제로는 `FormsAndFields.GetFormLists` 가 2회 나갔는데, 드롭다운을 열 때가
+  아니라 경비 상세가 뜰 때 미리 받아두는 것으로 보인다.)
+
+- **2026-11-05 8단계 푸시: 참석자를 GraphQL로.** 세 걸음이다.
+  `Attendee.GetAttendeeTypes`(구형 라우터, `{forEmpKey}`) → `atnTypeKey` 목록 →
+  `attendeesByPredictiveSearch(searchTerms, includeInactiveEmp, includeAtnTypeKeys,
+  excludeKeys)` → `SaveExpenseAttendees`.
+  - **메일 주소로 정확히 맞춘다.** 검색 결과가 `emailAddress` 를 주므로 계정 이름
+    대조가 된다. `name_matches` 토막 대조는 못 맞출 때의 폴백으로만 남는다.
+  - **`versionNumber` 를 같이 보낸다.** 낙관적 동시성 - 남이 먼저 바꿨으면 덮지 않는다.
+  - **한 명이라도 유일하게 못 고르면 아무도 보내지 않는다.** `saveAttendeesLegacy` 는
+    목록을 통째로 교체해서, 반쯤 고른 목록을 보내면 나머지가 지워진다. 전에 실제로
+    낸 사고가 그 모양이었다.
+  - 금액은 `nightly_split(경비금액, 참석자수)` 로 나눈다 - 합이 경비 금액과 정확히
+    맞는다. 화면이 보내던 것과 같은 자리이고, 저장소의 기존 반올림 규칙을 쓴다.
+  - `forEmpKey` 가 `userId` 와 같은 값이라고 **추정**했다. 틀리면 records 가 비고,
+    그때는 멈춰서 화면 경로로 간다 - 빈 목록으로 검색하지 않는다.
+
+- **마일리지 생성 명세가 드러났다(아직 안 옮김).** `SaveNewExpenseEntry` 8253자 온전.
+  `createExpense(dataContext: {reportId, fields, taxFields, attendees}, userContext)`.
+  마일리지 `fields` 는 `expenseTypeId, transactionDate, countryCode, startLocation,
+  endLocation, taxRateLocation, paymentTypeId, exchangeRate{operation, value},
+  receiptTypeId, comment, custom13{value}, custom14{...}, vehicleId(digits),
+  odometerStart/End, personalDistance, totalDistance, passengerCount,
+  has*(불리언 9개), transactionAmount{value, currencyCode}, receiptImageId` 다.
+  **안 옮긴 이유:** 저장소가 지금 유형·차량·결제수단을 **화면의 표시 이름**으로
+  고른다. GraphQL 로 가려면 이름→코드 조회가 넷(경비유형, 차량, 결제수단, 국가)
+  필요하다. 그리고 `transactionAmount` - 마일리지 금액은 거리 x 정책 요율이라
+  우리가 계산해 보내면 정책 요율을 덮을 수 있다. 빼고 보내서 Concur 가 계산하는지
+  응답(`entry.transactionAmount`)으로 확인하는 길이 있지만, 아직 안 했다.

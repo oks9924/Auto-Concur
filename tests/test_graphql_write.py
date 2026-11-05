@@ -237,10 +237,9 @@ def test_유형_보고는_코드가_아니라_이름으로_한다(monkeypatch):
 
 
 @pytest.mark.parametrize('extra', [
-    {'attendee': '홍길동'},          # 별도 mutation + 참석자별 versionNumber·금액
-    {'lodging': object()},          # roomRateExpenseTypeId 가 필요하다
+    {'lodging': object()},          # 숙박은 위치·채널이 이름이 아니라 ID라 남았다
 ])
-def test_참석자와_숙박은_화면_경로를_그대로_쓴다(monkeypatch, extra):
+def test_숙박은_화면_경로를_그대로_쓴다(monkeypatch, extra):
     monkeypatch.setattr(gq, 'save_fields',
                         lambda *a, **k: pytest.fail('GraphQL로 갔습니다'))
     went = []

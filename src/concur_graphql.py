@@ -628,3 +628,138 @@ def itemize(page, expense_id: str, nightly: list[int]) -> Saved:
     result = _exceptions(found.get('entryExceptions'))
     result.expense_id = expense_id
     return result
+
+
+# ---------------------------------------------------------------------------
+# 참석자 (2026-11-05). 전에 실제로 데이터를 날린 자리라 가장 보수적으로 간다.
+#
+# 세 걸음이다.
+#   1. `Attendee.GetAttendeeTypes` (구형 .NET 라우터) -> atnTypeKey 목록
+#   2. `attendeesByPredictiveSearch(searchTerms, ...)` -> 후보
+#   3. `SaveExpenseAttendees` -> 저장
+#
+# **`saveAttendeesLegacy` 는 목록을 통째로 교체한다.** 그게 전에 참석자가 다
+# 지워진 사고의 메커니즘이다. 그래서 보낼 목록을 확신할 때만 보낸다 - 한 명이라도
+# 유일하게 못 고르면 아무것도 보내지 않는다.
+
+LEGACY_PATH = '/expense/expenseDotNet/Proxy/expenseRouter.ashx'
+
+# 실측 헤더(2026-11-05). 응답 모양을 바꾸는 스위치라 값이 필요하다.
+LEGACY_HEADERS = {'content-type': 'application/json',
+                  'camelcase': 'Y', 'fixjson': 'Y', 'x-nui': 'Y'}
+
+SEARCH_ATTENDEES = '''query GetAttendeesByPredictiveSearch($searchTerms: String!, $includeInactiveEmp: Boolean!, $includeAtnTypeKeys: [Int!]!, $excludeKeys: [String!]!) {
+  attendeesByPredictiveSearch(
+    searchTerms: $searchTerms
+    includeInactiveEmp: $includeInactiveEmp
+    includeAtnTypeKeys: $includeAtnTypeKeys
+    excludeKeys: $excludeKeys
+  ) {
+    attendees {
+      atnKey
+      atnTypeCode
+      versionNumber
+      firstName
+      lastName
+      preferredName
+      emailAddress
+    }
+  }
+}'''
+
+SAVE_ATTENDEES = '''mutation SaveExpenseAttendees($userId: String!, $contextRole: ContextRoleType!, $params: SaveAttendeesLegacyParams!, $skip: Boolean! = false) {
+  employee(userId: $userId, contextRole: $contextRole) {
+    saveAttendeesLegacy(params: $params) @skip(if: $skip) { status }
+  }
+}'''
+
+
+def legacy(page, action: str, method: str, data) -> dict:
+    """구형 .NET 라우터를 부른다. 읽기 전용으로만 쓴다."""
+    from urllib.parse import urlsplit
+    host = urlsplit(page.url).netloc
+    if not host.endswith('.concursolutions.com'):
+        raise NotSent(f'예상 밖의 호스트입니다: {host}')
+    try:
+        res = page.context.request.post(
+            f'https://{host}{LEGACY_PATH}',
+            data={'action': action, 'method': method, 'data': data},
+            headers=LEGACY_HEADERS, timeout=30000)
+    except Exception as exc:
+        raise NotSent(f'{action}.{method} 호출 실패: {type(exc).__name__}') from exc
+    if not res.ok:
+        raise NotSent(f'{action}.{method} 이(가) HTTP {res.status} 를 받았습니다' + _why(res))
+    try:
+        return res.json() or {}
+    except Exception as exc:
+        raise NotSent(f'{action}.{method} 응답을 JSON으로 읽지 못했습니다') from exc
+
+
+def attendee_type_keys(page, user_id: str) -> list[int]:
+    """검색에 넘길 참석자 유형 키. `forEmpKey` 가 userId 와 같은 값이라고 본다.
+
+    둘 다 같은 꼴(len33-128)이라 그렇게 추정한다. 틀리면 records 가 비어서
+    이 함수가 멈추고, 부르는 쪽이 화면 경로로 간다 - 조용히 빈 목록으로
+    검색하지 않는다(그러면 후보가 안 나와서 참석자를 못 찾는다).
+    """
+    body = legacy(page, 'Attendee', 'GetAttendeeTypes', {'forEmpKey': user_id})
+    records = ((body.get('attendee_GetAttendeeTypes') or {}).get('records')) or []
+    keys = [r['atnTypeKey'] for r in records
+            if isinstance(r, dict) and isinstance(r.get('atnTypeKey'), int)
+            and str(r.get('isDeleted', 'N')).upper() != 'Y']
+    if not keys:
+        raise NotSent('참석자 유형 목록이 비어 있습니다 (forEmpKey 가 다를 수 있습니다)')
+    return keys
+
+
+def _local_part(text: str) -> str:
+    head, _, _ = (text or '').partition('@')
+    return head.strip().casefold()
+
+
+def search_attendees(page, terms: str, type_keys: list[int]) -> list[dict]:
+    data = call(page.context, 'GetAttendeesByPredictiveSearch', SEARCH_ATTENDEES,
+                {'searchTerms': terms, 'includeInactiveEmp': False,
+                 'includeAtnTypeKeys': type_keys, 'excludeKeys': []})
+    found = (data.get('attendeesByPredictiveSearch') or {}).get('attendees')
+    return [a for a in (found or []) if isinstance(a, dict) and a.get('atnKey')]
+
+
+def pick_attendee(query: str, found: list[dict]):
+    """후보 중 **유일하게** 맞는 한 명. 아니면 None.
+
+    메일 주소를 적었으면 `emailAddress` 로 정확히 맞춘다. 화면 이름을 토막 내서
+    맞추던 것보다 확실하다 - 'kyungsik.oh' 가 'Oh Kyungsik' 과 안 맞던 문제가
+    여기서는 생기지 않는다.
+    """
+    from .fix_expenses import name_matches
+    want = _local_part(query)
+    exact = [a for a in found if _local_part(a.get('emailAddress') or '') == want and want]
+    if len(exact) == 1:
+        return exact[0]
+    if exact:
+        return None  # 여럿이면 고르지 않는다
+    def shown(a):
+        full = ' '.join(x for x in (a.get('firstName'), a.get('lastName')) if x)
+        return [x for x in (full, a.get('preferredName'), a.get('emailAddress')) if x]
+    loose = [a for a in found if any(name_matches(query, text) for text in shown(a))]
+    return loose[0] if len(loose) == 1 else None
+
+
+def save_attendees(page, expense_id: str, chosen: list[dict], amounts: list[int]) -> Saved:
+    """참석자 목록을 **통째로 교체**한다. 보낼 목록을 확신할 때만 부른다."""
+    if not expense_id or not chosen:
+        raise NotSent('저장할 참석자가 없습니다')
+    if len(chosen) != len(amounts):
+        raise NotSent('참석자 수와 금액 배분이 맞지 않습니다')
+    report_id, user_id, role = ids(page)
+    attendees = [{'atnKey': a['atnKey'], 'atnTypeCode': a.get('atnTypeCode'),
+                  'versionNumber': a.get('versionNumber'), 'instanceCount': 1,
+                  'transactionAmount': amount}
+                 for a, amount in zip(chosen, amounts)]
+    args = {'userId': user_id, 'contextRole': role,
+            'params': {'reportId': report_id, 'entryId': expense_id, 'attendees': attendees}}
+    _write(page.context, 'SaveExpenseAttendees', SAVE_ATTENDEES, args, dry=True)
+    _write(page.context, 'SaveExpenseAttendees', SAVE_ATTENDEES, args, dry=False)
+    forget(report_id)
+    return Saved(expense_id, False, (), ())

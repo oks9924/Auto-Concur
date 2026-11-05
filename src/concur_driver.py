@@ -73,7 +73,7 @@ class Driver:
     # 화면 경로를 그대로 쓴다.
     @staticmethod
     def _fields_only(plan):
-        if plan.attendee or plan.lodging:
+        if plan.lodging:
             return None
         fields = {}
         if plan.type_code:
@@ -84,16 +84,48 @@ class Driver:
             fields['comment'] = plan.comment
         return fields or None
 
+    def _attendees_by_api(self, plan):
+        """참석자를 GraphQL로 저장한다. 했으면 알림 문구, 못 하면 None.
+
+        **한 명이라도 유일하게 못 고르면 아무것도 보내지 않는다.**
+        `saveAttendeesLegacy` 는 목록을 통째로 교체해서, 반쯤 고른 목록을
+        보내면 나머지가 지워진다 - 전에 실제로 낸 사고가 그 모양이었다.
+        """
+        from .sheet import nightly_split
+        wanted = fx.parse_attendees(plan.attendee)
+        if not wanted:
+            return None
+        _, user_id, _ = gq.ids(self.page)
+        keys = gq.attendee_type_keys(self.page, user_id)
+        chosen = []
+        for query in wanted:
+            found = gq.search_attendees(self.page, query, keys)
+            one = gq.pick_attendee(query, found)
+            if one is None:
+                raise gq.NotSent(f'참석자 {query!r} 를 후보 {len(found)}명 중 '
+                                 '유일하게 고르지 못했습니다')
+            if any(x['atnKey'] == one['atnKey'] for x in chosen):
+                continue
+            chosen.append(one)
+        amounts = nightly_split(plan.row.amount or 0, len(chosen))
+        gq.save_attendees(self.page, plan.row.expense_id, chosen, amounts)
+        return f'참석자 {len(chosen)}명'
+
     def apply_edit(self, plan):
         self.guard()
         fields = None if gq.disabled() else self._fields_only(plan)
-        if fields:
+        if fields or (plan.attendee and not plan.lodging and not gq.disabled()):
             try:
-                saved = gq.save_fields(self.page, plan.row.expense_id, fields)
-                shown = dict(fields)
+                saved = (gq.save_fields(self.page, plan.row.expense_id, fields)
+                         if fields else gq.Saved(plan.row.expense_id, False, (), ()))
+                who = self._attendees_by_api(plan) if plan.attendee else None
+                shown = dict(fields or {})
                 if 'expenseTypeId' in shown:
                     shown['expenseTypeId'] = plan.type_label or plan.type_code
-                done = ', '.join(f'{k}->{v[:20]}' for k, v in shown.items())
+                parts = [f'{k}->{v[:20]}' for k, v in shown.items()]
+                if who:
+                    parts.append(who)
+                done = ', '.join(parts)
                 if saved.blocking or saved.messages:
                     # 저장 응답이 예외를 같이 준다. 화면 글자를 읽지 않아도 안다.
                     note = '; '.join(saved.messages[:3]) or '차단 예외'
