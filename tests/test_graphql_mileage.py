@@ -271,3 +271,22 @@ def test_보낸_뒤_모르면_화면으로_또_만들지_않는다(monkeypatch):
            'destination': 'b', 'distance': 1}
     with pytest.raises(gq.MaybeSent):
         mc._create_by_api(page, 'https://eu2.concursolutions.com/x', row, None)
+
+
+def test_경비유형_이름이_조금_달라도_포함으로_찾는다(monkeypatch):
+    """2026-11-06 실측: '자동차 마일리지' 가 40개 중 정확히 맞는 것이 없었다."""
+    monkeypatch.setattr(gq, 'policy_id', lambda *a: 'P1')
+    page = Page([Res({'data': {'expenseTypesForReport': [
+        {'id': 'M1', 'code': 'CARML', 'name': '자동차 마일리지 (개인차량)',
+         'text': '자동차 마일리지 (개인차량)'},
+        {'id': 'X1', 'code': 'MEAL', 'name': '식음료', 'text': '식음료'}]}})])
+    assert gq.expense_type_id(page, '자동차 마일리지', 'R1', 'U1', 'TRAVELER') == 'M1'
+
+
+def test_포함으로도_여럿이면_후보를_알려준다(monkeypatch):
+    monkeypatch.setattr(gq, 'policy_id', lambda *a: 'P1')
+    page = Page([Res({'data': {'expenseTypesForReport': [
+        {'id': 'M1', 'code': 'A', 'name': '자동차 마일리지 (개인)', 'text': '자동차 마일리지 (개인)'},
+        {'id': 'M2', 'code': 'B', 'name': '자동차 마일리지 (법인)', 'text': '자동차 마일리지 (법인)'}]}})])
+    with pytest.raises(gq.NotSent, match='후보:'):
+        gq.expense_type_id(page, '자동차 마일리지', 'R1', 'U1', 'TRAVELER')

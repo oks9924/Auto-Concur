@@ -144,13 +144,13 @@ def _walk(page, report, folder, cfg, apply, limit, tolerance, targets, queue):
         guard_report(page, report.url)
         prefix = f'[{number}/{len(queue)}]'
         if not seed.expense_id or ids[seed.expense_id] != 1:
-            print(f'{prefix} 보류: 경비 ID 누락/중복. 다른 경비는 계속 확인합니다.')
+            print(f'{prefix} 보류 · 경비 ID 누락/중복 (다른 경비는 계속 확인합니다)')
             stats['held'] += 1
             continue
         if seed.expense_id in visited:
             continue
         visited.add(seed.expense_id)
-        print(f'{prefix} 경비 상세 열기: {seed.expense_id}')
+        print(f'\n{prefix} {seed.expense_id}')
         visit = Task(task_key(report.url, seed.expense_id, 'inspection', 'detail-v1'),
                      f'상세 확인 {seed.expense_id}', None, None)
         try:
@@ -162,7 +162,7 @@ def _walk(page, report, folder, cfg, apply, limit, tolerance, targets, queue):
                     stats['skipped'] += 1
                 else:
                     stats['held'] += 1
-                print(f'{prefix} 건드리지 않음: {how}')
+                print(f'   └ 건드리지 않음 · {how}')
                 if journal:
                     journal.set(visit, 'pending', how)
                 continue
@@ -172,23 +172,23 @@ def _walk(page, report, folder, cfg, apply, limit, tolerance, targets, queue):
                          f'{row.when} {row.amount:,}원 · 한 건 처리', None, None)
             binding = visit.key.rsplit('|', 1)[1]
             if (owners[binding] - {row.expense_id}) or known_competitor(row, target, queue, tolerance):
-                print(f'{prefix} 보류: 동일 원본에 다른 경비 후보/처리 기록이 있습니다.')
+                print('   └ 보류 · 동일 원본에 다른 경비 후보/처리 기록이 있습니다')
                 stats['held'] += 1
                 if journal:
                     journal.set(visit, 'pending', '실제 중복 경비 또는 기존 처리 대상과 충돌')
                 continue
             owners[binding].add(row.expense_id)
-            print(f'{prefix} 작업지 일치: {row.when} {row.amount:,}원 ({how})')
+            print(f'   ├ 작업지 일치 · {row.when} {row.amount:,}원 ({how})')
             plans = fx.plans_from_matches(cfg, [(target.entry, row, how)], [])[0] if target.entry else []
             tasks, receipt_unclear, limited = [], False, False
             if target.slip:
                 receipt = driver.receipt_row(row)
                 if receipt.has_receipt is True:
                     stats['kept'] += 1
-                    print(f'{prefix} 기존 영수증 유지 · PDF 업로드 안 함')
+                    print('   ├ 영수증 · 이미 있음, 업로드 안 함')
                 elif receipt.has_receipt is None:
                     receipt_unclear = True
-                    print(f'{prefix} 영수증 상태 미확인 · 업로드 보류, 입력 수정은 별도 확인')
+                    print('   ├ 영수증 · 상태 미확인, 업로드 보류')
                 elif limit is not None and scheduled['receipt'] >= limit:
                     limited = True
                 else:
@@ -216,7 +216,7 @@ def _walk(page, report, folder, cfg, apply, limit, tolerance, targets, queue):
                     scheduled['edit'] += 1
             if not apply:
                 for _, task in tasks:
-                    print(f'{prefix} 미리보기: {task.label}')
+                    print(f'   ├ 미리보기 · {task.label}')
                 continue
             journal.set(visit, 'running', '원본 연결 고정 · 경비별 작업 시작')
             failed = receipt_unclear
@@ -238,14 +238,14 @@ def _walk(page, report, folder, cfg, apply, limit, tolerance, targets, queue):
                 stats['limited'] += 1
             journal.set(visit, 'needs_review' if failed else 'pending' if limited else 'verified',
                         '일부 작업 확인 필요' if failed else '처리 건수 제한' if limited else '필요 작업 결과 확인 · 기존 영수증 유지')
-            print(f'{prefix} ' + ('일부 보류' if failed else '건수 제한' if limited else '확인 완료') + ' → 다음 경비')
+            print('   └ ' + ('일부 보류' if failed else '건수 제한' if limited else '확인 완료'))
         except ContextChanged:
             raise
         except Exception as exc:
             # Do not navigate to the next ID to hide a report/login context change.
             guard_report(page, report.url)
             stats['held'] += 1
-            print(f'{prefix} 이 경비만 보류: {exc}')
+            print(f'   └ 이 경비만 보류 · {exc}')
             if journal:
                 journal.set(visit, 'needs_review' if journal.state(visit.key) in ('running', 'needs_review', 'verified') else 'pending', str(exc))
 

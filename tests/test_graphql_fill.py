@@ -159,3 +159,22 @@ def test_어떤_예외도_본_작업을_막지_않는다(capsys):
     assert gq.fill_gaps(object(), rows) is rows      # url 도 context 도 없는 객체
     assert rows[0].when is None
     assert '건너뜁니다' in capsys.readouterr().out
+
+
+def test_방금_쓴_값은_어긋남으로_안_본다(monkeypatch, capsys):
+    """2026-11-06 실측: 영수증을 붙인 직후 화면 True / GraphQL False.
+    전파 지연이지 모순이 아니다 - 비우면 멀쩡한 건이 보류된다."""
+    serve(monkeypatch, api_of(('E1', date(2026, 9, 7), 1, False)))
+    gq.wrote('E1')
+    rows = rows_of(('E1', date(2026, 9, 7), 1, True))
+    gq.fill_gaps(FakePage(), rows)
+    assert rows[0].has_receipt is True                  # 화면 값을 둔다
+    assert '아직 못 따라왔습니다' in capsys.readouterr().out
+
+
+def test_오래된_어긋남은_그대로_비운다(monkeypatch):
+    serve(monkeypatch, api_of(('E1', date(2026, 9, 7), 1, False)))
+    monkeypatch.setattr(gq, 'settling', lambda eid: False)
+    rows = rows_of(('E1', date(2026, 9, 7), 1, True))
+    gq.fill_gaps(FakePage(), rows)
+    assert rows[0].has_receipt is None

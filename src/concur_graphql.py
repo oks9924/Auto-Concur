@@ -264,6 +264,23 @@ def _cached(ctx, report_id: str) -> list[Entry] | None:
     return found
 
 
+# 방금 쓴 경비. 쓰고 나면 두 계층이 잠깐 다르게 말한다 - 화면은 바로 바뀌는데
+# 목록 질의는 따라오는 데 시간이 걸린다(2026-11-06 실측: 영수증을 붙인 직후
+# 화면 True / GraphQL False). 그건 '어긋남' 이 아니라 전파 지연이다.
+_JUST_WROTE: dict[str, float] = {}
+_SETTLE = 90.0
+
+
+def wrote(expense_id: str) -> None:
+    if expense_id:
+        _JUST_WROTE[expense_id] = time.monotonic()
+
+
+def settling(expense_id: str) -> bool:
+    at = _JUST_WROTE.get(expense_id)
+    return at is not None and time.monotonic() - at < _SETTLE
+
+
 def forget(report_id: str | None = None) -> None:
     """저장 뒤처럼 값이 바뀐 것을 아는 시점에 캐시를 버린다."""
     _CACHE.pop(report_id, None) if report_id else _CACHE.clear()
@@ -308,7 +325,7 @@ def _fill(page, rows: list) -> list:
     if not found:
         return rows
     by_id = {e.expense_id: e for e in found if e.expense_id}
-    filled, clashed = [], []
+    filled, clashed, settled = [], [], []
     for row in rows:
         api = by_id.get(row.expense_id or '')
         if api is None:
@@ -321,12 +338,20 @@ def _fill(page, rows: list) -> list:
                 setattr(row, attribute, theirs)
                 filled.append(f'{row.expense_id[:8]} {what}')
             elif mine != theirs:
+                if settling(row.expense_id):
+                    # 방금 쓴 경비다. 두 계층이 다른 것은 전파 지연이지 모순이
+                    # 아니다. 화면이 더 최신이므로 화면 값을 둔다.
+                    settled.append(f'{row.expense_id[:8]} {what}')
+                    continue
                 # 어느 쪽도 고르지 않는다. 비우면 대상별 보류가 받아 간다.
                 setattr(row, attribute, None)
                 clashed.append(f'{row.expense_id[:8]} {what}: 화면 {mine} / GraphQL {theirs}')
     if filled:
         print(f'  (GraphQL이 화면의 빈 값 {len(filled)}건을 채웠습니다: '
               + ', '.join(filled[:6]) + (' ...' if len(filled) > 6 else '') + ')')
+    if settled:
+        _say_once('settling', '  (방금 쓴 값이라 GraphQL이 아직 못 따라왔습니다 — 화면 값을 씁니다: '
+                  + ', '.join(sorted(set(settled))[:4]) + ')')
     if clashed:
         print(f'  (두 경로가 어긋난 {len(clashed)}건은 값을 비웠습니다 — 해당 거래만 보류됩니다)')
         for line in clashed[:6]:
@@ -483,6 +508,7 @@ def save_fields(page, expense_id: str, fields: dict) -> Saved:
     if not isinstance(found, dict):
         raise MaybeSent('저장 응답에 updateExpense 가 없습니다')
     forget(report_id)  # 목록 캐시가 묵은 값을 들고 있지 않게 한다
+    wrote(expense_id)
     result = _exceptions(found.get('entryExceptions'))
     result.expense_id = expense_id
     return result
@@ -528,6 +554,7 @@ def attach_receipt(page, expense_id: str, path) -> str:
     if not attached:
         raise MaybeSent('첨부 응답에 receiptImageId 가 없습니다')
     forget(report_id)
+    wrote(expense_id)
     return attached
 
 
@@ -865,10 +892,20 @@ def expense_type_id(page, name: str, report_id: str, user_id: str, role: str) ->
                  'reportId': report_id, 'reportOwnerUserId': user_id})
     types = data.get('expenseTypesForReport') or []
     want = (name or '').strip().casefold()
-    hit = [t for t in types
-           if want in {str(t.get(k) or '').strip().casefold() for k in ('name', 'text', 'code')}]
+
+    def shown(t):
+        return [str(t.get(k) or '').strip() for k in ('name', 'text', 'code')]
+
+    hit = [t for t in types if want in {x.casefold() for x in shown(t)}]
+    if not hit:
+        # 화면에 보이는 이름과 저장소가 들고 있는 이름이 조금 다를 수 있다
+        # (2026-11-06 실측: '자동차 마일리지' 가 40개 중 정확히 맞는 것이 없었다).
+        # 포함으로 넓히되 **유일할 때만** 받는다.
+        hit = [t for t in types if any(want and want in x.casefold() for x in shown(t))]
     if len(hit) != 1:
-        raise NotSent(f'경비유형 {name!r} 를 {len(types)}개 중 유일하게 고르지 못했습니다')
+        near = [x for t in (hit or types) for x in shown(t) if x][:8]
+        raise NotSent(f'경비유형 {name!r} 를 {len(types)}개 중 유일하게 고르지 못했습니다'
+                      + (f' (후보: {", ".join(near)})' if near else ''))
     return hit[0]['id']
 
 

@@ -47,10 +47,11 @@ class Driver:
         if not gq.disabled():
             try:
                 gq.attach_receipt(self.page, row.expense_id, slip.path)
+                print('        → GraphQL 첨부')
                 return
             except gq.NotSent as why:
                 # 아직 아무것도 경비에 붙지 않았다. 화면 경로로 간다.
-                print(f'    (GraphQL 첨부를 쓰지 못해 화면으로 붙입니다: {why})')
+                print(f'        → 화면으로 붙입니다 (GraphQL 못 씀: {why})')
         self._attach_by_screen(slip, row)
 
     def _attach_by_screen(self, slip, row):
@@ -126,6 +127,7 @@ class Driver:
                 if who:
                     parts.append(who)
                 done = ', '.join(parts)
+                print('        → GraphQL 저장 · ' + done)
                 if saved.blocking or saved.messages:
                     # 저장 응답이 예외를 같이 준다. 화면 글자를 읽지 않아도 안다.
                     note = '; '.join(saved.messages[:3]) or '차단 예외'
@@ -134,7 +136,7 @@ class Driver:
                     return f'{done} · Concur 예외: {note}'
                 return done
             except gq.NotSent as why:
-                print(f'    (GraphQL 저장을 쓰지 못해 화면으로 저장합니다: {why})')
+                print(f'        → 화면으로 저장합니다 (GraphQL 못 씀: {why})')
         return fx.apply_plan(self.page, plan, self.report_url)
 
     def open_for_verification(self, row):
