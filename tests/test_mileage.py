@@ -188,6 +188,63 @@ def test_copy_mileage_cancel_creates_nothing(editor):
 
 
 
+def test_copy_to_many_dates_makes_one_row_per_day_and_one_undo(editor):
+    from datetime import date
+    panel=editor.show_mileage()
+    source=ready(panel.book,editor.model.target.parent)
+    source.update({'concur_state':'verified','concur_expense_id':'EXP-OLD'})
+    panel.book.commit_rows([source]);panel.render()
+    stored=deepcopy(panel.book.rows[0])
+    panel.table.selection_set(stored['id'])
+
+    dialog=panel.copy_dates()
+    assert dialog is not None
+    assert str(dialog.apply_button.cget('state'))=='disabled'
+    for day in (2,3,4,5,6):
+        dialog.calendar.toggle(date(2026,11,day))
+    assert dialog.apply_button.cget('text')=='5건 복사'
+    assert '11/2(월)' in dialog.summary.cget('text') and '11/6(금)' in dialog.summary.cget('text')
+    assert dialog.apply()
+
+    assert [r['date'] for r in panel.book.rows]==[
+        '2026-09-18','2026-11-02','2026-11-03','2026-11-04','2026-11-05','2026-11-06']
+    assert panel.book.rows[0]==stored
+    copies=panel.book.rows[1:]
+    assert len({r['id'] for r in copies}|{stored['id']})==6
+    assert not [key for row in copies for key in row if key.startswith('concur_')]
+    for row in copies:
+        for key in ('origin','destination','vehicle','kind','rate','distance','passengers',
+                    'description','map','map_sha256','map_name'):
+            assert row[key]==stored[key]
+    panel.undo()
+    assert panel.book.rows==[stored]
+
+
+def test_copy_to_many_dates_toggle_taken_and_cancel(editor):
+    from datetime import date
+    panel=editor.show_mileage()
+    source=ready(panel.book,editor.model.target.parent)
+    panel.book.commit_rows([source]);panel.render()
+    panel.table.selection_set(source['id'])
+
+    dialog=panel.copy_dates()
+    dialog.calendar.toggle(date(2026,9,18))          # 원본 날짜는 이미 있어 고를 수 없다
+    assert not dialog.calendar.chosen
+    dialog.calendar.toggle(date(2026,9,21));dialog.calendar.toggle(date(2026,9,22))
+    dialog.calendar.toggle(date(2026,9,21))          # 다시 누르면 빠진다
+    assert dialog.calendar.chosen=={date(2026,9,22)}
+    assert dialog.apply_button.cget('text')=='1건 복사'
+    dialog.close()
+    assert len(panel.book.rows)==1 and panel.book.rows[0]['id']==source['id']
+
+
+def test_copy_to_many_dates_needs_a_selected_row(editor,monkeypatch):
+    panel=editor.show_mileage()
+    shown=[]
+    monkeypatch.setattr('src.mileage_ui.messagebox.showinfo',lambda *a,**k:shown.append(a))
+    assert panel.copy_dates() is None and shown
+
+
 def test_corrected_long_short_rates_and_old_rows_migrate(tmp_path):
     assert validate_vehicles([{'vehicle':'long-car','kind':'long'}])[0]['rate']=='280'
     assert validate_vehicles([{'vehicle':'short-car','kind':'short'}])[0]['rate']=='470'

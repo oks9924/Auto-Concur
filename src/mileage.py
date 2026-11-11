@@ -224,3 +224,39 @@ class MileageBook(LocalRows):
 
 def new_row():
     return {'id': uuid4().hex, 'passengers': '0'}
+
+
+def trip_key(row):
+    """같은 날 같은 경로를 같은 차로 간 것이면 같은 건으로 본다."""
+    return tuple(text(row.get(k)).casefold() for k in ('date', 'origin', 'destination', 'vehicle'))
+
+
+def taken_dates(source, rows):
+    """source 와 같은 경로·차량의 행이 이미 있는 날짜들."""
+    same = trip_key(source)[1:]
+    return {parse_date(r.get('date')) for r in rows if trip_key(r)[1:] == same} - {None}
+
+
+def copies_for_dates(source, dates, existing):
+    """한 행을 날짜만 바꿔 여러 벌 만든다. (새 행들, 건너뛴 날짜들)을 준다.
+
+    매일 같은 길을 다니면 같은 행을 날짜만 바꿔 여러 번 넣게 된다. 한 번에 만든다.
+
+    - Concur 경비 ID·완료 상태(`concur_*`)는 복사하지 않는다. 복사본은 아직 Concur에
+      없는 새 경비다. 상태가 딸려 가면 '이미 생성됨' 으로 보여 영영 안 만들어진다.
+    - 같은 날짜·출발지·도착지·차량의 행이 이미 있으면 그 날짜는 건너뛴다. 원본의
+      날짜를 같이 골라도 두 벌이 되지 않는다.
+    """
+    seen = {trip_key(row) for row in existing}
+    made, skipped = [], []
+    for when in sorted(set(dates)):
+        row = {k: v for k, v in deepcopy(source).items() if not k.startswith('concur_')}
+        row['id'] = new_row()['id']
+        row['date'] = when.isoformat()
+        row = checked_row(row)
+        if trip_key(row) in seen:
+            skipped.append(when)
+            continue
+        seen.add(trip_key(row))
+        made.append(row)
+    return made, skipped

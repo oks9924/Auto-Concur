@@ -8,8 +8,11 @@ from tkinter import ttk, messagebox, filedialog
 
 from .attendee_picker import Dialog
 from .calendar_input import DateEntry
+from .calendar_widgets import CalendarDialog, CalendarPanel
+from .date_input import parse_date
 from .ui_scroll import ScrollArea
-from .mileage import RATES, MileageBook, checked_row, new_row, vehicles_store, validate_vehicles
+from .mileage import (RATES, MileageBook, checked_row, copies_for_dates, new_row,
+                      taken_dates, vehicles_store, validate_vehicles)
 
 
 class VehicleManager(Dialog):
@@ -199,7 +202,7 @@ class MileagePanel(ttk.LabelFrame):
         self.columnconfigure(0,weight=1);self.rowconfigure(2,weight=1)
         ttk.Label(self,text='카드 경비와 별도 표 · 저장 후 반영 대상 확인 시 카드 경비 다음에 같은 Concur 세션에서 신규 생성합니다.',wraplength=800).grid(row=0,column=0,sticky='w')
         actions=ttk.Frame(self);actions.grid(row=1,column=0,sticky='ew',pady=4)
-        for text,cmd in [('추가',self.add),('선택 수정',self.edit),('선택 복사',self.copy),('선택 삭제',self.remove),('지도 보기',self.preview),
+        for text,cmd in [('추가',self.add),('선택 수정',self.edit),('선택 복사',self.copy),('여러 날짜로 복사',self.copy_dates),('선택 삭제',self.remove),('지도 보기',self.preview),
                          ('되돌리기',self.undo),('다시 실행',self.redo),('마일리지 저장',self.save)]:
             ttk.Button(actions,text=text,command=cmd).pack(side='left',padx=2)
         area=ttk.Frame(self);area.grid(row=2,column=0,sticky='nsew');area.columnconfigure(0,weight=1);area.rowconfigure(0,weight=1)
@@ -250,6 +253,16 @@ class MileagePanel(ttk.LabelFrame):
         except (OSError,ValueError) as exc:
             messagebox.showerror('마일리지 복사',str(exc),parent=self)
 
+    def copy_dates(self):
+        index=self.index()
+        if index is None:
+            messagebox.showinfo('행 선택','복사할 마일리지 행을 먼저 선택하세요.',parent=self)
+            return
+        try:
+            return MileageDatesCopy(self,self.book.rows[index])
+        except (OSError,ValueError) as exc:
+            messagebox.showerror('마일리지 복사',str(exc),parent=self)
+
     def remove(self):
         index=self.index()
         if index is None: return
@@ -283,3 +296,100 @@ class MileagePanel(ttk.LabelFrame):
             label=ttk.Label(dialog,image=picture);label.image=picture;label.pack(fill='both',expand=True)
             dialog.present()
         except (ValueError,OSError) as exc: messagebox.showerror('지도 이미지',str(exc),parent=self)
+
+
+WEEKDAYS = '월화수목금토일'
+
+
+class MultiDayPanel(CalendarPanel):
+    """날짜를 여러 개 고르는 달력. 누르면 들어가고, 다시 누르면 빠진다.
+
+    `taken` 은 이미 같은 경로의 행이 있는 날짜다. 회색으로 보이고 고를 수 없다 -
+    골라도 건너뛸 날짜를 고르게 두면, 다섯 개를 골랐는데 네 건만 생긴 이유를 모른다.
+    """
+    def __init__(self, parent, initial, on_change, taken=(), months=2):
+        self.chosen, self.taken, self.on_change = set(), set(taken), on_change
+        super().__init__(parent, initial, self.toggle, months)
+
+    def toggle(self, value):
+        if value in self.taken:
+            return
+        self.chosen ^= {value}
+        self.paint_selection()
+        self.on_change()
+
+    def clear(self):
+        self.chosen.clear()
+        self.paint_selection()
+        self.on_change()
+
+    def day_colors(self, value, col=None):
+        col = value.weekday() if col is None else col
+        if value in self.chosen:
+            return '#14634b', '#ffffff'
+        if value in self.taken:
+            return '#e5e7eb', '#9ca3af'
+        return '#ffffff', '#a52834' if col == 6 else '#1f2937'
+
+
+class MileageDatesCopy(CalendarDialog):
+    """한 행을 여러 날짜로 복사한다. 날짜만 다르고 나머지는 같다.
+
+    한 번에 넣으므로 [되돌리기] 한 번이면 전부 사라진다.
+    """
+    def __init__(self, panel, source):
+        super().__init__(panel, '차량 마일리지 복사 · 여러 날짜')
+        self.panel, self.source = panel, deepcopy(source)
+        self.snapshot = deepcopy(panel.book.rows)
+        box = ttk.Frame(self, padding=14)
+        box.pack(fill='both', expand=True)
+        ttk.Label(box, wraplength=560, font=('맑은 고딕', 10, 'bold'),
+                  text=f"{source['origin']} → {source['destination']} · "
+                       f"{source['distance']}km · {source['vehicle']}").pack(anchor='w')
+        ttk.Label(box, wraplength=560,
+                  text='복사할 날짜를 눌러 고르세요. 다시 누르면 빠집니다. '
+                       '회색 날짜는 이미 같은 경로의 행이 있어 고를 수 없습니다.'
+                  ).pack(anchor='w', pady=(4, 10))
+        start = parse_date(source.get('date')) or date.today()
+        self.calendar = MultiDayPanel(box, start, self.changed,
+                                      taken=taken_dates(source, self.snapshot))
+        self.calendar.pack()
+        self.summary = ttk.Label(box, wraplength=560)
+        self.summary.pack(anchor='w', pady=(10, 0))
+        self.error = ttk.Label(box, wraplength=560, foreground='#a52834')
+        self.error.pack(anchor='w')
+        foot = ttk.Frame(box)
+        foot.pack(fill='x', pady=(10, 0))
+        ttk.Button(foot, text='선택 지우기', command=self.calendar.clear).pack(side='left')
+        ttk.Button(foot, text='취소', command=self.close).pack(side='right')
+        self.apply_button = ttk.Button(foot, text='복사', command=self.apply)
+        self.apply_button.pack(side='right', padx=6)
+        self.changed()
+        self.present(self.calendar)
+
+    def changed(self):
+        days = sorted(self.calendar.chosen)
+        if days:
+            shown = ', '.join(f'{d.month}/{d.day}({WEEKDAYS[d.weekday()]})' for d in days)
+            self.summary.configure(text=f'{len(days)}일 선택 · {shown}')
+        else:
+            self.summary.configure(text='선택한 날짜가 없습니다.')
+        self.apply_button.configure(text=f'{len(days)}건 복사' if days else '복사',
+                                    state='normal' if days else 'disabled')
+        self.error.configure(text='')
+
+    def apply(self):
+        try:
+            if self.panel.book.rows != self.snapshot:
+                raise ValueError('마일리지 목록이 변경되었습니다. 닫고 다시 열어 주세요.')
+            self.panel.book.check_image(self.source)
+            made, _ = copies_for_dates(self.source, self.calendar.chosen, self.snapshot)
+            if not made:
+                raise ValueError('새로 만들 날짜가 없습니다. 날짜를 골라 주세요.')
+            self.panel.book.commit_rows(deepcopy(self.snapshot) + made)
+            self.panel.render()
+        except (ValueError, OSError) as exc:
+            self.error.configure(text=str(exc))
+            return False
+        self.close()
+        return True
