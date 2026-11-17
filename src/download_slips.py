@@ -292,7 +292,7 @@ def download(from_date: str, to_date: str, out_dir: Path, limit: int | None) -> 
     print(f"받은 파일을 저장했습니다: {bundle}")
     n = _split(bundle, out_dir, len(rows))
     print(f"전표 {n}장으로 나눴습니다 -> {out_dir}")
-    print(f"다음 단계: python -m src.organize {out_dir}")
+    print(f"다음: [작업지 생성]을 눌러 주세요. (명령줄: python -m src.organize {out_dir})")
     console.open_folder(out_dir)
     return 0
 

@@ -163,13 +163,13 @@ def mark_done(folder: Path, approval: str) -> None:
 def load_manifest(folder: Path) -> list[Slip]:
     path = folder / "manifest.csv"
     if not path.exists():
-        raise AttachError(f"manifest.csv가 없습니다: {path}\n먼저 B단계(파싱 · 작업지 생성)를 실행해 주세요.")
+        raise AttachError(f"manifest.csv가 없습니다: {path}\n먼저 [작업지 생성]을 눌러 주세요.")
     slips = []
     with path.open(encoding="utf-8-sig", newline="") as f:
         for r in csv.DictReader(f):
             pdf = folder / r["파일명"]
             if not pdf.exists():
-                raise AttachError(f"작업지에 적힌 전표 파일이 없습니다: {pdf}\nB단계를 --apply 로 다시 실행해 주세요.")
+                raise AttachError(f"작업지에 적힌 전표 파일이 없습니다: {pdf}\n[작업지 생성]을 다시 눌러 주세요.")
             slips.append(
                 Slip(
                     path=pdf,

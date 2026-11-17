@@ -144,7 +144,7 @@ class App(tk.Tk):
         folder = paths.folder(self.folder.get().strip())
         source = pick_sheet(folder, None)
         if source is None:
-            messagebox.showinfo('작업지 없음', '먼저 B. 파싱 · 작업지 생성을 실행해 주세요.', parent=self)
+            messagebox.showinfo('작업지 없음', '먼저 ① 전표 준비의 [작업지 생성]을 눌러 주세요.', parent=self)
             return
         try:
             cfg = {**self.cfg, 'attendee_default': self.attendee.get().strip()}
@@ -291,9 +291,9 @@ class App(tk.Tk):
             )
 
         self._start(
-            "A. 전표 다운로드",
+            "전표 다운로드",
             work,
-            "다음: [B. 파싱 · 작업지 생성] 을 눌러 주세요.",
+            "다음: ① 전표 준비의 [작업지 생성]을 눌러 주세요.",
         )
 
     def step_organize(self) -> None:
@@ -301,11 +301,11 @@ class App(tk.Tk):
             return _module("organize").organize(paths.folder(self.cfg["downloads_dir"]), True)
 
         self._start(
-            "B. 파싱 · 작업지 생성",
+            "작업지 생성",
             work,
-            "다음: [작업지 편집] 에서 입력해 주세요.\n"
-            "      빈칸은 유지하며 영수증이 없는 경비에는 영수증만 첨부합니다.\n"
-            "      [저장하고 Concur 반영] 을 누르면 C단계로 이어집니다.",
+            "다음: [작업 공간] 탭으로 돌아가 ② 경비 입력의 [작업지 열기]를 눌러 주세요.\n"
+            "      빈칸은 Concur 값을 그대로 두며 영수증이 없는 경비에는 영수증만 첨부합니다.\n"
+            "      입력 창의 [저장 후 반영 대상 확인]을 누르면 Concur 반영으로 이어집니다.",
         )
 
     def step_update(self) -> None:
@@ -324,7 +324,7 @@ class App(tk.Tk):
             )
 
         self._start(
-            "C. Concur 반영",
+            "Concur 반영",
             work,
             "Concur 화면에서 결과를 확인해 주세요. 실패한 건이 있으면 위 기록에 남아 있습니다.",
         )

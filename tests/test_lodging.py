@@ -450,7 +450,7 @@ def test_옛_작업지에_숙박_칸이_없으면_알린다(tmp_path, capsys):
 
     말 = capsys.readouterr().out
     assert "입실날짜" in 말 and "퇴실날짜" in 말
-    assert "B단계로 작업지를 새로 만들어" in 말
+    assert "[작업지 생성]으로 작업지를 새로 만들어" in 말
 
 
 def test_빈_칸은_건드리지_않는다(tmp_path):

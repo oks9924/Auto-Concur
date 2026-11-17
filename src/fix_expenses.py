@@ -1511,7 +1511,7 @@ def fix_phase(page, report_url: str, cfg: dict, apply: bool,
                     print(f"    {entry.when} {entry.amount:>9,}원  "
                           f"입실 {entry.checkin!r} / 퇴실 {entry.checkout!r}")
             print("    비어 있으면 그 작업지에 값이 없는 것입니다. "
-                  "B단계를 다시 누르면 예전에는 지워졌습니다 - 그 칸을 채우고 C만 눌러 주세요.")
+                  "그 칸을 채우고 [카드 + 마일리지 Concur 반영]만 다시 눌러 주세요.")
     if missing:
         print(f"\n작업지에는 있으나 Concur에서 찾지 못한 것 {len(missing)}건:")
         for entry, why in missing:
@@ -1623,7 +1623,7 @@ def list_lodging_phase(page, cfg: dict) -> int:
         raise AttachError("드롭다운을 하나도 읽지 못했습니다. 숙박비 상세가 맞는지 확인해 주세요.")
     cfg.update(found)
     settings.save(cfg)
-    print(f"\n{settings.SETTINGS_PATH} 에 저장했습니다. 이제 B단계를 다시 돌리시면")
+    print(f"\n{settings.SETTINGS_PATH} 에 저장했습니다. 이제 [작업지 생성]을 다시 누르시면")
     print("작업지의 숙박위치·Booking Channel 칸에 드롭다운이 걸립니다.")
     return 0
 

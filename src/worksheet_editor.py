@@ -422,7 +422,7 @@ class Editor(tk.Toplevel):
         if self.pending:
             self.after_cancel(self.pending)
         self.pending = self.after(800, self.autosave)
-        self.status.configure(text=(f'내부 직원간 식음료 {filled}건의 빈 참석자에 기본 참석자를 채웠습니다. Ctrl+Z로 함께 되돌릴 수 있습니다.' if filled else '편집 중 · 잠시 후 임시 저장합니다. 저장된 입력만 C단계에 반영됩니다.'))
+        self.status.configure(text=(f'내부 직원간 식음료 {filled}건의 빈 참석자에 기본 참석자를 채웠습니다. Ctrl+Z로 함께 되돌릴 수 있습니다.' if filled else '편집 중 · 잠시 후 임시 저장합니다. 저장된 입력만 Concur에 반영됩니다.'))
 
     def highlight_inputs(self, redraw=True):
         self.table.dehighlight_cells(all_=True, redraw=False)
@@ -567,7 +567,7 @@ class Editor(tk.Toplevel):
             self.after_cancel(self.pending)
             self.pending = None
         self.refresh()
-        self.status.configure(text='저장했습니다. 엑셀을 열 필요 없이 C단계에 반영할 수 있습니다.')
+        self.status.configure(text='저장했습니다. [저장 후 반영 대상 확인] 또는 첫 화면의 [카드 + 마일리지 Concur 반영]으로 반영할 수 있습니다.')
         return True
 
     def edit_row(self):

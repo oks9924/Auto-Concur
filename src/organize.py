@@ -242,10 +242,10 @@ def organize(folder: Path, apply: bool) -> int:
     print(f"\n{what}, 합계 {total:,}원을 정리했습니다  ->  {manifest}")
     # 엑셀본은 경비유형 칸에 드롭다운이 걸려 있어 오타로 못 쓰는 값을 막는다.
     print(f"입력 데이터를 만들었습니다: {folder / NATIVE_NAME}")
-    print("프로그램의 [작업지 편집]에서 입력해 주세요. 엑셀 파일은 필요하지 않습니다.")
+    print("[작업 공간] 탭의 [작업지 열기]에서 입력해 주세요. 엑셀 파일은 필요하지 않습니다.")
     print("  내부 직원간 식음료 -> 같이 드신 분이 있으면 '추가 참석자' 에 적어 주세요")
     print("  숙박비 -> 입실·퇴실 날짜, 숙박위치, Booking Channel")
-    print("그 다음 update_concur 로 넘겨 주세요.")
+    print("그 다음 [카드 + 마일리지 Concur 반영]으로 넘어갑니다.")
     if not apply:
         print("미리보기입니다. 실제로 바꾸시려면 --apply 를 붙여 주세요.")
 

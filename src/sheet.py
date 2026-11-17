@@ -295,7 +295,7 @@ def write_xlsx(columns: list[str], rows: list[dict], path: Path,
 
 def load(path: Path, *, validate_lodging: bool = True) -> list[SheetRow]:
     if not path.exists():
-        raise SheetError(f"작업지가 없습니다: {path}\n먼저 B단계(파싱 · 작업지 생성)를 실행해 주세요.")
+        raise SheetError(f"작업지가 없습니다: {path}\n먼저 [작업지 생성]을 눌러 주세요.")
     raw = read_raw(path)
     if not raw:
         raise SheetError(f"작업지가 비어 있습니다: {path}")
@@ -314,7 +314,7 @@ def load(path: Path, *, validate_lodging: bool = True) -> list[SheetRow]:
     if 없는칸:
         print(f"  (작업지에 {', '.join(없는칸)} 칸이 없습니다: {path.name}\n"
               "   옛 작업지입니다. 숙박비 상세는 채우지 못합니다 - "
-              "B단계로 작업지를 새로 만들어 주세요.)")
+              "[작업지 생성]으로 작업지를 새로 만들어 주세요.)")
 
     out = []
     blank = 0

@@ -63,10 +63,10 @@ def ready_report(page, timeout=600):
 
 def revalidate(page, report):
     if report_key(page.url) != report.key:
-        raise ar.AttachError('선택한 리포트가 바뀌었습니다. C단계를 다시 시작해 작업 대상을 확인해 주세요.')
+        raise ar.AttachError('선택한 리포트가 바뀌었습니다. [Concur 반영]을 다시 시작해 작업 대상을 확인해 주세요.')
     rows = ar.rows_when_ready(page, allow_incomplete=True)
     if signature(rows) != signature(report.rows):
-        raise ar.AttachError('시작 확인 중 경비 목록이 바뀌었습니다. 새 계획을 확인하도록 C단계를 다시 시작해 주세요.')
+        raise ar.AttachError('시작 확인 중 경비 목록이 바뀌었습니다. 새 계획을 확인하도록 [Concur 반영]을 다시 시작해 주세요.')
 
 
 def check_context(page, report_url):
